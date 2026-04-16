@@ -1,0 +1,95 @@
+version: "3.9"
+
+services:
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: devmind
+      POSTGRES_USER: devmind
+      POSTGRES_PASSWORD: devmind_secret
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U devmind"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  django:
+    build:
+      context: ./backend/django
+      target: dev
+    command: poetry run python manage.py runserver 0.0.0.0:8000
+    ports:
+      - "8000:8000"
+    env_file: .env
+    volumes:
+      - ./backend/django:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  fastapi:
+    build:
+      context: ./backend/fastapi
+      target: dev
+    command: poetry run uvicorn main:app --host 0.0.0.0 --port 8001 --reload
+    ports:
+      - "8001:8001"
+    env_file: .env
+    volumes:
+      - ./backend/fastapi:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  celery_worker:
+    build:
+      context: ./backend/django
+      target: dev
+    command: poetry run celery -A devmind worker -l info -Q default,review,notifications
+    env_file: .env
+    depends_on:
+      - redis
+      - postgres
+
+  celery_beat:
+    build:
+      context: ./backend/django
+      target: dev
+    command: poetry run celery -A devmind beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    env_file: .env
+    depends_on:
+      - redis
+      - postgres
+
+  frontend:
+    build:
+      context: ./frontend
+      target: dev
+    command: pnpm dev --host
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+
+volumes:
+  pg_data:

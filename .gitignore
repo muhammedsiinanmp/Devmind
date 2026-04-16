@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# Django
+*.sqlite3
+staticfiles/
+mediafiles/
+
+# Node
+node_modules/
+dist/
+.pnpm-debug.log
+*.local
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Docker
+*.log
+
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
+!*.tfvars.example
+.terraform.lock.hcl
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# My implementation files
+implementation/
+devmind.html
