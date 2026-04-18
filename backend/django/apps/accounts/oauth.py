@@ -102,7 +102,7 @@ def get_github_user(access_token: str) -> dict:
 
 
 @transaction.atomic
-def upset_user(github_data: dict, token_data: dict) -> CustomUser:
+def upsert_user(github_data: dict, token_data: dict) -> CustomUser:
     """
     Create or update a user from GitHub OAuth data.
 
