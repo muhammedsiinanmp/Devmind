@@ -116,7 +116,7 @@ def upsert_user(github_data: dict, token_data: dict) -> CustomUser:
     Raises: OAuthError if the GitHub email conflicts with an existing account.
     """
     try:
-        user, _created = CustomUser.objects.update_or_created(
+        user, _created = CustomUser.objects.update_or_create(
             github_id=github_data["id"],
             defaults={
                 "email": github_data.get("email")
