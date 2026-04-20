@@ -57,7 +57,7 @@ class GitHubOAuthCallbackView(APIView):
         code = request.query_params.get("code")
         state = request.query_params.get("state")
 
-        if not code or not state:
+        if not code:
             return Response(
                 {"error": "Missing 'code' parameter"},
                 status=status.HTTP_400_BAD_REQUEST,
@@ -69,14 +69,13 @@ class GitHubOAuthCallbackView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-
         try:
             token_data = exchange_code_for_token(code)
             github_user = get_github_user(token_data["access_token"])
-            user = upset_user(github_user,token_data)
+            user = upsert_user(github_user, token_data)
         except OAuthError as e:
             return Response(
-                {"error": str(e)}, 
+                {"error": str(e)},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -90,7 +89,8 @@ class GitHubOAuthCallbackView(APIView):
 
 
 class UserMeView(APIView):
-    """Return the authenticated user's profile.
+    """
+    Return the authenticated user's profile.
 
     GET /api/v1/auth/me/
     Requires: Bearer JWT in Authorization header.
@@ -104,7 +104,8 @@ class UserMeView(APIView):
 
 
 class LogoutView(APIView):
-    """Invalidate a refresh token by blacklisting it.
+    """
+    Invalidate a refresh token by blacklisting it.
 
     POST /api/v1/auth/logout/
     Body: {"refresh": "<refresh_token>"}
