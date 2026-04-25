@@ -1,10 +1,23 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
 from django.contrib.auth.models import BaseUserManager
 
+if TYPE_CHECKING:
+    from .models import CustomUser
 
-class CustomUserManager(BaseUserManager):
+    _BaseManager = BaseUserManager["CustomUser"]
+else:
+    _BaseManager = BaseUserManager
+
+
+class CustomUserManager(_BaseManager):
     """Manager for CustomUser with email as the unique identifier."""
 
-    def create_user(self, email, password=None, **extra_fields):
+    def create_user(
+        self, email: str, password: str | None = None, **extra_fields: Any
+    ) -> CustomUser:
         """
         Create and return a regular user with the given email and password.
         """
@@ -22,7 +35,9 @@ class CustomUserManager(BaseUserManager):
         user.save(using=self._db)
         return user
 
-    def create_superuser(self, email, password=None, **extra_fields):
+    def create_superuser(
+        self, email: str, password: str | None = None, **extra_fields: Any
+    ) -> CustomUser:
         """Create and return a superuser with given email and password."""
         extra_fields.setdefault("is_staff", True)
         extra_fields.setdefault("is_superuser", True)

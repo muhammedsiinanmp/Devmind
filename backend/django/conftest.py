@@ -1,9 +1,14 @@
+from typing import Any
+
 import pytest
 from django.contrib.auth import get_user_model
+from rest_framework.test import APIClient
+
+from apps.accounts.models import CustomUser
 
 
 @pytest.fixture
-def user(db):
+def user(db: Any) -> CustomUser:
     """Create a standard test user with GitHub fields populated."""
     user_model = get_user_model()
     return user_model.objects.create_user(
@@ -16,15 +21,14 @@ def user(db):
 
 
 @pytest.fixture
-def api_client():
+def api_client() -> Any:
     """Return an unauthenticated DRF APIClient."""
-    from rest_framework.test import APIClient
 
     return APIClient()
 
 
 @pytest.fixture
-def auth_client(api_client, user):
+def auth_client(api_client: Any, user: Any) -> Any:
     """Return an APIClient authenticated with a valid JWT."""
     from rest_framework_simplejwt.tokens import RefreshToken
 

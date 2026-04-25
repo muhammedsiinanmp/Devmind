@@ -18,20 +18,20 @@ User = get_user_model()
 # --- OAuth State (CSRF Protection) ---
 
 
-def test_generate_and_validate_state():
+def test_generate_and_validate_state() -> None:
     state = generate_oauth_state()
     assert isinstance(state, str)
     assert len(state) > 20
     assert validate_oauth_state(state) is True
 
 
-def test_state_is_single_use():
+def test_state_is_single_use() -> None:
     state = generate_oauth_state()
     assert validate_oauth_state(state) is True
     assert validate_oauth_state(state) is False  # Already consumed
 
 
-def test_invalid_state_rejected():
+def test_invalid_state_rejected() -> None:
     assert validate_oauth_state("totally_fake_state") is False
 
 
@@ -39,7 +39,7 @@ def test_invalid_state_rejected():
 
 
 @responses.activate
-def test_exchange_code_success():
+def test_exchange_code_success() -> None:
     responses.add(
         responses.POST,
         "https://github.com/login/oauth/access_token",
@@ -56,7 +56,7 @@ def test_exchange_code_success():
 
 
 @responses.activate
-def test_exchange_code_non_200_raises_oauth_error():
+def test_exchange_code_non_200_raises_oauth_error() -> None:
     responses.add(
         responses.POST,
         "https://github.com/login/oauth/access_token",
@@ -68,7 +68,7 @@ def test_exchange_code_non_200_raises_oauth_error():
 
 
 @responses.activate
-def test_exchange_code_error_in_body_raises_oauth_error():
+def test_exchange_code_error_in_body_raises_oauth_error() -> None:
     responses.add(
         responses.POST,
         "https://github.com/login/oauth/access_token",
@@ -86,7 +86,7 @@ def test_exchange_code_error_in_body_raises_oauth_error():
 
 
 @responses.activate
-def test_get_github_user_success():
+def test_get_github_user_success() -> None:
     responses.add(
         responses.GET,
         "https://api.github.com/user",
@@ -104,7 +104,7 @@ def test_get_github_user_success():
 
 
 @responses.activate
-def test_get_github_user_non_200_raises_oauth_error():
+def test_get_github_user_non_200_raises_oauth_error() -> None:
     responses.add(
         responses.GET,
         "https://api.github.com/user",
@@ -119,7 +119,7 @@ def test_get_github_user_non_200_raises_oauth_error():
 
 
 @pytest.mark.django_db
-def test_upsert_user_creates_new_user():
+def test_upsert_user_creates_new_user() -> None:
     github_data = {
         "id": 77777,
         "login": "newuser",
@@ -141,7 +141,7 @@ def test_upsert_user_creates_new_user():
 
 
 @pytest.mark.django_db
-def test_upsert_user_updates_existing_user():
+def test_upsert_user_updates_existing_user() -> None:
     github_data = {
         "id": 88888,
         "login": "existing",
@@ -176,8 +176,8 @@ def test_upsert_user_updates_existing_user():
 
 
 @pytest.mark.django_db
-def test_upsert_user_email_collision_raises_oauth_error():
-    """If a new github_id has an email that belongs to another user, raise OAuthError."""
+def test_upsert_user_email_collision_raises_oauth_error() -> None:
+    """If a new github_id has an email that belongs to another user, raise OAuthError.""" # noqa: E501
     # Create an existing user with a specific email
     User.objects.create_user(
         email="taken@example.com",

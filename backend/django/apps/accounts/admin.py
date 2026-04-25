@@ -1,11 +1,19 @@
+from typing import TYPE_CHECKING
+
 from django.contrib import admin
-from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 
 from apps.accounts.models import CustomUser, GithubToken
 
+if TYPE_CHECKING:
+    _BaseCustomUserAdmin = admin.ModelAdmin[CustomUser]
+    _BaseGithubTokenAdmin = admin.ModelAdmin[GithubToken]
+else:
+    _BaseCustomUserAdmin = admin.ModelAdmin
+    _BaseGithubTokenAdmin = admin.ModelAdmin
+
 
 @admin.register(CustomUser)
-class CustomUserAdmin(BaseUserAdmin):
+class CustomUserAdmin(_BaseCustomUserAdmin):
     """Admin interface for CustomUser."""
 
     list_display = (
@@ -51,7 +59,7 @@ class CustomUserAdmin(BaseUserAdmin):
 
 
 @admin.register(GithubToken)
-class GithubTokenAdmin(admin.ModelAdmin):
+class GithubTokenAdmin(_BaseGithubTokenAdmin):
     """Admin interface for GithubToken — token is masked for security."""
 
     list_display = ("user", "token_type", "masked_token", "created_at")
@@ -59,7 +67,7 @@ class GithubTokenAdmin(admin.ModelAdmin):
     exclude = ("access_token",)  # Never show the raw encrypted field
 
     @admin.display(description="Access Token")
-    def masked_token(self, obj):
+    def masked_token(self, obj: GithubToken) -> str:
         """Display only the last 4 characters of the token."""
         token = obj.access_token
         if token and len(token) > 4:

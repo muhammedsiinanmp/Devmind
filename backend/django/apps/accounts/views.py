@@ -1,6 +1,7 @@
 from django.conf import settings
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
@@ -31,7 +32,7 @@ class GitHubOAuthStartView(APIView):
 
     permission_classes = [AllowAny]
 
-    def get(self, request):
+    def get(self, request: Request) -> Response:
         state = generate_oauth_state()
         authorize_url = (
             f"https://github.com/login/oauth/authorize"
@@ -53,7 +54,7 @@ class GitHubOAuthCallbackView(APIView):
 
     permission_classes = [AllowAny]
 
-    def get(self, request):
+    def get(self, request: Request) -> Response:
         code = request.query_params.get("code")
         state = request.query_params.get("state")
 
@@ -98,7 +99,8 @@ class UserMeView(APIView):
 
     permission_classes = [IsAuthenticated]
 
-    def get(self, request):
+    def get(self, request: Request) -> Response:
+        assert request.user.is_authenticated  # nosec: B101 (used for mypy typing)
         serializer = UserSerializer(request.user)
         return Response(serializer.data)
 
@@ -113,7 +115,7 @@ class LogoutView(APIView):
 
     permission_classes = [IsAuthenticated]
 
-    def post(self, request):
+    def post(self, request: Request) -> Response:
         refresh_token = request.data.get("refresh")
         if not refresh_token:
             return Response(

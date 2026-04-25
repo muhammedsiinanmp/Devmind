@@ -1,9 +1,18 @@
+from typing import TYPE_CHECKING, Any
+
 from rest_framework import serializers
 
 from apps.accounts.models import CustomUser
 
+if TYPE_CHECKING:
+    _BaseModelSerializer = serializers.ModelSerializer[CustomUser]
+    _BaseSerializer = serializers.Serializer[dict[str, Any]]
+else:
+    _BaseModelSerializer = serializers.ModelSerializer
+    _BaseSerializer = serializers.Serializer
 
-class UserSerializer(serializers.ModelSerializer):
+
+class UserSerializer(_BaseModelSerializer):
     """Read-only serializer for the authenticated user's profile."""
 
     class Meta:
@@ -21,7 +30,7 @@ class UserSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
 
-class TokenPairSerializer(serializers.Serializer):
+class TokenPairSerializer(_BaseSerializer):
     """Serializer for JWT token pair response."""
 
     access = serializers.CharField(help_text="JWT access token")

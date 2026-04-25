@@ -1,9 +1,11 @@
+from typing import Any
+
 from django.contrib import admin
-from django.http import JsonResponse
+from django.http import HttpRequest, HttpResponse, JsonResponse
 from django.urls import include, path
 
 
-def health_check(request):
+def health_check(request: HttpRequest) -> HttpResponse:
     from django.db import connection
     from django_redis import get_redis_connection
 
@@ -23,7 +25,7 @@ def health_check(request):
     return JsonResponse({"status": "ok", "db": db_status, "redis": redis_status})
 
 
-urlpatterns = [
+urlpatterns: list[Any] = [
     path("admin/", admin.site.urls),
     path("health/", health_check, name="health"),
     path(

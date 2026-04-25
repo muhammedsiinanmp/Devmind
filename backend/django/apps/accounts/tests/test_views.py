@@ -1,3 +1,5 @@
+from typing import Any
+
 import pytest
 import responses
 from django.contrib.auth import get_user_model
@@ -10,12 +12,12 @@ User = get_user_model()
 
 
 @pytest.fixture
-def client():
+def client() -> Any:
     return APIClient()
 
 
 @pytest.fixture
-def user_with_token(db):
+def user_with_token(db: Any) -> Any:
     user = User.objects.create_user(
         email="viewtest@example.com",
         password="testpass123",
@@ -30,7 +32,7 @@ def user_with_token(db):
 
 
 @pytest.mark.django_db
-def test_start_returns_authorize_url(client):
+def test_start_returns_authorize_url(client: Any) -> None:
     response = client.get("/api/v1/auth/github/start/")
     assert response.status_code == 200
     assert "authorize_url" in response.data
@@ -43,7 +45,7 @@ def test_start_returns_authorize_url(client):
 
 @responses.activate
 @pytest.mark.django_db
-def test_callback_valid_code_and_state_returns_tokens(client):
+def test_callback_valid_code_and_state_returns_tokens(client: Any) -> None:
     # Generate a valid state token first
     state = generate_oauth_state()
 
@@ -79,7 +81,7 @@ def test_callback_valid_code_and_state_returns_tokens(client):
 
 
 @pytest.mark.django_db
-def test_callback_missing_code_returns_400(client):
+def test_callback_missing_code_returns_400(client: Any) -> None:
     state = generate_oauth_state()
     response = client.get(
         "/api/v1/auth/github/callback/",
@@ -90,7 +92,7 @@ def test_callback_missing_code_returns_400(client):
 
 
 @pytest.mark.django_db
-def test_callback_missing_state_returns_400(client):
+def test_callback_missing_state_returns_400(client: Any) -> None:
     response = client.get(
         "/api/v1/auth/github/callback/",
         {"code": "some_code"},
@@ -100,7 +102,7 @@ def test_callback_missing_state_returns_400(client):
 
 
 @pytest.mark.django_db
-def test_callback_invalid_state_returns_400(client):
+def test_callback_invalid_state_returns_400(client: Any) -> None:
     response = client.get(
         "/api/v1/auth/github/callback/",
         {"code": "some_code", "state": "forged_state_value"},
@@ -111,7 +113,7 @@ def test_callback_invalid_state_returns_400(client):
 
 @responses.activate
 @pytest.mark.django_db
-def test_callback_invalid_code_returns_400(client):
+def test_callback_invalid_code_returns_400(client: Any) -> None:
     state = generate_oauth_state()
     responses.add(
         responses.POST,
@@ -134,13 +136,13 @@ def test_callback_invalid_code_returns_400(client):
 
 
 @pytest.mark.django_db
-def test_me_returns_401_without_token(client):
+def test_me_returns_401_without_token(client: Any) -> None:
     response = client.get("/api/v1/auth/me/")
     assert response.status_code == 401
 
 
 @pytest.mark.django_db
-def test_me_returns_user_with_valid_token(client, user_with_token):
+def test_me_returns_user_with_valid_token(client: Any, user_with_token: Any) -> None:
     user, access_token, _ = user_with_token
     client.credentials(HTTP_AUTHORIZATION=f"Bearer {access_token}")
 
@@ -155,7 +157,7 @@ def test_me_returns_user_with_valid_token(client, user_with_token):
 
 
 @pytest.mark.django_db
-def test_logout_blacklists_token(client, user_with_token):
+def test_logout_blacklists_token(client: Any, user_with_token: Any) -> None:
     _, access_token, refresh_token = user_with_token
     client.credentials(HTTP_AUTHORIZATION=f"Bearer {access_token}")
 

@@ -29,7 +29,7 @@ class CustomUser(AbstractBaseUser, PermissionsMixin):
     class Meta:
         db_table = "accounts_customuser"
 
-    def __str__(self):
+    def __str__(self) -> str:
         return self.email
 
 
@@ -59,5 +59,5 @@ class GithubToken(models.Model):
     class Meta:
         db_table = "accounts_githubtoken"
 
-    def __str__(self):
+    def __str__(self) -> str:
         return f"GithubToken for {self.user.email}"

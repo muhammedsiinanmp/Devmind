@@ -1,4 +1,5 @@
 import base64
+from typing import TYPE_CHECKING, Any
 
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives.hashes import SHA256
@@ -12,7 +13,7 @@ from django.db import models
 _HKDF_SALT = b"devmind-github-token-encryption-v1"
 
 
-def _get_fernet():
+def _get_fernet() -> Fernet:
     """
     Derive a Fernet key from Django's SECRET_KEY using HKDF.
     HKDF is the cryptographically correct way to derive an encryption
@@ -30,7 +31,13 @@ def _get_fernet():
     return Fernet(base64.urlsafe_b64encode(derived_key))
 
 
-class EncryptedCharField(models.CharField):
+if TYPE_CHECKING:
+    _BaseField = models.CharField[str, str]
+else:
+    _BaseField = models.CharField
+
+
+class EncryptedCharField(_BaseField):
     """
     CharField that encrypts values at rest using Fernet symmetric encryption.
     Usage:
@@ -39,16 +46,16 @@ class EncryptedCharField(models.CharField):
     Raw database value will be a Fernet token (base64), NOT the plaintext.
     """
 
-    def get_prep_value(self, value):
+    def get_prep_value(self, value: Any) -> Any:
         """Encrypt before saving to database."""
         if value is None or value == "":
             return value
-        f = _get_fernet()
+        f: Fernet = _get_fernet()
         return f.encrypt(value.encode()).decode()
 
-    def from_db_value(self, value, expression, connection):
+    def from_db_value(self, value: Any, expression: Any, connection: Any) -> Any:
         """Decrypt after reading from database."""
         if value is None or value == "":
             return value
-        f = _get_fernet()
+        f: Fernet = _get_fernet()
         return f.decrypt(value.encode()).decode()

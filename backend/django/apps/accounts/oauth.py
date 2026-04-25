@@ -1,4 +1,5 @@
 import secrets
+from typing import Any, cast
 
 import requests
 from django.conf import settings
@@ -6,7 +7,6 @@ from django.core.cache import cache
 from django.db import IntegrityError, transaction
 
 from apps.accounts.models import CustomUser, GithubToken
-
 
 OAUTH_STATE_TTL = 600
 
@@ -45,7 +45,7 @@ def validate_oauth_state(state: str) -> bool:
     return False
 
 
-def exchange_code_for_token(code: str) -> dict:
+def exchange_code_for_token(code: str) -> dict[str, Any]:
     """
     Exchange a GitHub authorization code for an access token.
 
@@ -75,10 +75,10 @@ def exchange_code_for_token(code: str) -> dict:
             f"GitHub OAuth error: {data.get('error_description',data['error'])}"
         )
 
-    return data
+    return cast(dict[str, Any], data)
 
 
-def get_github_user(access_token: str) -> dict:
+def get_github_user(access_token: str) -> dict[str, Any]:
     """
     Fetch the authenticated GitHub user's profile.
 
@@ -98,11 +98,11 @@ def get_github_user(access_token: str) -> dict:
     if response.status_code != 200:
         raise OAuthError(f"GitHub user fetch failed with status {response.status_code}")
 
-    return response.json()
+    return cast(dict[str, Any], response.json())
 
 
 @transaction.atomic
-def upsert_user(github_data: dict, token_data: dict) -> CustomUser:
+def upsert_user(github_data: dict[str, Any], token_data: dict[str, Any]) -> CustomUser:
     """
     Create or update a user from GitHub OAuth data.
 

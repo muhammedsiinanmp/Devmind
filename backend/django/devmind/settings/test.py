@@ -13,4 +13,4 @@ CELERY_TASK_ALWAYS_EAGER = True
 CELERY_TASK_EAGER_PROPAGATES = True
 
 # Disable throttling in tests
-REST_FRAMEWORK["DEFAULT_THROTTLE_CLASSES"] = []  # type: ignore[index]  # noqa: F405
+REST_FRAMEWORK["DEFAULT_THROTTLE_CLASSES"] = []  # noqa: F405
