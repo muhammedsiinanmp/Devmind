@@ -136,9 +136,11 @@ def upsert_user(github_data: dict[str, Any], token_data: dict[str, Any]) -> Cust
         defaults={
             "access_token": token_data["access_token"],
             "token_type": token_data.get("token_type", "bearer"),
-            "scopes": token_data.get("scope", "").split(",")
-            if token_data.get("scope")
-            else [],
+            "scopes": (
+                token_data.get("scope", "").split(",")
+                if token_data.get("scope")
+                else []
+            ),
         },
     )
 

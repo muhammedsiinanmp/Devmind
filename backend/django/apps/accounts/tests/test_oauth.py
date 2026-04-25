@@ -177,7 +177,7 @@ def test_upsert_user_updates_existing_user() -> None:
 
 @pytest.mark.django_db
 def test_upsert_user_email_collision_raises_oauth_error() -> None:
-    """If a new github_id has an email that belongs to another user, raise OAuthError.""" # noqa: E501
+    """If a new github_id has an email that belongs to another user, raise OAuthError."""  # noqa: E501
     # Create an existing user with a specific email
     User.objects.create_user(
         email="taken@example.com",

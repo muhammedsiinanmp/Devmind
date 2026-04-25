@@ -33,7 +33,5 @@ def auth_client(api_client: Any, user: Any) -> Any:
     from rest_framework_simplejwt.tokens import RefreshToken
 
     refresh = RefreshToken.for_user(user)
-    api_client.credentials(
-        HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}"
-    )
+    api_client.credentials(HTTP_AUTHORIZATION=f"Bearer {refresh.access_token}")
     return api_client

@@ -13,27 +13,27 @@ if TYPE_CHECKING:
 class RepositoryQuerySet(models.QuerySet["Repository"]):  # type: ignore[name-defined]
     """Encapsulates all common repository query patterns."""
 
-    def active(self) -> "RepositoryQuerySet":
+    def active(self) -> RepositoryQuerySet:
         """Returns only repositories where is_active=True."""
         return self.filter(is_active=True)
 
-    def for_user(self, user: "User") -> "RepositoryQuerySet":
+    def for_user(self, user: User) -> RepositoryQuerySet:
         """Returns repositories owned by the given user."""
         return self.filter(owner=user)
 
-    def with_webhook(self) -> "RepositoryQuerySet":
+    def with_webhook(self) -> RepositoryQuerySet:
         """Returns repositories that have a GitHub webhook installed."""
         return self.exclude(webhook_id__isnull=True)
 
-    def without_webhook(self) -> "RepositoryQuerySet":
+    def without_webhook(self) -> RepositoryQuerySet:
         """Returns repositories that need a webhook installed."""
         return self.filter(webhook_id__isnull=True)
 
-    def review_enabled(self) -> "RepositoryQuerySet":
+    def review_enabled(self) -> RepositoryQuerySet:
         """Returns repositories where AI review is enabled."""
         return self.filter(review_enabled=True)
 
-    def pending_initial_sync(self) -> "RepositoryQuerySet":
+    def pending_initial_sync(self) -> RepositoryQuerySet:
         """Returns active repos that have never been synced."""
         return self.filter(is_active=True, last_synced_at__isnull=True)
 
@@ -45,7 +45,7 @@ class RepositoryManager(models.Manager["Repository"]):  # type: ignore[name-defi
     def active(self) -> RepositoryQuerySet:
         return self.get_queryset().active()
 
-    def for_user(self, user: "User") -> RepositoryQuerySet:
+    def for_user(self, user: User) -> RepositoryQuerySet:
         return self.get_queryset().for_user(user)
 
     def with_webhook(self) -> RepositoryQuerySet:
