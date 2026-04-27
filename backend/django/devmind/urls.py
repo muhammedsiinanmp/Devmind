@@ -40,4 +40,22 @@ urlpatterns: list[Any] = [
             ]
         ),
     ),
+    path(
+        "api/v1/repositories/",
+        include("apps.repositories.urls", namespace="repositories"),
+    ),
+    path(
+        "api/v1/webhooks/github/",
+        include(
+            [
+                path(
+                    "",
+                    __import__(
+                        "apps.repositories.views", fromlist=["GitHubWebhookView"]
+                    ).GitHubWebhookView.as_view(),
+                    name="github-webhook",
+                ),
+            ]
+        ),
+    ),
 ]
