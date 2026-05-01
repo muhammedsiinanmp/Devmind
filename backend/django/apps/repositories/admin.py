@@ -50,7 +50,11 @@ class RepositoryAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
 
     def webhook_status(self, obj: Repository) -> str:
         if obj and obj.webhook_id:
-            return mark_safe('<span style="color: green;">✓ Installed (' + str(obj.webhook_id) + ')</span>')
+            return mark_safe(
+                '<span style="color: green;">✓ Installed ('
+                + str(obj.webhook_id)
+                + ")</span>"
+            )
         return mark_safe('<span style="color: orange;">✗ Not installed</span>')
 
     webhook_status.short_description = "Webhook"  # type: ignore[attr-defined]
