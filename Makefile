@@ -62,6 +62,10 @@ terraform-plan:
 terraform-apply:
 	cd infra/terraform/aws && terraform apply -auto-approve
 
+# ─── Frontend ─────────────────────────────────────────────────
+frontend-dev:
+	cd frontend && pnpm dev
+
 # ─── Observability ────────────────────────────────────────────
 grafana-open:
 	open https://devmind.grafana.net/dashboards
