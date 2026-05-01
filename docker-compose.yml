@@ -78,16 +78,6 @@ services:
       - redis
       - postgres
 
-  frontend:
-    build:
-      context: ./frontend
-      target: dev
-    command: pnpm dev --host
-    ports:
-      - "5173:5173"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
 
   nginx:
     build: ./nginx
