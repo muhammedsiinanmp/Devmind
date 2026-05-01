@@ -73,8 +73,8 @@ class TestVerifyWebhookSignature:
     ) -> None:
         settings.GITHUB_WEBHOOK_SECRET = WEBHOOK_SECRET
         request = _make_signed_request(rf, pr_opened_payload)
-        # Tamper with the body after signature was computed
-        request._stream = [b'{"action": "malicious"}']
+        # Overwrite Django's cached body to simulate tampering
+        request._body = b'{"action": "malicious"}'
         with pytest.raises(WebhookVerificationError):
             verify_webhook_signature(request)
 
@@ -162,4 +162,47 @@ class TestWebhookDispatcher:
         # No RepositoryFactory call — repo doesn't exist in DB
         dispatcher = WebhookDispatcher()
         dispatcher.dispatch(pr_opened_payload, event_type="pull_request")
+        mock_task.assert_not_called()
+
+    def test_ping_event_is_handled(self, mocker: Any) -> None:
+        dispatcher = WebhookDispatcher()
+        # Should not raise — ping is a no-op
+        dispatcher.dispatch({}, event_type="ping")
+
+    def test_review_disabled_skips(
+        self,
+        pr_opened_payload: dict[str, Any],
+        mocker: Any,
+    ) -> None:
+        RepositoryFactory(
+            github_id=123456789, full_name="acme/api", review_enabled=False
+        )
+        mock_task = mocker.patch("apps.repositories.webhooks.trigger_review_task.delay")
+        dispatcher = WebhookDispatcher()
+        dispatcher.dispatch(pr_opened_payload, event_type="pull_request")
+        mock_task.assert_not_called()
+
+    def test_invalid_repository_payload_skips(self, mocker: Any) -> None:
+        payload = {
+            "action": "opened",
+            "number": 1,
+            "repository": "not-a-dict",
+            "pull_request": {"number": 1, "head": {"sha": "a" * 40}},
+        }
+        mock_task = mocker.patch("apps.repositories.webhooks.trigger_review_task.delay")
+        dispatcher = WebhookDispatcher()
+        dispatcher.dispatch(payload, event_type="pull_request")
+        mock_task.assert_not_called()
+
+    def test_invalid_pr_payload_skips(self, mocker: Any) -> None:
+        RepositoryFactory(github_id=123456789, full_name="acme/api")
+        payload = {
+            "action": "opened",
+            "number": 1,
+            "repository": {"id": 123456789, "full_name": "acme/api"},
+            "pull_request": "not-a-dict",
+        }
+        mock_task = mocker.patch("apps.repositories.webhooks.trigger_review_task.delay")
+        dispatcher = WebhookDispatcher()
+        dispatcher.dispatch(payload, event_type="pull_request")
         mock_task.assert_not_called()

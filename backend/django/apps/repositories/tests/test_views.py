@@ -7,11 +7,9 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from django.test import RequestFactory
 from rest_framework import status
 from rest_framework.test import APIClient
 
-from apps.repositories.models import Repository
 from apps.repositories.tests.factories import RepositoryFactory, UserFactory
 
 
@@ -99,8 +97,8 @@ class TestWebhookView:
         sig = "sha256=" + hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
         return client.post(
             "/api/v1/webhooks/github/",
-            data=payload,
-            format="json",
+            data=body,
+            content_type="application/json",
             HTTP_X_HUB_SIGNATURE_256=sig,
             HTTP_X_GITHUB_EVENT=event,
         )

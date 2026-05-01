@@ -3,18 +3,17 @@ GitHub API service layer.
 
 Design rules enforced here:
 1. No Django ORM access — services are pure Python, composable by tasks and views.
-2. All HTTP via httpx (sync) — easy to swap to async in FastAPI service.
+2. All HTTP via requests (sync) — easy to swap to async in FastAPI service.
 3. All responses parsed into typed dataclasses before returning.
 4. Network errors retried with tenacity before raising domain exceptions.
 """
 
 from __future__ import annotations
 
-import logging
 import re
 from typing import TYPE_CHECKING, Any
 
-import httpx
+import requests
 import structlog
 from tenacity import (
     retry,
@@ -48,7 +47,7 @@ _RETRYABLE_STATUS = frozenset({500, 502, 503, 504})
 
 def _should_retry(exc: BaseException) -> bool:
     return isinstance(exc, GitHubServiceError) and not isinstance(
-        exc, (GitHubAuthError, GitHubRateLimitError)
+        exc, GitHubAuthError | GitHubRateLimitError
     )
 
 
@@ -61,20 +60,19 @@ class GitHubService:
         repos = service.fetch_user_repositories()
     """
 
-    def __init__(self, access_token: str, user: "User") -> None:
+    def __init__(self, access_token: str, user: User) -> None:
         self._access_token = access_token
         self._user = user
-        self._client = httpx.Client(
-            base_url=GITHUB_API_BASE,
-            headers={
+        self._session = requests.Session()
+        self._session.headers.update(
+            {
                 "Authorization": f"Bearer {access_token}",
                 "Accept": "application/vnd.github+json",
                 "X-GitHub-Api-Version": "2022-11-28",
-            },
-            timeout=30.0,
+            }
         )
 
-    def _handle_response_errors(self, response: httpx.Response) -> None:
+    def _handle_response_errors(self, response: requests.Response) -> None:
         """Translate GitHub HTTP errors into domain exceptions."""
         if (
             response.status_code == 200
@@ -132,7 +130,8 @@ class GitHubService:
         }
 
         while url is not None:
-            response = self._client.get(url, params=params)
+            full_url = GITHUB_API_BASE + url if url.startswith("/") else url
+            response = self._session.get(full_url, params=params, timeout=30.0)
             self._handle_response_errors(response)
             batch: list[dict[str, Any]] = response.json()
             repos.extend(self._parse_repo(r) for r in batch)
@@ -141,8 +140,8 @@ class GitHubService:
             link_header = response.headers.get("Link", "")
             next_match = re.search(r'<([^>]+)>;\s*rel="next"', link_header)
             if next_match:
-                # Next URL is absolute — strip base for httpx
-                url = next_match.group(1).replace(GITHUB_API_BASE, "")
+                # Next URL is absolute — use directly
+                url = next_match.group(1)
                 params = {}  # URL already contains params
             else:
                 url = None
@@ -188,9 +187,10 @@ class GitHubService:
             },
         }
 
-        response = self._client.post(
-            f"/repos/{repo_full_name}/hooks",
+        response = self._session.post(
+            f"{GITHUB_API_BASE}/repos/{repo_full_name}/hooks",
             json=payload,
+            timeout=30.0,
         )
 
         if response.status_code == 422:
@@ -213,7 +213,9 @@ class GitHubService:
 
     def delete_webhook(self, repo_full_name: str, webhook_id: int) -> None:
         """Removes a GitHub webhook. Idempotent — 404 is silently ignored."""
-        response = self._client.delete(f"/repos/{repo_full_name}/hooks/{webhook_id}")
+        response = self._session.delete(
+            f"{GITHUB_API_BASE}/repos/{repo_full_name}/hooks/{webhook_id}", timeout=30.0
+        )
         if response.status_code == 404:
             log.warning(
                 "github.webhook.not_found_on_delete",
@@ -226,12 +228,13 @@ class GitHubService:
 
     def get_pull_request_diff(self, repo_full_name: str, pr_number: int) -> str:
         """Fetches the unified diff for a pull request as a plain string."""
-        response = self._client.get(
-            f"/repos/{repo_full_name}/pulls/{pr_number}",
+        response = self._session.get(
+            f"{GITHUB_API_BASE}/repos/{repo_full_name}/pulls/{pr_number}",
             headers={"Accept": "application/vnd.github.v3.diff"},
+            timeout=30.0,
         )
         self._handle_response_errors(response)
         return response.text
 
     def __del__(self) -> None:
-        self._client.close()
+        self._session.close()

@@ -36,7 +36,9 @@ class Migration(migrations.Migration):
                     "full_name",
                     models.CharField(
                         db_index=True,
-                        help_text="GitHub full name, e.g. 'acme/api'. May change on rename.",
+                        help_text=(
+                            "GitHub full name, e.g. 'acme/api'. May change on rename."
+                        ),
                         max_length=255,
                     ),
                 ),
@@ -59,7 +61,9 @@ class Migration(migrations.Migration):
                     "webhook_id",
                     models.BigIntegerField(
                         blank=True,
-                        help_text="GitHub webhook ID for this repo. Null if not installed.",
+                        help_text=(
+                            "GitHub webhook ID for this repo. Null if not installed."
+                        ),
                         null=True,
                     ),
                 ),
@@ -68,21 +72,28 @@ class Migration(migrations.Migration):
                     models.BooleanField(
                         db_index=True,
                         default=True,
-                        help_text="Kill switch: False disables all DevMind processing for this repo.",
+                        help_text=(
+                            "Kill switch: False disables all DevMind processing for"
+                            " this repo."
+                        ),
                     ),
                 ),
                 (
                     "review_enabled",
                     models.BooleanField(
                         default=True,
-                        help_text="Whether AI code review is enabled for pull requests.",
+                        help_text=(
+                            "Whether AI code review is enabled for pull requests."
+                        ),
                     ),
                 ),
                 (
                     "last_synced_at",
                     models.DateTimeField(
                         blank=True,
-                        help_text="When repository metadata was last synced from GitHub.",
+                        help_text=(
+                            "When repository metadata was last synced from" " GitHub."
+                        ),
                         null=True,
                     ),
                 ),

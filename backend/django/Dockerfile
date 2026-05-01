@@ -2,28 +2,28 @@
 FROM python:3.12-slim AS base
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    POETRY_NO_INTERACTION=1 \
-    POETRY_VENV_IN_PROJECT=1 \
-    POETRY_VERSION=1.8.3
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy
+
+# Copy uv binary from official image (no pip install needed)
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
 
 RUN apt-get update && apt-get install -y --no-install-recommends postgresql-client \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install --no-cache-dir poetry==${POETRY_VERSION}
-
 WORKDIR /app
-COPY pyproject.toml poetry.lock* ./
+COPY pyproject.toml uv.lock* ./
 
 # ---- dev ----
 FROM base AS dev
-RUN poetry install --no-root
+RUN uv sync --frozen
 COPY . .
 EXPOSE 8000
 
 # ---- production ----
 FROM base AS production
-RUN poetry install --no-root --only main
+RUN uv sync --frozen --no-dev
 COPY . .
-RUN poetry run python manage.py collectstatic --noinput
+RUN uv run python manage.py collectstatic --noinput
 EXPOSE 8000
-CMD ["poetry", "run", "gunicorn", "devmind.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "4"]
+CMD ["uv", "run", "gunicorn", "devmind.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "4"]

@@ -21,6 +21,7 @@ from django.http import HttpRequest
 
 from apps.repositories.exceptions import WebhookVerificationError
 from apps.repositories.models import Repository
+from apps.repositories.tasks import trigger_review_task
 from apps.repositories.types import GitHubPayload
 
 if TYPE_CHECKING:
@@ -86,7 +87,7 @@ class WebhookDispatcher:
     def dispatch(self, payload: GitHubPayload, event_type: str) -> None:
         """
         Routes the payload to the appropriate handler based on GitHub event type.
-        Unknown event types are silently ignored (GitHub sends many we don't care about).
+        Unknown event types are silently ignored.
         """
         log.debug("webhook.event.received", event_type=event_type)
 
@@ -103,9 +104,6 @@ class WebhookDispatcher:
         Only routes opened/synchronize/reopened actions to review processing.
         Closed, labeled, review_requested, etc. are ignored.
         """
-        # Import here to avoid circular imports
-        from apps.repositories.tasks import trigger_review_task
-
         action = str(payload.get("action", ""))
         if action not in PR_REVIEW_ACTIONS:
             log.debug("webhook.pr.action.ignored", action=action)

@@ -3,7 +3,6 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
-import responses as rsps
 
 from apps.repositories.models import Repository
 from apps.repositories.tasks import (
@@ -17,7 +16,12 @@ from apps.repositories.types import GitHubRepoData, WebhookInstallResult
 
 @pytest.fixture
 def mock_github_service(mocker: MagicMock) -> MagicMock:
-    return mocker.patch("apps.repositories.tasks.GitHubService")
+    mock = mocker.patch("apps.repositories.tasks.GitHubService")
+    # Provide a real return value so Django ORM doesn't choke on MagicMock
+    mock.return_value.install_webhook.return_value = WebhookInstallResult(
+        webhook_id=123, ping_url="https://...", events=["pull_request"]
+    )
+    return mock
 
 
 @pytest.mark.django_db(transaction=True)
@@ -78,12 +82,38 @@ class TestInitialRepositorySyncTask:
     def test_sets_last_synced_at(self, mock_github_service: MagicMock) -> None:
         user = UserFactory()
         repo = RepositoryFactory(owner=user, github_id=333, last_synced_at=None)
-        mock_github_service.return_value.fetch_user_repositories.return_value = []
+        fake_repo = GitHubRepoData(
+            github_id=333,
+            full_name=repo.full_name,
+            name=repo.name,
+            owner_login=user.github_login,
+            description=repo.description,
+            is_private=repo.is_private,
+            default_branch=repo.default_branch,
+            html_url=repo.html_url,
+            clone_url=repo.clone_url,
+            language=repo.language,
+            stargazers_count=repo.stargazers_count,
+        )
+        mock_github_service.return_value.fetch_user_repositories.return_value = [
+            fake_repo
+        ]
 
         initial_repository_sync_task(user_id=user.pk)
 
         repo.refresh_from_db()
         assert repo.last_synced_at is not None
+
+    def test_skips_if_user_not_found(self, mock_github_service: MagicMock) -> None:
+        """Non-existent user_id should return without error."""
+        initial_repository_sync_task(user_id=99999)
+        mock_github_service.return_value.fetch_user_repositories.assert_not_called()
+
+    def test_skips_if_no_github_token(self, mock_github_service: MagicMock) -> None:
+        """User without a GithubToken should return without error."""
+        user = UserFactory(github_token=False)  # Skip token creation
+        initial_repository_sync_task(user_id=user.pk)
+        mock_github_service.return_value.fetch_user_repositories.assert_not_called()
 
 
 @pytest.mark.django_db(transaction=True)
@@ -112,6 +142,11 @@ class TestInstallWebhookTask:
 
         mock_github_service.return_value.install_webhook.assert_not_called()
 
+    def test_skips_if_repo_not_found(self, mock_github_service: MagicMock) -> None:
+        """Non-existent repo_id should return without error."""
+        install_webhook_task(repo_id=99999)
+        mock_github_service.return_value.install_webhook.assert_not_called()
+
 
 @pytest.mark.django_db(transaction=True)
 class TestRemoveWebhookTask:
@@ -125,3 +160,8 @@ class TestRemoveWebhookTask:
 
         repo.refresh_from_db()
         assert repo.webhook_id is None
+
+    def test_skips_if_repo_not_found(self, mock_github_service: MagicMock) -> None:
+        """Non-existent repo_id should return without error."""
+        remove_webhook_task(repo_id=99999)
+        mock_github_service.return_value.delete_webhook.assert_not_called()

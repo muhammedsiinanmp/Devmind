@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
 
   postgres:
@@ -32,7 +30,7 @@ services:
     build:
       context: ./backend/django
       target: dev
-    command: poetry run python manage.py runserver 0.0.0.0:8000
+    command: uv run python manage.py runserver 0.0.0.0:8000
     ports:
       - "8000:8000"
     env_file: .env
@@ -48,7 +46,7 @@ services:
     build:
       context: ./backend/fastapi
       target: dev
-    command: poetry run uvicorn main:app --host 0.0.0.0 --port 8001 --reload
+    command: uv run uvicorn main:app --host 0.0.0.0 --port 8001 --reload
     ports:
       - "8001:8001"
     env_file: .env
@@ -64,7 +62,7 @@ services:
     build:
       context: ./backend/django
       target: dev
-    command: poetry run celery -A devmind worker -l info -Q default,review,notifications
+    command: uv run celery -A devmind worker -l info -Q default,review,notifications
     env_file: .env
     depends_on:
       - redis
@@ -74,7 +72,7 @@ services:
     build:
       context: ./backend/django
       target: dev
-    command: poetry run celery -A devmind beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    command: uv run celery -A devmind beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
     env_file: .env
     depends_on:
       - redis
@@ -90,6 +88,14 @@ services:
     volumes:
       - ./frontend:/app
       - /app/node_modules
+
+  nginx:
+    build: ./nginx
+    ports:
+      - "80:80"
+    depends_on:
+      - django
+      - fastapi
 
 volumes:
   pg_data:

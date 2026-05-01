@@ -28,7 +28,7 @@ class RepositoryListView(generics.ListAPIView[Repository]):
     serializer_class = RepositorySerializer
     permission_classes = [permissions.IsAuthenticated]
 
-    def get_queryset(self) -> "Repository.objects":  # type: ignore[override]
+    def get_queryset(self) -> Repository.objects:  # type: ignore[override]
         qs = Repository.objects.active().for_user(self.request.user)
         review_enabled = self.request.query_params.get("review_enabled")
         if review_enabled is not None:
@@ -49,7 +49,7 @@ class RepositoryDetailView(generics.RetrieveUpdateAPIView[Repository]):
             return RepositoryUpdateSerializer
         return RepositorySerializer
 
-    def get_queryset(self) -> "Repository.objects":  # type: ignore[override]
+    def get_queryset(self) -> Repository.objects:  # type: ignore[override]
         return Repository.objects.active().for_user(self.request.user)
 
 

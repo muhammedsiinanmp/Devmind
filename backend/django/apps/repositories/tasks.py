@@ -38,7 +38,7 @@ RATE_LIMIT_RETRY_COUNTDOWN = 3600  # 1 hour
     acks_late=True,  # Task re-queued if worker crashes mid-execution
 )
 def initial_repository_sync_task(
-    self: "initial_repository_sync_task", user_id: int
+    self: initial_repository_sync_task, user_id: int
 ) -> None:
     """
     Fetches all GitHub repositories for a user and upserts them to the DB.
@@ -53,7 +53,7 @@ def initial_repository_sync_task(
         return  # Non-retriable — user was deleted
 
     try:
-        github_token = user.githubtoken  # type: ignore[attr-defined]
+        github_token = user.github_token  # type: ignore[attr-defined]
     except Exception:
         log.error("task.initial_sync.no_token", user_id=user_id)
         return
@@ -70,10 +70,10 @@ def initial_repository_sync_task(
             user_id=user_id,
             reset_at=exc.reset_at,
         )
-        raise self.retry(exc=exc, countdown=RATE_LIMIT_RETRY_COUNTDOWN)
+        raise self.retry(exc=exc, countdown=RATE_LIMIT_RETRY_COUNTDOWN) from exc
     except GitHubServiceError as exc:
         log.error("task.initial_sync.github_error", user_id=user_id, error=str(exc))
-        raise self.retry(exc=exc)
+        raise self.retry(exc=exc) from exc
 
     created_count = 0
     updated_count = 0
@@ -119,7 +119,7 @@ def initial_repository_sync_task(
     default_retry_delay=30,
     acks_late=True,
 )
-def install_webhook_task(self: "install_webhook_task", repo_id: int) -> None:
+def install_webhook_task(self: install_webhook_task, repo_id: int) -> None:
     """
     Installs a GitHub webhook for a repository.
     Idempotent: skips if webhook_id is already set.
@@ -141,21 +141,21 @@ def install_webhook_task(self: "install_webhook_task", repo_id: int) -> None:
     log.info("task.install_webhook.start", repo=repo.full_name)
 
     try:
-        github_token = repo.owner.githubtoken  # type: ignore[attr-defined]
+        github_token = repo.owner.github_token  # type: ignore[attr-defined]
         service = GitHubService(
             access_token=github_token.access_token,
             user=repo.owner,
         )
         result = service.install_webhook(repo.full_name)
     except GitHubRateLimitError as exc:
-        raise self.retry(exc=exc, countdown=RATE_LIMIT_RETRY_COUNTDOWN)
+        raise self.retry(exc=exc, countdown=RATE_LIMIT_RETRY_COUNTDOWN) from exc
     except GitHubServiceError as exc:
         log.error(
             "task.install_webhook.failed",
             repo=repo.full_name,
             error=str(exc),
         )
-        raise self.retry(exc=exc)
+        raise self.retry(exc=exc) from exc
 
     repo.webhook_id = result.webhook_id
     repo.save(update_fields=["webhook_id", "updated_at"])
@@ -174,7 +174,7 @@ def install_webhook_task(self: "install_webhook_task", repo_id: int) -> None:
     max_retries=3,
     acks_late=True,
 )
-def remove_webhook_task(self: "remove_webhook_task", repo_id: int) -> None:
+def remove_webhook_task(self: remove_webhook_task, repo_id: int) -> None:
     """
     Removes a GitHub webhook for a repository and clears webhook_id.
     Used when a user disconnects a repository from DevMind.
@@ -196,14 +196,14 @@ def remove_webhook_task(self: "remove_webhook_task", repo_id: int) -> None:
     )
 
     try:
-        github_token = repo.owner.githubtoken  # type: ignore[attr-defined]
+        github_token = repo.owner.github_token  # type: ignore[attr-defined]
         service = GitHubService(
             access_token=github_token.access_token,
             user=repo.owner,
         )
         service.delete_webhook(repo.full_name, webhook_id=repo.webhook_id)  # type: ignore[arg-type]
     except GitHubServiceError as exc:
-        raise self.retry(exc=exc)
+        raise self.retry(exc=exc) from exc
 
     repo.webhook_id = None
     repo.save(update_fields=["webhook_id", "updated_at"])
@@ -220,9 +220,9 @@ def remove_webhook_task(self: "remove_webhook_task", repo_id: int) -> None:
 )
 def trigger_review_task(repo_id: int, pr_number: int, head_sha: str) -> None:
     """
-    Placeholder for Phase 4 review orchestration.
+    Placeholder for Phase 2 review orchestration.
     Enqueued by WebhookDispatcher when a PR is opened/updated.
-    Phase 4 will fill this with the ReviewOrchestrator call.
+    Phase 2 (P2-10) will fill this with the ReviewOrchestrator call.
     """
     log.info(
         "task.trigger_review.received",

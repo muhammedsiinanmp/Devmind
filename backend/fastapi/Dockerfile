@@ -1,22 +1,25 @@
+# ---- base ----
 FROM python:3.12-slim AS base
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    POETRY_NO_INTERACTION=1 \
-    POETRY_VENV_IN_PROJECT=1 \
-    POETRY_VERSION=1.8.3
+    UV_COMPILE_BYTECODE=1 \
+    UV_LINK_MODE=copy
 
-RUN pip install --no-cache-dir poetry==${POETRY_VERSION}
+# Copy uv binary from official image (no pip install needed)
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
 
 WORKDIR /app
-COPY pyproject.toml poetry.lock* ./
+COPY pyproject.toml uv.lock* ./
 
+# ---- dev ----
 FROM base AS dev
-RUN poetry install --no-root
+RUN uv sync --frozen
 COPY . .
 EXPOSE 8001
 
+# ---- production ----
 FROM base AS production
-RUN poetry install --no-root --only main
+RUN uv sync --frozen --no-dev
 COPY . .
 EXPOSE 8001
-CMD ["poetry", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "4"]
+CMD ["uv", "run", "uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8001", "--workers", "4"]

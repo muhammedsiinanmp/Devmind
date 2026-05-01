@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-import json
+import re
 
 import pytest
 import responses as rsps
-from responses import RequestsMock
 
 from apps.repositories.exceptions import (
     GitHubAuthError,
@@ -49,7 +48,7 @@ class TestGitHubServiceFetchRepositories:
     ) -> None:
         rsps.add(
             rsps.GET,
-            "https://api.github.com/user/repos",
+            re.compile(r"https://api.github.com/user/repos"),
             json=[mock_repo_payload],
             status=200,
         )
@@ -63,7 +62,7 @@ class TestGitHubServiceFetchRepositories:
     def test_raises_auth_error_on_401(self, github_service: GitHubService) -> None:
         rsps.add(
             rsps.GET,
-            "https://api.github.com/user/repos",
+            re.compile(r"https://api.github.com/user/repos"),
             json={"message": "Bad credentials"},
             status=401,
         )
@@ -76,7 +75,7 @@ class TestGitHubServiceFetchRepositories:
     ) -> None:
         rsps.add(
             rsps.GET,
-            "https://api.github.com/user/repos",
+            re.compile(r"https://api.github.com/user/repos"),
             json={"message": "rate limit exceeded"},
             status=403,
             headers={"X-RateLimit-Reset": "9999999999"},
@@ -94,7 +93,7 @@ class TestGitHubServiceFetchRepositories:
         """Service must follow Link: rel="next" pagination headers."""
         rsps.add(
             rsps.GET,
-            "https://api.github.com/user/repos",
+            re.compile(r"https://api.github.com/user/repos"),
             json=[mock_repo_payload],
             status=200,
             headers={"Link": '<https://api.github.com/user/repos?page=2>; rel="next"'},
@@ -102,7 +101,7 @@ class TestGitHubServiceFetchRepositories:
         second_repo = {**mock_repo_payload, "id": 999999999, "full_name": "acme/web"}
         rsps.add(
             rsps.GET,
-            "https://api.github.com/user/repos",
+            re.compile(r"https://api.github.com/user/repos"),
             json=[second_repo],
             status=200,
         )

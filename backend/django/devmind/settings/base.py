@@ -25,6 +25,7 @@ DJANGO_APPS = [
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "django.contrib.postgres",
 ]
 
 THIRD_PARTY_APPS = [
@@ -34,6 +35,7 @@ THIRD_PARTY_APPS = [
     "corsheaders",
     "django_celery_beat",
     "django_celery_results",
+    "channels",
 ]
 
 LOCAL_APPS = [
@@ -126,6 +128,8 @@ REST_FRAMEWORK = {
         "anon": "100/hour",
         "user": f"{env.int('API_GLOBAL_RATE_LIMIT', default=1000)}/hour",
     },
+    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
+    "PAGE_SIZE": 20,
 }
 
 SIMPLE_JWT = {
@@ -227,4 +231,32 @@ CACHES = {
         "LOCATION": REDIS_URL,
         "OPTIONS": {"CLIENT_CLASS": "django_redis.client.DefaultClient"},
     }
+}
+
+# Channel Layers (Django Channels for WebSocket support)
+CHANNEL_LAYERS = {
+    "default": {
+        "BACKEND": "channels_redis.core.RedisChannelLayer",
+        "CONFIG": {
+            "hosts": [REDIS_URL],
+        },
+    }
+}
+
+# ── Repositories App ─────────────────────────────────────────────────────────
+
+# Public URL used to construct webhook callback URLs
+# In production: "https://devmind.io"
+# In development: use ngrok URL, e.g. "https://abc123.ngrok.io"
+DEVMIND_PUBLIC_URL = os.environ.get("DEVMIND_PUBLIC_URL", "http://localhost:8000")
+
+
+# ── Celery Queue Routing (add to existing CELERY_TASK_ROUTES) ────────────────
+# Merge with any existing task routes from Phase 1:
+CELERY_TASK_ROUTES = {
+    **globals().get("CELERY_TASK_ROUTES", {}),
+    "repositories.initial_sync": {"queue": "default"},
+    "repositories.install_webhook": {"queue": "default"},
+    "repositories.remove_webhook": {"queue": "default"},
+    "repositories.trigger_review": {"queue": "review"},
 }
