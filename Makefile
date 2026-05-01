@@ -26,21 +26,21 @@ test-all:         make test-django & make test-fastapi & make test-analytics  # 
 
 # ─── Code Quality ─────────────────────────────────────────────
 format:   docker compose exec django uv run black .
-typecheck: docker compose exec django uv run mypy . && docker compose exec fastapi uv run mypy .
+
 
 # ─── Kafka ────────────────────────────────────────────────────
 kafka-topics:   confluent kafka topic list
 kafka-consume:  confluent kafka topic consume $(topic) --from-beginning
 
 # ─── Lambda ───────────────────────────────────────────────────
-# lambda-deploy:  cd lambda/$(function) && zip -r function.zip . && aws lambda update-function-code --function-name $(function) --zip-file fileb://function.zip
+lambda-deploy:  cd lambda/$(function) && zip -r function.zip . && aws lambda update-function-code --function-name $(function) --zip-file fileb://function.zip
 
 # ─── Terraform ────────────────────────────────────────────────
 terraform-plan:   cd infra/terraform/aws && terraform plan
 terraform-apply:  cd infra/terraform/aws && terraform apply -auto-approve
 
 # ─── Observability ────────────────────────────────────────────
-# grafana-open:  open https://devmind.grafana.net/dashboards
+grafana-open:  open https://devmind.grafana.net/dashboards
 
 # ─── Development Utilities ────────────────────────────────────
 ngrok:   ngrok http 8000  # print URL, update DEVMIND_PUBLIC_URL
