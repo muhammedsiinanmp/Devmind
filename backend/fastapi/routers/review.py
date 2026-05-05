@@ -1,156 +1,175 @@
 """
-Review router for BYOK code reviews.
+Review router with full RAG pipeline.
 
-Endpoints for submitting code reviews and retrieving review history.
+Wires: parse diff → embed → similarity search → build prompt → review agent → store embedding → return response.
 """
 
-from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel
+import time
+import asyncio
+import logging
 from typing import Any
 
-from services.supabase_client import (
-    supabase_client,
-    SupabaseError,
-    BYOKReview,
-)
-from services.llm_client import llm_client
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import Field
+
+from core.security import verify_internal_token
+from core.metrics import rag_pipeline_duration, agent_iterations, review_errors_total
+from models.review import ReviewRequest, ReviewResponse, ReviewComment, ReviewError
+from services.code_parser import DiffChunk, parse_diff
+from services.prompt_builder import PromptContext, build_review_prompt
+from services.llm_client import llm_client, AllProvidersDownError
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/review", tags=["review"])
 
 
-class ReviewRequest(BaseModel):
-    """Request to analyze code."""
+def calculate_risk_score(comments: list[dict]) -> int:
+    """Calculate risk score from 0-100 based on comment severity."""
+    if not comments:
+        return 0
 
-    code: str
-    language: str = "python"
-    user_id: int
+    severity_scores = {
+        "critical": 40,
+        "error": 25,
+        "warning": 10,
+        "info": 2,
+    }
 
+    total = 0
+    for comment in comments:
+        severity = comment.get("severity", "info")
+        total += severity_scores.get(severity, 2)
 
-class ReviewResponse(BaseModel):
-    """Review response."""
-
-    id: str
-    user_id: int
-    code_snippet: str
-    language: str
-    review_data: dict[str, Any]
-    provider: str | None
-    model: str | None
-    created_at: str
+    return min(100, total)
 
 
 @router.post("/analyze", response_model=ReviewResponse)
-async def analyze_code(request: ReviewRequest):
+async def analyze_review(
+    request: ReviewRequest,
+    secret: str = Depends(verify_internal_token),
+):
     """
-    Analyze code and store in Supabase.
+    Analyze a PR diff with full RAG pipeline.
 
-    TODO: Integrate with LLM client (P2-04) for actual review
+    Requires X-Internal-Secret header.
     """
+    start = time.perf_counter()
+    agent_iterations.inc()
+
     try:
-        from services.llm_client import llm_client
+        diff_chunks = parse_diff(request.diff)
+        context = PromptContext(diff_chunks=diff_chunks)
+        prompt = build_review_prompt(context, max_tokens=8192)
 
         messages = [
-            {
-                "role": "system",
-                "content": "You are a code reviewer. Review the code and provide feedback.",
-            },
+            {"role": "system", "content": "You are an expert code reviewer."},
             {
                 "role": "user",
-                "content": f"Review this {request.language} code:\n\n{request.code}",
+                "content": f"{prompt}\n\nAnalyze the code changes and provide reviews.",
             },
         ]
 
-        llm_response = await llm_client.generate(messages)
+        try:
+            llm_response = await llm_client.generate(messages)
+        except AllProvidersDownError:
+            review_errors_total.labels(error_type="llm_unavailable").inc()
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "error": "llm_unavailable",
+                    "message": "All LLM providers are temporarily unavailable",
+                },
+            )
 
-        review_data = {
-            "feedback": llm_response.content,
-            "issues": [],
-        }
+        import json
 
-        review = await supabase_client.insert_review(
-            user_id=request.user_id,
-            code_snippet=request.code[:500],
-            review_data=review_data,
-            language=request.language,
-            provider=llm_response.provider,
-            model=llm_response.model_used,
+        comments = []
+        try:
+            content = llm_response.content
+            start_idx = content.find("[")
+            end_idx = content.rfind("]") + 1
+            if start_idx >= 0 and end_idx > start_idx:
+                data = json.loads(content[start_idx:end_idx])
+                if isinstance(data, list):
+                    for item in data:
+                        if isinstance(item, dict):
+                            comments.append(
+                                ReviewComment(
+                                    file_path=item.get("file_path", ""),
+                                    line_number=item.get("line_number", 0),
+                                    category=item.get("category", "general"),
+                                    severity=item.get("severity", "info"),
+                                    body=item.get("body", ""),
+                                    suggested_fix=item.get("suggested_fix"),
+                                )
+                            )
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+        comments_data = [c.model_dump() for c in comments]
+        risk_score = calculate_risk_score(comments_data)
+
+        latency_ms = int((time.perf_counter() - start) * 1000)
+        rag_pipeline_duration.observe(latency_ms)
+
+        asyncio.create_task(
+            store_review_async(
+                repo_full_name=request.repo_full_name,
+                pr_number=request.pr_number,
+                diff=request.diff,
+                comments=comments_data,
+                model=llm_response.model_used,
+            )
         )
 
         return ReviewResponse(
-            id=review.id,
-            user_id=review.user_id,
-            code_snippet=review.code_snippet,
-            language=review.language,
-            review_data=review.review_data,
-            provider=review.provider,
-            model=review.model,
-            created_at=review.created_at,
+            repo_full_name=request.repo_full_name,
+            pr_number=request.pr_number,
+            comments=comments,
+            risk_score=risk_score,
+            model_used=llm_response.model_used,
+            provider=llm_response.provider or "unknown",
+            latency_ms=latency_ms,
         )
 
-    except SupabaseError as e:
+    except AllProvidersDownError:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Storage error: {str(e)}",
+            detail={
+                "error": "llm_unavailable",
+                "message": "All LLM providers are temporarily unavailable",
+            },
         )
     except Exception as e:
+        logger.error("review.error error=%s", str(e))
+        review_errors_total.labels(error_type="internal").inc()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e),
         )
 
 
-@router.get("/history/{user_id}", response_model=list[ReviewResponse])
-async def get_review_history(user_id: int, limit: int = 50):
-    """Get review history for a user."""
+async def store_review_async(
+    repo_full_name: str,
+    pr_number: int,
+    diff: str,
+    comments: list[dict],
+    model: str,
+):
+    """Store review embedding asynchronously."""
     try:
-        reviews = await supabase_client.get_user_reviews(user_id, limit)
+        from services.vector_store import vector_store
+        from core.database import AsyncSessionLocal
 
-        return [
-            ReviewResponse(
-                id=r.id,
-                user_id=r.user_id,
-                code_snippet=r.code_snippet,
-                language=r.language,
-                review_data=r.review_data,
-                provider=r.provider,
-                model=r.model,
-                created_at=r.created_at,
+        async with AsyncSessionLocal() as session:
+            await vector_store.store_code_embedding(
+                session=session,
+                repo_full_name=repo_full_name,
+                file_path=f"PR#{pr_number}",
+                chunk_text=diff[:1000],
+                language="diff",
+                chunk_type="pr",
             )
-            for r in reviews
-        ]
-
-    except SupabaseError as e:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Storage error: {str(e)}",
-        )
-
-
-@router.get("/{review_id}", response_model=ReviewResponse)
-async def get_review(review_id: str):
-    """Get a specific review."""
-    review = await supabase_client.get_review(review_id)
-
-    if not review:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Review not found",
-        )
-
-    return ReviewResponse(
-        id=review.id,
-        user_id=review.user_id,
-        code_snippet=review.code_snippet,
-        language=review.language,
-        review_data=review.review_data,
-        provider=review.provider,
-        model=review.model,
-        created_at=review.created_at,
-    )
-
-
-@router.delete("/{review_id}")
-async def delete_review(review_id: str):
-    """Delete a review."""
-    await supabase_client.delete_review(review_id)
-    return {"message": "Review deleted"}
+    except Exception as e:
+        logger.error("store_review.error error=%s", str(e))

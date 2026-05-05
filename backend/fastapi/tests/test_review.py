@@ -1,129 +1,129 @@
 """
-Tests for the review router.
+Tests for review router endpoint.
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
-from routers.review import (
-    analyze_code,
-    get_review_history,
-    get_review,
-    delete_review,
-)
-from services.supabase_client import BYOKReview
+from routers.review import analyze_review, calculate_risk_score
+from models.review import ReviewRequest, ReviewComment
 
 
-class TestReviewEndpoints:
+class TestCalculateRiskScore:
+    def test_empty_comments(self):
+        score = calculate_risk_score([])
+        assert score == 0
+
+    def test_critical_severity(self):
+        score = calculate_risk_score([{"severity": "critical"}])
+        assert score == 40
+
+    def test_error_severity(self):
+        score = calculate_risk_score([{"severity": "error"}])
+        assert score == 25
+
+    def test_warning_severity(self):
+        score = calculate_risk_score([{"severity": "warning"}])
+        assert score == 10
+
+    def test_info_severity(self):
+        score = calculate_risk_score([{"severity": "info"}])
+        assert score == 2
+
+    def test_multiple_comments(self):
+        comments = [
+            {"severity": "critical"},
+            {"severity": "error"},
+            {"severity": "warning"},
+        ]
+        score = calculate_risk_score(comments)
+        assert score == 75
+
+    def test_caps_at_100(self):
+        comments = [{"severity": "critical"}] * 10
+        score = calculate_risk_score(comments)
+        assert score == 100
+
+
+class TestReviewModels:
+    def test_review_comment(self):
+        comment = ReviewComment(
+            file_path="app.py",
+            line_number=10,
+            category="security",
+            severity="critical",
+            body="SQL injection vulnerability",
+            suggested_fix="Use parameterized queries",
+        )
+        assert comment.file_path == "app.py"
+        assert comment.severity == "critical"
+
+    def test_review_request(self):
+        request = ReviewRequest(
+            diff="--- a/app.py\n+++ b/app.py",
+            repo_full_name="owner/repo",
+            pr_number=123,
+        )
+        assert request.repo_full_name == "owner/repo"
+        assert request.pr_number == 123
+
+
+class TestAnalyzeEndpoint:
     @pytest.mark.asyncio
-    async def test_analyze_code_success(self):
+    async def test_analyze_with_secret(self):
         from services.llm_client import LLMResponse
-        from routers.review import ReviewRequest
 
-        mock_llm = AsyncMock()
-        mock_llm.generate.return_value = LLMResponse(
-            content="Review feedback",
+        request = ReviewRequest(
+            diff="--- a/app.py\n+++ b/app.py\n@@ -1 +1 @@\n+new line",
+            repo_full_name="owner/repo",
+            pr_number=1,
+        )
+
+        mock_response = LLMResponse(
+            content='[{"file_path": "app.py", "line_number": 1, "category": "security", "severity": "warning", "body": "Good", "suggested_fix": null}]',
             model_used="google/gemini",
             provider="google",
             prompt_tokens=10,
             completion_tokens=5,
         )
 
-        mock_review = BYOKReview(
-            id="review-1",
-            user_id=1,
-            code_snippet="print('hello')",
-            language="python",
-            review_data={"feedback": "Good"},
-            provider="google",
-            model="gemini",
-            created_at="2025-01-01T00:00:00Z",
+        with patch("routers.review.llm_client") as mock_llm:
+            mock_llm.generate = AsyncMock(return_value=mock_response)
+
+            response = await analyze_review(request, secret="valid-secret")
+
+            assert response.repo_full_name == "owner/repo"
+            assert response.pr_number == 1
+            assert response.risk_score >= 0
+            assert response.risk_score <= 100
+
+    @pytest.mark.asyncio
+    async def test_analyze_handles_error(self):
+        request = ReviewRequest(
+            diff="test diff",
+            repo_full_name="owner/repo",
+            pr_number=1,
         )
 
-        with patch("services.llm_client.llm_client", mock_llm):
-            with patch("routers.review.supabase_client") as mock_client:
-                mock_client.insert_review = AsyncMock(return_value=mock_review)
-
-                result = await analyze_code(
-                    ReviewRequest(code="print('hello')", language="python", user_id=1)
-                )
-
-                assert result.id == "review-1"
-                assert result.user_id == 1
-
-    @pytest.mark.asyncio
-    async def test_analyze_code_supabase_error(self):
-        from services.supabase_client import SupabaseError
-        from routers.review import ReviewRequest
-
-        mock_llm = AsyncMock()
-        mock_llm.generate.return_value = MagicMock()
-
-        with patch("services.llm_client.llm_client", mock_llm):
-            with patch("routers.review.supabase_client") as mock_client:
-                mock_client.insert_review.side_effect = SupabaseError("Error")
-
-                with pytest.raises(Exception):
-                    await analyze_code(
-                        ReviewRequest(code="test", language="python", user_id=1)
-                    )
-
-    @pytest.mark.asyncio
-    async def test_get_review_history(self):
-        mock_reviews = [
-            BYOKReview(
-                id="review-1",
-                user_id=1,
-                code_snippet="test",
-                language="python",
-                review_data={"feedback": "Good"},
-                provider="google",
-                model="gemini",
-                created_at="2025-01-01T00:00:00Z",
-            )
-        ]
-
-        with patch("routers.review.supabase_client") as mock_client:
-            mock_client.get_user_reviews = AsyncMock(return_value=mock_reviews)
-
-            result = await get_review_history(user_id=1)
-
-            assert len(result) == 1
-            assert result[0].id == "review-1"
-
-    @pytest.mark.asyncio
-    async def test_get_review_found(self):
-        mock_review = BYOKReview(
-            id="review-1",
-            user_id=1,
-            code_snippet="test",
-            language="python",
-            review_data={"feedback": "Good"},
-            provider="google",
-            model="gemini",
-            created_at="2025-01-01T00:00:00Z",
-        )
-
-        with patch("routers.review.supabase_client") as mock_client:
-            mock_client.get_review = AsyncMock(return_value=mock_review)
-
-            result = await get_review("review-1")
-
-            assert result.id == "review-1"
-
-    @pytest.mark.asyncio
-    async def test_get_review_not_found(self):
-        with patch("routers.review.supabase_client") as mock_client:
-            mock_client.get_review = AsyncMock(return_value=None)
+        with patch("routers.review.llm_client") as mock_llm:
+            mock_llm.generate.side_effect = Exception("Test error")
 
             with pytest.raises(Exception):
-                await get_review("review-1")
+                await analyze_review(request, secret="valid-secret")
 
-    @pytest.mark.asyncio
-    async def test_delete_review(self):
-        with patch("routers.review.supabase_client") as mock_client:
-            mock_client.delete_review = AsyncMock(return_value=True)
 
-            result = await delete_review("review-1")
+class TestReviewRouter:
+    def test_router_exists(self):
+        from routers.review import router
 
-            assert result["message"] == "Review deleted"
+        assert router is not None
+
+    def test_router_prefix(self):
+        from routers.review import router
+
+        assert router.prefix == "/review"
+
+    def test_router_tags(self):
+        from routers.review import router
+
+        assert "review" in router.tags
