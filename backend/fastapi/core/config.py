@@ -17,6 +17,13 @@ class Settings(BaseSettings):
     openai_max_tokens: int = 4096
     openai_temperature: float = 0.2
 
+    # LLM Client (Google, Groq, GitHub)
+    google_ai_api_key: str = ""
+    groq_api_key: str = ""
+    github_token: str = ""
+    llm_failover_enabled: bool = True
+    primary_llm_provider: str = "google"
+
     # Security
     fastapi_internal_secret: str = ""
 
@@ -25,7 +32,7 @@ class Settings(BaseSettings):
     sentry_environment: str = "development"
     sentry_traces_sample_rate: float = 0.1
 
-    # Rate limiting
+    # Rate Limiting
     review_rate_limit_per_hour: int = 20
 
 
