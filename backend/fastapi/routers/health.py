@@ -1,6 +1,8 @@
 from fastapi import APIRouter
 from sqlalchemy import text
+
 from core.database import AsyncSessionLocal
+from services.llm_client import MODEL_CHAIN, check_provider_health
 
 router = APIRouter(tags=["health"])
 
@@ -14,4 +16,9 @@ async def health_check():
     except Exception as e:
         db_status = f"error: {e}"
 
-    return {"status": "ok", "db": db_status}
+    llm_status = {}
+    for config in MODEL_CHAIN:
+        provider, is_healthy = await check_provider_health(config)
+        llm_status[provider] = "ok" if is_healthy else "error"
+
+    return {"status": "ok", "db": db_status, "llm": llm_status}
