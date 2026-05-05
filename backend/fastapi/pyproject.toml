@@ -40,7 +40,7 @@ asyncio_mode = "auto"
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "--cov=. --cov-omit=tests/* --cov-report=term-missing --cov-fail-under=95"
+addopts = "-v --cov=. --cov-report=term-missing --cov-fail-under=95"
 
 [tool.black]
 line-length = 88
