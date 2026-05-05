@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     # Rate Limiting
     review_rate_limit_per_hour: int = 20
 
+    # Supabase (for BYOK reviews storage)
+    supabase_url: str = ""
+    supabase_service_key: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:
