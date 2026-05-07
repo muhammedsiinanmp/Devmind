@@ -95,6 +95,8 @@ class ReviewOrchestrator:
                 update_fields=["status", "risk_score", "summary", "completed_at"]
             )
 
+            self._trigger_github_post()
+
             return result
 
         except Exception as exc:
@@ -206,6 +208,22 @@ class ReviewOrchestrator:
             parts.append(f"{warnings} warning(s)")
 
         return ", ".join(parts) if parts else "Review complete."
+
+    def _trigger_github_post(self) -> None:
+        """Trigger async task to post comments to GitHub."""
+        try:
+            from apps.reviews.tasks import post_github_comments_task
+
+            post_github_comments_task.delay(self.review.pk)
+            logger.info(
+                "orchestrator.github_post_triggered review_id=%d", self.review.pk
+            )
+        except Exception as e:
+            logger.error(
+                "orchestrator.github_post_failed review_id=%d error=%s",
+                self.review.pk,
+                str(e),
+            )
 
 
 def trigger_review_task(review_id: int) -> None:
