@@ -42,6 +42,34 @@ def trigger_review_task(self, review_id: int):
         raise self.retry(exc=e)
 
 
+@shared_task(bind=True, max_retries=3, default_retry_delay=60)
+def post_github_comments_task(self, review_id: int):
+    """
+    Post review comments to GitHub PR.
+
+    Args:
+        review_id: ID of the completed Review
+
+    Note:
+        Separate from trigger_review_task - allows retry without re-running review.
+    """
+    try:
+        from apps.reviews.services.github_poster import post_github_comments
+
+        status_codes = post_github_comments(review_id)
+
+        logger.info(
+            "github_comments.posted review_id=%d calls=%d",
+            review_id,
+            len(status_codes),
+        )
+        return status_codes
+
+    except Exception as e:
+        logger.error("github_comments.failed review_id=%d error=%s", review_id, str(e))
+        raise self.retry(exc=e)
+
+
 @shared_task
 def cleanup_old_reviews(days: int = 30):
     """

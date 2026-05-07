@@ -95,6 +95,10 @@ class ReviewOrchestrator:
                 update_fields=["status", "risk_score", "summary", "completed_at"]
             )
 
+            self._trigger_github_post()
+
+            self._produce_kafka_event()
+
             return result
 
         except Exception as exc:
@@ -206,6 +210,53 @@ class ReviewOrchestrator:
             parts.append(f"{warnings} warning(s)")
 
         return ", ".join(parts) if parts else "Review complete."
+
+    def _trigger_github_post(self) -> None:
+        """Trigger async task to post comments to GitHub."""
+        try:
+            from apps.reviews.tasks import post_github_comments_task
+
+            post_github_comments_task.delay(self.review.pk)
+            logger.info(
+                "orchestrator.github_post_triggered review_id=%d", self.review.pk
+            )
+        except Exception as e:
+            logger.error(
+                "orchestrator.github_post_failed review_id=%d error=%s",
+                self.review.pk,
+                str(e),
+            )
+
+    def _produce_kafka_event(self) -> None:
+        """Produce review completed event to Kafka."""
+        try:
+            from devmind.kafka import produce, TOPIC_REVIEW_COMPLETED
+
+            payload = {
+                "review_id": self.review.pk,
+                "repository_full_name": self.review.repository.full_name,
+                "pr_number": self.review.pr_number,
+                "pr_title": self.review.pr_title,
+                "head_sha": self.review.head_sha,
+                "status": self.review.status,
+                "risk_score": self.review.risk_score,
+                "summary": self.review.summary,
+                "completed_at": (
+                    self.review.completed_at.isoformat()
+                    if self.review.completed_at
+                    else None
+                ),
+            }
+            produce(TOPIC_REVIEW_COMPLETED, payload)
+            logger.info(
+                "orchestrator.kafka_event_produced review_id=%d", self.review.pk
+            )
+        except Exception as e:
+            logger.error(
+                "orchestrator.kafka_event_failed review_id=%d error=%s",
+                self.review.pk,
+                str(e),
+            )
 
 
 def trigger_review_task(review_id: int) -> None:
