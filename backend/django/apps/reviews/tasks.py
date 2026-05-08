@@ -91,3 +91,54 @@ def cleanup_old_reviews(days: int = 30):
 
     logger.info("reviews.cleanedup count=%d", deleted_count)
     return deleted_count
+
+
+@shared_task(bind=True, max_retries=3, default_retry_delay=60)
+def full_repo_scan_task(self, scan_id: int):
+    """
+    Execute a full repository scan.
+
+    Args:
+        scan_id: ID of the RepoScan to process
+    """
+    try:
+        from apps.reviews.models import RepoScan
+        from django.conf import settings
+        import httpx
+
+        scan = RepoScan.objects.get(pk=scan_id)
+
+        scan.status = "scanning"
+        scan.save(update_fields=["status"])
+
+        fastapi_url = getattr(settings, "FASTAPI_BASE_URL", "http://fastapi:8001")
+        internal_secret = getattr(settings, "FASTAPI_INTERNAL_SECRET", "")
+
+        response = httpx.post(
+            f"{fastapi_url}/scan/full",
+            json={
+                "repo_full_name": scan.repository.full_name,
+                "repo_url": scan.repository.clone_url,
+                "branch": scan.repository.default_branch,
+            },
+            headers={"X-Internal-Secret": internal_secret},
+            timeout=5.0,
+        )
+
+        if response.status_code == 202:
+            response_data = response.json()
+            scan.scan_id = response_data.get("scan_id", scan_id)
+            scan.status = "scanning"
+            scan.save(update_fields=["scan_id", "status"])
+            logger.info("scan.started scan_id=%d", scan.pk)
+        else:
+            raise Exception(f"FastAPI returned {response.status_code}")
+
+    except Exception as e:
+        scan = RepoScan.objects.filter(pk=scan_id).first()
+        if scan:
+            scan.status = "failed"
+            scan.summary = f"Scan failed: {str(e)[:200]}"
+            scan.save(update_fields=["status", "summary"])
+        logger.error("scan.failed scan_id=%d error=%s", scan_id, str(e))
+        raise self.retry(exc=e)

@@ -8,7 +8,11 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.reviews.models import Review
-from apps.reviews.serializers import ReviewListSerializer, ReviewSerializer
+from apps.reviews.serializers import (
+    ReviewListSerializer,
+    ReviewSerializer,
+    RepoScanSerializer,
+)
 
 
 class ReviewListView(ListAPIView):
@@ -126,3 +130,83 @@ class ReviewCreateView(APIView):
             {"error": "Reviews are created via webhook events"},
             status=status.HTTP_405_METHOD_NOT_ALLOWED,
         )
+
+
+class RepoScanTriggerView(APIView):
+    """
+    POST /api/v1/repositories/{id}/scan/
+    Trigger a full repository scan.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request: Request, repo_id: int) -> Response:
+        from django.utils import timezone
+        from datetime import timedelta
+        from apps.repositories.models import Repository
+        from apps.reviews.models import RepoScan
+        from apps.reviews.tasks import full_repo_scan_task
+
+        try:
+            repo = Repository.objects.get(pk=repo_id, owner=request.user)
+        except Repository.DoesNotExist:
+            return Response(
+                {"error": "Repository not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        last_scan = (
+            RepoScan.objects.filter(repository=repo).order_by("-created_at").first()
+        )
+
+        if last_scan and last_scan.status == "completed":
+            time_since_last = timezone.now() - last_scan.created_at
+            if time_since_last < timedelta(hours=24):
+                retry_after = 24 * 3600 - int(time_since_last.total_seconds())
+                return Response(
+                    {
+                        "error": "Scan rate limit exceeded",
+                        "retry_after": retry_after,
+                        "message": f"Last scan was {time_since_last.total_seconds() / 3600:.1f} hours ago. Wait 24 hours between scans.",
+                    },
+                    status=status.HTTP_429_TOO_MANY_REQUESTS,
+                    headers={"Retry-After": str(retry_after)},
+                )
+
+        scan = RepoScan.objects.create(
+            repository=repo,
+            status="queued",
+            progress=0,
+            files_scanned=0,
+            total_files=0,
+        )
+
+        full_repo_scan_task.delay(scan.pk)
+
+        return Response(
+            {
+                "scan_id": scan.pk,
+                "status": "queued",
+                "message": f"Scan queued for {repo.full_name}",
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+
+class RepoScanDetailView(RetrieveAPIView):
+    """
+    GET /api/v1/scans/{scan_id}/
+    Get scan details and report.
+    """
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = RepoScanSerializer
+
+    def get_queryset(self):
+        from apps.reviews.models import RepoScan
+        from apps.repositories.models import Repository
+
+        user_repos = Repository.objects.filter(owner=self.request.user).values_list(
+            "pk", flat=True
+        )
+        return RepoScan.objects.filter(repository_id__in=user_repos)

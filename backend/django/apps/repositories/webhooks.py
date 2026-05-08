@@ -157,3 +157,22 @@ class WebhookDispatcher:
             pr_number=pr_number,
             head_sha=head_sha,
         )
+
+        self._produce_pr_opened_event(full_name, pr_number, head_sha, action)
+
+    def _produce_pr_opened_event(
+        self, repo_full_name: str, pr_number: int, head_sha: str, action: str
+    ) -> None:
+        """Produce PR opened event to Kafka."""
+        try:
+            from devmind.kafka import produce, TOPIC_PR_OPENED
+
+            payload = {
+                "repository_full_name": repo_full_name,
+                "pr_number": pr_number,
+                "head_sha": head_sha,
+                "action": action,
+            }
+            produce(TOPIC_PR_OPENED, payload)
+        except Exception as e:
+            log.error("webhook.kafka_event_failed error=%s", str(e))
