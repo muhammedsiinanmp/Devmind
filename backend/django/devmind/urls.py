@@ -57,4 +57,5 @@ urlpatterns: list[Any] = [
             ]
         ),
     ),
+    path("", include("django_prometheus.urls")),
 ]
