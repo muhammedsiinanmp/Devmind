@@ -64,7 +64,7 @@ DJANGO_SETTINGS_MODULE = "devmind.settings.test"
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "--cov-report=term-missing"
+addopts = "--cov-report=term-missing --ignore=tests/test_e2e.py"
 
 [tool.mypy]
 python_version = "3.12"

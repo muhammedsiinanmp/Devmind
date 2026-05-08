@@ -8,17 +8,23 @@ import pytest
 from unittest.mock import patch, MagicMock
 from django.test import override_settings
 
-from apps.reviews.models import Review, ReviewComment, Repository
+from apps.reviews.models import Review, ReviewComment
+from apps.repositories.models import Repository
 from apps.reviews.services.orchestrator import ReviewOrchestrator
 
 
 @pytest.fixture
-def repository(db):
+def repository(db, django_user_model):
+    user = django_user_model.objects.create_user(
+        username="testuser", password="testpass"
+    )
     return Repository.objects.create(
         name="test-repo",
         full_name="testuser/test-repo",
-        owner=MagicMock(),
-        github_token="test_token",
+        github_id=12345,
+        owner=user,
+        html_url="https://github.com/testuser/test-repo",
+        clone_url="https://github.com/testuser/test-repo.git",
     )
 
 

@@ -13,13 +13,13 @@ from routers.scan import router as scan_router
 settings = get_settings()
 
 
-if settings.sentry_dsn:
+if settings.sentry_dsn_fastapi:
     import sentry_sdk
 
     sentry_sdk.init(
-        dsn=settings.sentry_dsn,
+        dsn=settings.sentry_dsn_fastapi,
         environment=settings.sentry_environment,
-        traces_sample_rate=0.1,
+        traces_sample_rate=settings.sentry_traces_sample_rate,
     )
 
 
