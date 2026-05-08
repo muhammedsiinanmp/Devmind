@@ -249,6 +249,8 @@ class RepoScan(models.Model):
     warning_count = models.IntegerField(default=0)
     info_count = models.IntegerField(default=0)
     scan_duration_ms = models.IntegerField(null=True, blank=True)
+    scan_id = models.IntegerField(null=True, blank=True, help_text="FastAPI scan ID")
+    summary = models.TextField(blank=True, default="")
     created_at = models.DateTimeField(auto_now_add=True)
     completed_at = models.DateTimeField(null=True, blank=True)
 
