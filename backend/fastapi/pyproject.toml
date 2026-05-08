@@ -19,6 +19,7 @@ dependencies = [
     "langgraph>=0.2,<1.0",
     "tiktoken>=0.7,<1.0",
     "prometheus-client>=0.20,<1.0",
+    "prometheus-fastapi-instrumentator>=6.1,<7.0",
 ]
 
 [dependency-groups]
