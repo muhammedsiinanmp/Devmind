@@ -12,13 +12,13 @@ from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
-TOPIC_REVIEW_COMPLETED = "devmind.review.completed"
 TOPIC_PR_OPENED = "devmind.pr.opened"
-TOPIC_PR_CLOSED = "devmind.pr.closed"
-TOPIC_SCAN_COMPLETED = "devmind.scan.completed"
-TOPIC_USER_CREATED = "devmind.user.created"
-TOPIC_REPO_CONNECTED = "devmind.repo.connected"
-TOPIC_WEBHOOK_RECEIVED = "devmind.webhook.received"
+TOPIC_PR_MERGED = "devmind.pr.merged"
+TOPIC_REVIEW_REQUESTED = "devmind.review.requested"
+TOPIC_REVIEW_COMPLETED = "devmind.review.completed"
+TOPIC_REPO_INDEXED = "devmind.repo.indexed"
+TOPIC_CVE_DETECTED = "devmind.cve.detected"
+TOPIC_DIGEST_GENERATE = "devmind.digest.generate"
 
 _producer: Any = None
 

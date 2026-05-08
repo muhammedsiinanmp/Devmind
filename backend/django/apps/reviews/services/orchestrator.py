@@ -52,10 +52,9 @@ class ReviewOrchestrator:
 
     def __init__(self, review: Review):
         self.review = review
-        self.fastapi_url = getattr(settings, "FASTAPI_URL", "http://localhost:8000")
+        self.fastapi_url = getattr(settings, "FASTAPI_BASE_URL", "http://fastapi:8001")
         self.fastapi_secret = getattr(settings, "FASTAPI_INTERNAL_SECRET", "")
 
-    @transaction.atomic
     def run(self) -> ReviewResult:
         """
         Run the full review pipeline.
@@ -92,10 +91,11 @@ class ReviewOrchestrator:
             self._save_results(result)
 
             self.review.status = "completed"
+            self.review.completed_at = timezone.now()
             self.review.risk_score = result.risk_score
             self.review.summary = self._build_summary(result.comments)
             self.review.save(
-                update_fields=["status", "risk_score", "summary", "completed_at"]
+                update_fields=["status", "completed_at", "risk_score", "summary"]
             )
 
             self._push_status_to_channels(
@@ -121,10 +121,13 @@ class ReviewOrchestrator:
     def _fetch_diff(self) -> str:
         """Fetch diff from GitHub."""
         try:
-            from apps.repositories.services.github import GithubService
+            from apps.repositories.services import GitHubService
 
             repo = self.review.repository
-            github_service = GithubService(repo.owner.github_token)
+            github_service = GitHubService(
+                access_token=repo.owner.github_token.access_token,
+                user=repo.owner,
+            )
 
             return github_service.get_pull_request_diff(
                 repo_full_name=repo.full_name,
@@ -183,12 +186,10 @@ class ReviewOrchestrator:
     @transaction.atomic
     def _save_results(self, result: ReviewResult) -> None:
         """Save comments and run record."""
-        run = ReviewRun.objects.create(
+        ReviewRun.objects.create(
             review=self.review,
             model_used=result.model_used,
-            provider=result.provider,
             latency_ms=result.latency_ms,
-            risk_score=result.risk_score,
         )
 
         for comment_data in result.comments:
@@ -199,8 +200,7 @@ class ReviewOrchestrator:
                 category=comment_data.get("category", "general"),
                 severity=comment_data.get("severity", "info"),
                 body=comment_data.get("body", ""),
-                suggested_fix=comment_data.get("suggested_fix"),
-                run=run,
+                suggested_fix=comment_data.get("suggested_fix", ""),
             )
 
     def _build_summary(self, comments: list[dict]) -> str:
@@ -280,16 +280,14 @@ class ReviewOrchestrator:
             group_name = f"review_{self.review.pk}"
 
             message = {
+                "type": "review.status.updated",
                 "review_id": self.review.pk,
                 "status": status,
             }
             if extra:
                 message.update(extra)
 
-            async def _send():
-                await channel_layer.group_send(group_name, message)
-
-            async_to_sync(_send)()
+            async_to_sync(channel_layer.group_send)(group_name, message)
             logger.info(
                 "orchestrator.channel_pushed review_id=%d status=%s",
                 self.review.pk,
@@ -346,20 +344,3 @@ class ReviewOrchestrator:
                 self.review.pk,
                 str(e),
             )
-
-
-def trigger_review_task(review_id: int) -> None:
-    """
-    Celery task to trigger a review.
-
-    Wraps ReviewOrchestrator.run() for async execution.
-    """
-    try:
-        review = Review.objects.get(pk=review_id)
-        orchestrator = ReviewOrchestrator(review)
-        orchestrator.run()
-    except ReviewAlreadyProcessingError:
-        logger.warning("review.already_processing id=%d", review_id)
-    except Exception as e:
-        logger.error("review.task.error id=%d error=%s", review_id, str(e))
-        raise

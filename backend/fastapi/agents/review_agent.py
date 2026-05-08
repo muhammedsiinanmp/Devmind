@@ -331,8 +331,6 @@ def build_review_graph():
         retry_condition,
     )
 
-    graph.add_edge("format_output", END)
-
     return graph.compile()
 
 

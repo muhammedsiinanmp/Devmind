@@ -122,7 +122,7 @@ def full_repo_scan_task(self, scan_id: int):
                 "branch": scan.repository.default_branch,
             },
             headers={"X-Internal-Secret": internal_secret},
-            timeout=5.0,
+            timeout=float(getattr(settings, "FASTAPI_TIMEOUT_SECONDS", 120)),
         )
 
         if response.status_code == 202:

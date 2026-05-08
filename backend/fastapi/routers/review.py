@@ -146,7 +146,10 @@ async def analyze_review(
         review_errors_total.labels(error_type="internal").inc()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
+            detail={
+                "error": "internal_error",
+                "message": "An unexpected error occurred",
+            },
         )
 
 

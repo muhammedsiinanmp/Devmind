@@ -8,6 +8,9 @@ PASSWORD_HASHERS = ["django.contrib.auth.hashers.MD5PasswordHasher"]
 # Disable Sentry in tests
 SENTRY_DSN = ""
 
+# Disable Kafka in tests (producer becomes no-op)
+KAFKA_BOOTSTRAP_SERVERS = ""
+
 # Use in-memory celery for tests (synchronous execution)
 CELERY_TASK_ALWAYS_EAGER = True
 CELERY_TASK_EAGER_PROPAGATES = True

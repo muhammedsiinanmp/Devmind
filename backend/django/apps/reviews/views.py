@@ -36,6 +36,11 @@ class ReviewListView(ListAPIView):
     ordering_fields = ["created_at", "risk_score", "status"]
     ordering = ["-created_at"]
 
+    def get_queryset(self):
+        return Review.objects.select_related("repository").filter(
+            repository__owner=self.request.user
+        )
+
     def get_serializer_class(self):
         if self.request.query_params.get("detail") == "true":
             return ReviewSerializer
@@ -107,6 +112,10 @@ class ReviewRetriggerView(APIView):
         review.completed_at = None
         review.save()
 
+        from apps.reviews.tasks import trigger_review_task
+
+        trigger_review_task.delay(review.pk)
+
         return Response(
             {
                 "message": "Review re-queued successfully",
@@ -175,6 +184,7 @@ class RepoScanTriggerView(APIView):
 
         scan = RepoScan.objects.create(
             repository=repo,
+            triggered_by=request.user,
             status="queued",
             progress=0,
             files_scanned=0,

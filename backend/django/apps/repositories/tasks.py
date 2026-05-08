@@ -220,14 +220,71 @@ def remove_webhook_task(self: remove_webhook_task, repo_id: int) -> None:
 )
 def trigger_review_task(repo_id: int, pr_number: int, head_sha: str) -> None:
     """
-    Placeholder for Phase 2 review orchestration.
     Enqueued by WebhookDispatcher when a PR is opened/updated.
-    Phase 2 (P2-10) will fill this with the ReviewOrchestrator call.
+    Creates a Review record and runs the ReviewOrchestrator.
     """
-    log.info(
-        "task.trigger_review.received",
-        repo_id=repo_id,
-        pr_number=pr_number,
-        head_sha=head_sha[:8],
-    )
-    # Phase 4 implementation goes here
+    from apps.repositories.models import Repository
+    from apps.reviews.models import Review
+    from apps.reviews.services import ReviewOrchestrator, ReviewAlreadyProcessingError
+
+    try:
+        repo = Repository.objects.get(pk=repo_id)
+
+        # Check for existing review on same PR + SHA (idempotency)
+        existing = Review.objects.filter(
+            repository=repo,
+            pr_number=pr_number,
+            head_sha=head_sha,
+        ).first()
+
+        if existing and existing.status in ("processing", "completed"):
+            log.info(
+                "task.trigger_review.skip_existing",
+                repo_id=repo_id,
+                pr_number=pr_number,
+                status=existing.status,
+            )
+            return
+
+        # Create or reuse a pending review
+        if existing and existing.status in ("pending", "failed"):
+            review = existing
+            review.status = "pending"
+            review.save(update_fields=["status"])
+        else:
+            review = Review.objects.create(
+                repository=repo,
+                pr_number=pr_number,
+                pr_title=f"PR #{pr_number}",
+                head_sha=head_sha,
+                base_sha="",
+                diff_url=f"https://github.com/{repo.full_name}/pull/{pr_number}",
+                status="pending",
+            )
+
+        log.info(
+            "task.trigger_review.starting",
+            repo_id=repo_id,
+            pr_number=pr_number,
+            review_id=review.pk,
+        )
+
+        orchestrator = ReviewOrchestrator(review)
+        orchestrator.run()
+
+    except ReviewAlreadyProcessingError:
+        log.warning(
+            "task.trigger_review.already_processing",
+            repo_id=repo_id,
+            pr_number=pr_number,
+        )
+    except Repository.DoesNotExist:
+        log.error("task.trigger_review.repo_not_found", repo_id=repo_id)
+    except Exception as exc:
+        log.error(
+            "task.trigger_review.failed",
+            repo_id=repo_id,
+            pr_number=pr_number,
+            error=str(exc),
+        )
+        raise

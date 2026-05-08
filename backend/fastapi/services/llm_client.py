@@ -260,7 +260,7 @@ async def check_provider_health(config: LLMConfig) -> tuple[str, bool]:
     """
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(
+            response = await client.get(
                 f"{config.base_url}/models",
                 headers={
                     "Authorization": f"Bearer {config.api_key}",
