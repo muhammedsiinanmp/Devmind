@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../../lib/supabase";
 import { Database } from "../../lib/supabase";
-import { RefreshCw, CheckCircle, Clock, XCircle, AlertCircle } from "lucide-react";
+import { RefreshCw, CheckCircle, Clock, XCircle } from "lucide-react";
 
 type ReviewStatus = "pending" | "processing" | "completed" | "failed";
 
@@ -12,13 +12,9 @@ interface ReviewStatusProps {
 
 export default function ReviewStatus({ reviewId, initialStatus }: ReviewStatusProps) {
   const [status, setStatus] = useState<ReviewStatus>(initialStatus || "pending");
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!reviewId) return;
-
-    setLoading(true);
 
     const channel = supabase
       .channel(`review-${reviewId}`)
@@ -36,14 +32,7 @@ export default function ReviewStatus({ reviewId, initialStatus }: ReviewStatusPr
           }
         }
       )
-      .subscribe((err) => {
-        if (err) {
-          console.error("Supabase subscription error:", err);
-          setError("Failed to connect to live updates");
-        } else {
-          setLoading(false);
-        }
-      });
+      .subscribe(() => {});
 
     return () => {
       supabase.removeChannel(channel);
@@ -82,23 +71,10 @@ export default function ReviewStatus({ reviewId, initialStatus }: ReviewStatusPr
   const config = getStatusConfig(status);
   const Icon = config.icon;
 
-  if (loading) {
-    return (
-      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gray-100 text-gray-600 text-sm">
-        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-        Loading...
-      </span>
-    );
-  }
-
   return (
-    <span
-      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-sm ${config.className}`}
-      title={error || undefined}
-    >
+    <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-sm ${config.className}`}>
       <Icon className={`w-3.5 h-3.5 ${status === "processing" ? "animate-spin" : ""}`} />
       {config.label}
-      {error && <AlertCircle className="w-3.5 h-3.5 text-yellow-500 ml-1" />}
     </span>
   );
 }
