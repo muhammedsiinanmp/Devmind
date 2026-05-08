@@ -11,6 +11,7 @@ from typing import Any
 import httpx
 from django.conf import settings
 from django.db import transaction
+from django.utils import timezone
 
 from apps.reviews.models import Review, ReviewComment, ReviewRun
 
@@ -80,6 +81,8 @@ class ReviewOrchestrator:
 
         self.review.status = "processing"
         self.review.save(update_fields=["status"])
+        self._push_status_to_channels("processing")
+        self._push_status_to_supabase("processing")
 
         try:
             diff = self._fetch_diff()
@@ -95,6 +98,12 @@ class ReviewOrchestrator:
                 update_fields=["status", "risk_score", "summary", "completed_at"]
             )
 
+            self._push_status_to_channels(
+                "completed",
+                {"summary": self.review.summary, "risk_score": self.review.risk_score},
+            )
+            self._push_status_to_supabase("completed")
+
             self._trigger_github_post()
 
             self._produce_kafka_event()
@@ -105,6 +114,8 @@ class ReviewOrchestrator:
             self.review.status = "failed"
             self.review.summary = f"Error: {str(exc)[:500]}"
             self.review.save(update_fields=["status", "summary"])
+            self._push_status_to_channels("failed", {"error": str(exc)[:200]})
+            self._push_status_to_supabase("failed")
             raise
 
     def _fetch_diff(self) -> str:
@@ -254,6 +265,84 @@ class ReviewOrchestrator:
         except Exception as e:
             logger.error(
                 "orchestrator.kafka_event_failed review_id=%d error=%s",
+                self.review.pk,
+                str(e),
+            )
+
+    def _push_status_to_channels(self, status: str, extra: dict | None = None) -> None:
+        """Push status update to WebSocket channels."""
+        try:
+            import asyncio
+            from asgiref.sync import async_to_sync
+            from channels.layers import get_channel_layer
+
+            channel_layer = get_channel_layer()
+            group_name = f"review_{self.review.pk}"
+
+            message = {
+                "review_id": self.review.pk,
+                "status": status,
+            }
+            if extra:
+                message.update(extra)
+
+            async def _send():
+                await channel_layer.group_send(group_name, message)
+
+            async_to_sync(_send)()
+            logger.info(
+                "orchestrator.channel_pushed review_id=%d status=%s",
+                self.review.pk,
+                status,
+            )
+        except Exception as e:
+            logger.error(
+                "orchestrator.channel_push_failed review_id=%d error=%s",
+                self.review.pk,
+                str(e),
+            )
+
+    def _push_status_to_supabase(self, status: str) -> None:
+        """Insert status update into Supabase review_status_updates table."""
+        supabase_url = getattr(settings, "SUPABASE_URL", None)
+        supabase_key = getattr(settings, "SUPABASE_SERVICE_KEY", None)
+
+        if not supabase_url or not supabase_key:
+            logger.warning("Supabase not configured, skipping status push")
+            return
+
+        try:
+            import asyncio
+            from asgiref.sync import async_to_sync
+
+            async def _insert():
+                async with httpx.AsyncClient(timeout=10.0) as client:
+                    await client.post(
+                        f"{supabase_url}/rest/v1/review_status_updates",
+                        json={
+                            "review_id": self.review.pk,
+                            "status": status,
+                            "summary": self.review.summary or "",
+                            "risk_score": self.review.risk_score or 0,
+                            "updated_at": timezone.now().isoformat(),
+                        },
+                        headers={
+                            "apikey": supabase_key,
+                            "Authorization": f"Bearer {supabase_key}",
+                            "Content-Type": "application/json",
+                            "Prefer": "return=minimal",
+                        },
+                    )
+
+            async_to_sync(_insert)()
+            logger.info(
+                "orchestrator.supabase_pushed review_id=%d status=%s",
+                self.review.pk,
+                status,
+            )
+        except Exception as e:
+            logger.error(
+                "orchestrator.supabase_push_failed review_id=%d error=%s",
                 self.review.pk,
                 str(e),
             )
