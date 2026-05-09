@@ -14,7 +14,7 @@ build/
 .mypy_cache/
 .ruff_cache/
 htmlcov/
-.coverage
+.coverage*
 coverage.xml
 
 # Django
@@ -54,3 +54,5 @@ dist/
 # My implementation files
 implementation/
 devmind.html
+*.tsbuildinfo
+*.log
