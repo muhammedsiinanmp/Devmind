@@ -61,3 +61,48 @@ class GithubToken(models.Model):
 
     def __str__(self) -> str:
         return f"GithubToken for {self.user.email}"
+
+
+class UserLLMConfig(models.Model):
+    """
+    Stores user's own LLM API keys for BYOK (Bring Your Own Key).
+    Keys are encrypted at rest using Fernet symmetric encryption.
+    """
+
+    PROVIDER_CHOICES = [
+        ("openai", "OpenAI"),
+        ("anthropic", "Anthropic"),
+        ("google_vertex", "Google Vertex AI"),
+        ("mistral", "Mistral"),
+        ("custom", "Custom OpenAI-compatible"),
+    ]
+
+    user = models.ForeignKey(
+        CustomUser,
+        on_delete=models.CASCADE,
+        related_name="llm_configs",
+    )
+    provider = models.CharField(max_length=30, choices=PROVIDER_CHOICES)
+    model_name = models.CharField(max_length=100)
+    api_key = EncryptedCharField(max_length=500)
+    base_url = models.URLField(blank=True, default="")
+    is_active = models.BooleanField(default=True)
+    priority = models.IntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "accounts_userllmconfig"
+        ordering = ["priority", "-created_at"]
+        unique_together = ["user", "provider", "model_name"]
+
+    def __str__(self) -> str:
+        return f"{self.provider}/{self.model_name} for {self.user.email}"
+
+    @property
+    def masked_key(self) -> str:
+        """Return masked version of API key for display."""
+        key = self.api_key
+        if len(key) <= 10:
+            return "***"
+        return f"{key[:7]}***{key[-4:]}"

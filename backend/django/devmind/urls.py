@@ -34,6 +34,7 @@ urlpatterns: list[Any] = [
             [
                 path("auth/", include("apps.accounts.urls")),
                 path("reviews/", include("apps.reviews.urls")),
+                path("settings/", include("apps.accounts.urls")),
                 path("", include("apps.notifications.urls")),
                 path("", include("apps.analytics.urls")),
             ]

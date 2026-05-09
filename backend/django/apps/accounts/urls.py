@@ -6,6 +6,9 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from apps.accounts.views import (
     GitHubOAuthCallbackView,
     GitHubOAuthStartView,
+    LLMConfigDetailView,
+    LLMConfigListCreateView,
+    LLMConfigTestView,
     LogoutView,
     UserMeView,
 )
@@ -24,4 +27,20 @@ urlpatterns: list[Any] = [
     path("token/refresh/", TokenRefreshView.as_view(), name="token-refresh"),
     path("me/", UserMeView.as_view(), name="user-me"),
     path("logout/", LogoutView.as_view(), name="logout"),
+    # LLM Config (BYOK)
+    path(
+        "settings/llm/",
+        LLMConfigListCreateView.as_view(),
+        name="llm-config-list",
+    ),
+    path(
+        "settings/llm/test/",
+        LLMConfigTestView.as_view(),
+        name="llm-config-test",
+    ),
+    path(
+        "settings/llm/<int:pk>/",
+        LLMConfigDetailView.as_view(),
+        name="llm-config-detail",
+    ),
 ]

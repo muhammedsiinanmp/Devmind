@@ -12,6 +12,12 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 
 from core.config import get_settings
+from services.github_client import (
+    GitHubClient,
+    GitHubClientError,
+    get_language,
+    should_skip_path,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +32,7 @@ class ScanRequest(BaseModel):
     repo_full_name: str
     repo_url: str
     branch: str = "main"
+    github_token: str | None = None
 
 
 class ScanStatusResponse(BaseModel):
@@ -253,47 +260,143 @@ def _scan_files_batch(
     return all_issues
 
 
-async def scan_repository(scan_id: int, repo_url: str, branch: str) -> ScanResult:
-    """Scan a repository for issues."""
+async def scan_repository(
+    scan_id: int,
+    repo_full_name: str,
+    repo_url: str,
+    branch: str,
+    github_token: str | None = None,
+) -> ScanResult:
+    """Scan a repository for issues using real GitHub API."""
     start_time = time.perf_counter()
 
     SCAN_PROGRESS[scan_id] = {
         "status": "scanning",
         "files_scanned": 0,
-        "total_files": 100,
+        "total_files": 0,
         "progress": 0,
+        "issues": [],
+        "health_score": 100,
     }
 
-    mock_files = [
-        (
-            "src/main.py",
-            'import os\nimport pickle\n\ndef unsafe():\n    eval("os.system(ls)")',
-        ),
-        ("src/utils.py", 'API_KEY = "sk-1234567890abcdefghijklmnop"'),
-        ("src/config.py", "TODO: Fix this later"),
-        ("src/long.py", "\n".join([f"x = {i}" for i in range(60)])),
-    ]
+    try:
+        # Parse owner/repo from full_name
+        parts = repo_full_name.split("/")
+        if len(parts) != 2:
+            raise ValueError(f"Invalid repo_full_name: {repo_full_name}")
+        owner, repo = parts
 
-    batch_size = 50
-    total_files = len(mock_files)
+        # Initialize GitHub client
+        client = GitHubClient(token=github_token)
 
-    all_issues = []
+        # Get default branch if not specified
+        if not branch:
+            branch = await client.get_default_branch(owner, repo)
 
-    for i in range(0, total_files, batch_size):
-        batch = mock_files[i : i + batch_size]
-        issues = _scan_files_batch(batch, scan_id)
-        all_issues.extend(issues)
-
-        SCAN_PROGRESS[scan_id]["files_scanned"] = min(i + batch_size, total_files)
-        SCAN_PROGRESS[scan_id]["progress"] = int(
-            (SCAN_PROGRESS[scan_id]["files_scanned"] / total_files) * 100
+        # Get repository tree
+        logger.info(f"Fetching tree for {owner}/{repo} branch {branch}")
+        tree = await client.get_repository_tree(
+            owner, repo, branch=branch, recursive=True
         )
 
-        await asyncio.sleep(0.1)
+        # Filter to only code files
+        code_files = []
+        for item in tree:
+            if item.get("type") == "blob":
+                path = item.get("path", "")
+                if not should_skip_path(path):
+                    code_files.append(path)
 
-    critical_count = sum(1 for i in all_issues if i["severity"] == "critical")
-    error_count = sum(1 for i in all_issues if i["severity"] == "error")
-    warning_count = sum(1 for i in all_issues if i["severity"] == "warning")
+        total_files = len(code_files)
+        SCAN_PROGRESS[scan_id]["total_files"] = total_files
+
+        logger.info(f"Found {total_files} files to scan")
+
+        # Process files in batches
+        batch_size = 50
+        all_issues = []
+        files_scanned = 0
+
+        for i in range(0, total_files, batch_size):
+            batch_paths = code_files[i : i + batch_size]
+
+            # Fetch file contents for this batch
+            batch_files = []
+            for path in batch_paths:
+                try:
+                    content = await client.get_file_content(
+                        owner, repo, path, ref=branch
+                    )
+                    language = get_language(path)
+                    batch_files.append((path, content, language))
+                except GitHubClientError as e:
+                    logger.warning(f"Failed to fetch {path}: {e}")
+                    continue
+                except Exception as e:
+                    logger.warning(f"Error fetching {path}: {e}")
+                    continue
+
+            # Scan each file
+            for path, content, language in batch_files:
+                # Scan for secrets
+                issues = _scan_file_for_secrets(content)
+                for issue in issues:
+                    issue["file_path"] = path
+                    issue["language"] = language
+                all_issues.extend(issues)
+
+                # Scan for security issues
+                issues = _scan_file_for_security(content)
+                for issue in issues:
+                    issue["file_path"] = path
+                    issue["language"] = language
+                all_issues.extend(issues)
+
+                # Scan for quality issues
+                issues = _scan_file_for_quality(content, language)
+                for issue in issues:
+                    issue["file_path"] = path
+                    issue["language"] = language
+                all_issues.extend(issues)
+
+                files_scanned += 1
+                SCAN_PROGRESS[scan_id]["files_scanned"] = files_scanned
+                SCAN_PROGRESS[scan_id]["progress"] = int(
+                    (files_scanned / total_files) * 100
+                )
+
+            # Rate limiting - be nice to GitHub API
+            await asyncio.sleep(0.5)
+
+        await client.close()
+
+    except GitHubClientError as e:
+        logger.error(f"GitHub client error: {e}")
+        SCAN_PROGRESS[scan_id]["status"] = "failed"
+        return ScanResult(
+            scan_id=scan_id,
+            status="failed",
+            files_scanned=0,
+            total_files=0,
+            issues=[],
+            health_score=0,
+        )
+    except Exception as e:
+        logger.error(f"Scan error: {e}")
+        SCAN_PROGRESS[scan_id]["status"] = "failed"
+        return ScanResult(
+            scan_id=scan_id,
+            status="failed",
+            files_scanned=0,
+            total_files=0,
+            issues=[],
+            health_score=0,
+        )
+
+    # Calculate health score
+    critical_count = sum(1 for i in all_issues if i.get("severity") == "critical")
+    error_count = sum(1 for i in all_issues if i.get("severity") == "error")
+    warning_count = sum(1 for i in all_issues if i.get("severity") == "warning")
 
     health_score = max(
         0,
@@ -305,11 +408,18 @@ async def scan_repository(scan_id: int, repo_url: str, branch: str) -> ScanResul
 
     SCAN_PROGRESS[scan_id]["status"] = "completed"
     SCAN_PROGRESS[scan_id]["progress"] = 100
+    SCAN_PROGRESS[scan_id]["issues"] = all_issues
+    SCAN_PROGRESS[scan_id]["health_score"] = health_score
+    SCAN_PROGRESS[scan_id]["scan_duration_ms"] = scan_duration_ms
+
+    logger.info(
+        f"Scan completed: {files_scanned} files, {len(all_issues)} issues, health={health_score}"
+    )
 
     return ScanResult(
         scan_id=scan_id,
         status="completed",
-        files_scanned=total_files,
+        files_scanned=files_scanned,
         total_files=total_files,
         issues=all_issues,
         health_score=health_score,
@@ -329,7 +439,15 @@ async def start_full_scan(request: ScanRequest):
         "progress": 0,
     }
 
-    asyncio.create_task(scan_repository(scan_id, request.repo_url, request.branch))
+    asyncio.create_task(
+        scan_repository(
+            scan_id=scan_id,
+            repo_full_name=request.repo_full_name,
+            repo_url=request.repo_url,
+            branch=request.branch,
+            github_token=request.github_token,
+        )
+    )
 
     return ScanResponse(
         scan_id=scan_id,
