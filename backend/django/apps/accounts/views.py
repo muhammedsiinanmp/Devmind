@@ -1,4 +1,5 @@
 from django.conf import settings
+import httpx
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.request import Request
@@ -15,7 +16,13 @@ from apps.accounts.oauth import (
     upsert_user,
     validate_oauth_state,
 )
-from apps.accounts.serializers import UserSerializer
+from apps.accounts.models import UserLLMConfig
+from apps.accounts.serializers import (
+    UserSerializer,
+    UserLLMConfigSerializer,
+    UserLLMConfigCreateSerializer,
+    UserLLMConfigTestSerializer,
+)
 
 
 class GitHubOAuthStartView(APIView):
@@ -130,5 +137,173 @@ class LogoutView(APIView):
         except TokenError:
             return Response(
                 {"error": "Invalid or already blacklisted token"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+
+class LLMConfigListCreateView(APIView):
+    """
+    List or create user's LLM API key configurations.
+
+    GET /api/v1/settings/llm/
+    POST /api/v1/settings/llm/
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request) -> Response:
+        configs = UserLLMConfig.objects.filter(user=request.user)
+        serializer = UserLLMConfigSerializer(configs, many=True)
+        return Response(serializer.data)
+
+    def post(self, request: Request) -> Response:
+        serializer = UserLLMConfigCreateSerializer(data=request.data)
+        if serializer.is_valid():
+            config = serializer.save(user=request.user)
+            response_serializer = UserLLMConfigSerializer(config)
+            return Response(response_serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class LLMConfigDetailView(APIView):
+    """
+    Retrieve, update, or delete a specific LLM config.
+
+    GET /api/v1/settings/llm/{id}/
+    DELETE /api/v1/settings/llm/{id}/
+    PATCH /api/v1/settings/llm/{id}/
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get_object(self, pk: int, user) -> UserLLMConfig:
+        try:
+            return UserLLMConfig.objects.get(pk=pk, user=user)
+        except UserLLMConfig.DoesNotExist:
+            return None
+
+    def get(self, request: Request, pk: int) -> Response:
+        config = self.get_object(pk, request.user)
+        if not config:
+            return Response(
+                {"error": "Config not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        serializer = UserLLMConfigSerializer(config)
+        return Response(serializer.data)
+
+    def delete(self, request: Request, pk: int) -> Response:
+        config = self.get_object(pk, request.user)
+        if not config:
+            return Response(
+                {"error": "Config not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        config.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    def patch(self, request: Request, pk: int) -> Response:
+        config = self.get_object(pk, request.user)
+        if not config:
+            return Response(
+                {"error": "Config not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+        # Don't allow updating api_key through PATCH
+        data = request.data.copy()
+        data.pop("api_key", None)
+
+        serializer = UserLLMConfigSerializer(config, data=data, partial=True)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+
+class LLMConfigTestView(APIView):
+    """
+    Test an LLM API key without saving.
+
+    POST /api/v1/settings/llm/test/
+    Body: {"provider": "openai", "model_name": "gpt-4o", "api_key": "...", "base_url": ""}
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request: Request) -> Response:
+        serializer = UserLLMConfigTestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        provider = serializer.validated_data["provider"]
+        model_name = serializer.validated_data["model_name"]
+        api_key = serializer.validated_data["api_key"]
+        base_url = serializer.validated_data.get("base_url", "")
+
+        # Test the API key based on provider
+        try:
+            if provider == "openai":
+                test_url = base_url or "https://api.openai.com/v1/models"
+                headers = {"Authorization": f"Bearer {api_key}"}
+            elif provider == "anthropic":
+                test_url = base_url or "https://api.anthropic.com/v1/models"
+                headers = {
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-01-01",
+                }
+            elif provider == "groq":
+                test_url = base_url or "https://api.groq.com/openai/v1/models"
+                headers = {"Authorization": f"Bearer {api_key}"}
+            elif provider == "custom":
+                if not base_url:
+                    return Response(
+                        {"error": "base_url required for custom provider"},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                test_url = f"{base_url.rstrip('/')}/models"
+                headers = {"Authorization": f"Bearer {api_key}"}
+            else:
+                return Response(
+                    {"error": f"Unsupported provider: {provider}"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            with httpx.Client(timeout=10.0) as client:
+                response = client.get(test_url, headers=headers)
+
+                if response.status_code == 200:
+                    return Response(
+                        {
+                            "status": "ok",
+                            "message": f"Successfully validated {provider}/{model_name}",
+                        }
+                    )
+                elif response.status_code in (401, 403):
+                    return Response(
+                        {"error": "invalid_key", "message": "Invalid API key"},
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+                else:
+                    return Response(
+                        {
+                            "error": "validation_failed",
+                            "message": f"Unexpected response: {response.status_code}",
+                        },
+                        status=status.HTTP_400_BAD_REQUEST,
+                    )
+
+        except httpx.TimeoutException:
+            return Response(
+                {"error": "timeout", "message": "Request timed out"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except httpx.HTTPError as e:
+            return Response(
+                {"error": "http_error", "message": str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as e:
+            return Response(
+                {"error": "unknown", "message": str(e)},
                 status=status.HTTP_400_BAD_REQUEST,
             )

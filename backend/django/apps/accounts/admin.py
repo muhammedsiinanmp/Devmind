@@ -2,14 +2,16 @@ from typing import TYPE_CHECKING
 
 from django.contrib import admin
 
-from apps.accounts.models import CustomUser, GithubToken
+from apps.accounts.models import CustomUser, GithubToken, UserLLMConfig
 
 if TYPE_CHECKING:
     _BaseCustomUserAdmin = admin.ModelAdmin[CustomUser]
     _BaseGithubTokenAdmin = admin.ModelAdmin[GithubToken]
+    _BaseUserLLMConfigAdmin = admin.ModelAdmin[UserLLMConfig]
 else:
     _BaseCustomUserAdmin = admin.ModelAdmin
     _BaseGithubTokenAdmin = admin.ModelAdmin
+    _BaseUserLLMConfigAdmin = admin.ModelAdmin
 
 
 @admin.register(CustomUser)
@@ -73,3 +75,26 @@ class GithubTokenAdmin(_BaseGithubTokenAdmin):
         if token and len(token) > 4:
             return f"gho_***{token[-4:]}"
         return "***"
+
+
+@admin.register(UserLLMConfig)
+class UserLLMConfigAdmin(_BaseUserLLMConfigAdmin):
+    """Admin interface for UserLLMConfig — API key is masked for security."""
+
+    list_display = (
+        "user",
+        "provider",
+        "model_name",
+        "masked_key",
+        "is_active",
+        "priority",
+    )
+    list_filter = ("provider", "is_active")
+    search_fields = ("user__email", "model_name")
+    raw_id_fields = ("user",)
+    exclude = ("api_key",)  # Never show the raw encrypted field
+
+    @admin.display(description="API Key")
+    def masked_key(self, obj: UserLLMConfig) -> str:
+        """Display masked API key."""
+        return obj.masked_key
