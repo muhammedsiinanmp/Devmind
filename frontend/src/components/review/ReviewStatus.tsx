@@ -56,25 +56,25 @@ export default function ReviewStatus({ reviewId, initialStatus }: ReviewStatusPr
         return {
           icon: Clock,
           label: "Pending",
-          className: "bg-gray-100 text-gray-700",
+          className: "badge-info",
         };
       case "processing":
         return {
           icon: RefreshCw,
           label: "Processing",
-          className: "bg-blue-100 text-blue-700",
+          className: "badge-warning",
         };
       case "completed":
         return {
           icon: CheckCircle,
           label: "Completed",
-          className: "bg-green-100 text-green-700",
+          className: "badge-success",
         };
       case "failed":
         return {
           icon: XCircle,
           label: "Failed",
-          className: "bg-red-100 text-red-700",
+          className: "badge-error",
         };
     }
   };
@@ -82,23 +82,14 @@ export default function ReviewStatus({ reviewId, initialStatus }: ReviewStatusPr
   const config = getStatusConfig(status);
   const Icon = config.icon;
 
-  if (loading) {
-    return (
-      <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gray-100 text-gray-600 text-sm">
-        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-        Loading...
-      </span>
-    );
-  }
-
   return (
     <span
-      className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-sm ${config.className}`}
+      className={`badge inline-flex items-center gap-2 px-3 py-1.5 ${config.className}`}
       title={error || undefined}
     >
       <Icon className={`w-3.5 h-3.5 ${status === "processing" ? "animate-spin" : ""}`} />
       {config.label}
-      {error && <AlertCircle className="w-3.5 h-3.5 text-yellow-500 ml-1" />}
+      {error && <AlertCircle className="w-3.5 h-3.5 text-warning ml-1" />}
     </span>
   );
 }

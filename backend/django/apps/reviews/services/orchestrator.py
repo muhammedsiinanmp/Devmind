@@ -52,10 +52,11 @@ class ReviewOrchestrator:
 
     def __init__(self, review: Review):
         self.review = review
-        self.fastapi_url = getattr(settings, "FASTAPI_URL", "http://localhost:8000")
+        self.fastapi_url = getattr(
+            settings, "FASTAPI_BASE_URL", "http://localhost:8001"
+        )
         self.fastapi_secret = getattr(settings, "FASTAPI_INTERNAL_SECRET", "")
 
-    @transaction.atomic
     def run(self) -> ReviewResult:
         """
         Run the full review pipeline.
@@ -94,6 +95,7 @@ class ReviewOrchestrator:
             self.review.status = "completed"
             self.review.risk_score = result.risk_score
             self.review.summary = self._build_summary(result.comments)
+            self.review.completed_at = timezone.now()
             self.review.save(
                 update_fields=["status", "risk_score", "summary", "completed_at"]
             )
@@ -186,9 +188,7 @@ class ReviewOrchestrator:
         run = ReviewRun.objects.create(
             review=self.review,
             model_used=result.model_used,
-            provider=result.provider,
             latency_ms=result.latency_ms,
-            risk_score=result.risk_score,
         )
 
         for comment_data in result.comments:
@@ -199,8 +199,7 @@ class ReviewOrchestrator:
                 category=comment_data.get("category", "general"),
                 severity=comment_data.get("severity", "info"),
                 body=comment_data.get("body", ""),
-                suggested_fix=comment_data.get("suggested_fix"),
-                run=run,
+                suggested_fix=comment_data.get("suggested_fix", ""),
             )
 
     def _build_summary(self, comments: list[dict]) -> str:
@@ -280,6 +279,7 @@ class ReviewOrchestrator:
             group_name = f"review_{self.review.pk}"
 
             message = {
+                "type": "review.status.update",
                 "review_id": self.review.pk,
                 "status": status,
             }

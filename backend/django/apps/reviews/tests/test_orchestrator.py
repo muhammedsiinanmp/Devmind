@@ -8,6 +8,8 @@ from django.test import TestCase, override_settings
 from django.db import transaction
 
 from apps.reviews.models import Review, ReviewComment, ReviewRun
+from apps.reviews.tests.factories import ReviewFactory
+from apps.repositories.tests.factories import UserFactory
 from apps.reviews.services.orchestrator import (
     ReviewOrchestrator,
     ReviewAlreadyProcessingError,
@@ -47,29 +49,12 @@ class TestStatusTransitions:
     @pytest.mark.django_db
     def test_pending_to_processing_transition(self):
         """Test pending → processing status transition."""
-        from apps.repositories.models import Repository, User
+        review = ReviewFactory(status="pending")
 
-        user = User.objects.create_user(
-            username="testuser", email="test@example.com", password="testpass123"
-        )
-
-        repository = Repository.objects.create(
-            owner=user,
-            name="test-repo",
-            full_name="testuser/test-repo",
-        )
-
-        review = Review.objects.create(
-            repository=repository,
-            pr_number=1,
-            pr_title="Test PR",
-            head_sha="abc123",
-            base_sha="def456",
-            diff_url="https://github.com/test/pr/1",
-            status="pending",
-        )
-
-        with patch.object(ReviewOrchestrator, "_call_fastapi") as mock_call:
+        with patch.object(
+            ReviewOrchestrator, "_call_fastapi"
+        ) as mock_call, patch.object(ReviewOrchestrator, "_fetch_diff") as mock_diff:
+            mock_diff.return_value = "dummy diff"
             mock_call.return_value = ReviewResult(
                 repo_full_name="owner/repo",
                 pr_number=1,
@@ -191,27 +176,7 @@ class TestSummaryBuilding:
 class TestTriggerTask:
     @pytest.mark.django_db
     def test_trigger_review_task(self):
-        from apps.repositories.models import Repository, User
-
-        user = User.objects.create_user(
-            username="testuser2", email="test2@example.com", password="testpass123"
-        )
-
-        repository = Repository.objects.create(
-            owner=user,
-            name="test-repo2",
-            full_name="testuser/test-repo2",
-        )
-
-        review = Review.objects.create(
-            repository=repository,
-            pr_number=2,
-            pr_title="Test PR",
-            head_sha="abc123",
-            base_sha="def456",
-            diff_url="https://github.com/test/pr/2",
-            status="pending",
-        )
+        review = ReviewFactory(status="pending")
 
         with patch.object(ReviewOrchestrator, "run") as mock_run:
             mock_run.return_value = ReviewResult(
@@ -229,29 +194,12 @@ class TestOrchestratorIntegration:
     @override_settings(CELERY_TASK_ALWAYS_EAGER=True)
     def test_full_pipeline_status_transition(self):
         """Test complete pipeline: pending → processing → completed"""
-        from apps.repositories.models import Repository, User
+        review = ReviewFactory(status="pending")
 
-        user = User.objects.create_user(
-            username="testuser3", email="test3@example.com", password="testpass123"
-        )
-
-        repository = Repository.objects.create(
-            owner=user,
-            name="test-repo3",
-            full_name="testuser/test-repo3",
-        )
-
-        review = Review.objects.create(
-            repository=repository,
-            pr_number=3,
-            pr_title="Test PR",
-            head_sha="abc123",
-            base_sha="def456",
-            diff_url="https://github.com/test/pr/3",
-            status="pending",
-        )
-
-        with patch.object(ReviewOrchestrator, "_call_fastapi") as mock_call:
+        with patch.object(
+            ReviewOrchestrator, "_call_fastapi"
+        ) as mock_call, patch.object(ReviewOrchestrator, "_fetch_diff") as mock_diff:
+            mock_diff.return_value = "dummy diff"
             mock_call.return_value = ReviewResult(
                 repo_full_name="owner/repo",
                 pr_number=3,

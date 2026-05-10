@@ -1,7 +1,18 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, Link } from "react-router-dom";
 import { scanApi, ScanResult, ScanFinding } from "../api/scan";
-import { Shield, AlertTriangle, XCircle, CheckCircle, FileCode, RefreshCw } from "lucide-react";
+import {
+  Shield,
+  AlertTriangle,
+  XCircle,
+  CheckCircle,
+  FileCode,
+  RefreshCw,
+  ArrowLeft,
+  Loader2,
+  Activity,
+  Zap
+} from "lucide-react";
 
 export default function ScanReport() {
   const { id } = useParams<{ id: string }>();
@@ -27,30 +38,12 @@ export default function ScanReport() {
     fetchScan();
   }, [id]);
 
-  const getHealthColor = (score: number | null) => {
-    if (score === null) return "text-gray-500";
-    if (score >= 70) return "text-green-600";
-    if (score >= 40) return "text-yellow-600";
-    return "text-red-600";
-  };
-
-  const getHealthBg = (score: number | null) => {
-    if (score === null) return "bg-gray-100";
-    if (score >= 70) return "bg-green-100";
-    if (score >= 40) return "bg-yellow-100";
-    return "bg-red-100";
-  };
-
-  const getSeverityIcon = (severity: string) => {
+  const getSeverityColor = (severity: string) => {
     switch (severity) {
-      case "critical":
-        return <XCircle className="w-4 h-4 text-red-600" />;
-      case "error":
-        return <AlertTriangle className="w-4 h-4 text-orange-600" />;
-      case "warning":
-        return <AlertTriangle className="w-4 h-4 text-yellow-600" />;
-      default:
-        return <CheckCircle className="w-4 h-4 text-blue-600" />;
+      case "critical": return "text-error";
+      case "error": return "text-orange-500";
+      case "warning": return "text-warning";
+      default: return "text-info";
     }
   };
 
@@ -65,39 +58,21 @@ export default function ScanReport() {
 
   if (loading) {
     return (
-      <div className="p-6">
-        <div className="animate-pulse space-y-4">
-          <div className="h-32 bg-gray-200 rounded-lg" />
-          <div className="h-64 bg-gray-200 rounded-lg" />
-        </div>
+      <div className="min-h-[60vh] flex flex-col items-center justify-center space-y-4">
+        <Loader2 className="w-10 h-10 animate-spin text-accent" />
+        <p className="text-text-secondary animate-pulse">Analyzing repository health...</p>
       </div>
     );
   }
 
-  if (error) {
+  if (error || !scan) {
     return (
-      <div className="p-6">
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-700">
-          {error}
-        </div>
-        <button
-          onClick={fetchScan}
-          className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
-        >
-          Retry
-        </button>
-      </div>
-    );
-  }
-
-  if (!scan) {
-    return (
-      <div className="p-6">
-        <div className="bg-gray-50 border border-gray-200 rounded-lg p-8 text-center">
-          <Shield className="w-12 h-12 mx-auto text-gray-400 mb-4" />
-          <h3 className="text-lg font-medium text-gray-900">No scan found</h3>
-          <p className="text-gray-500 mt-2">Trigger a scan to see the report</p>
-        </div>
+      <div className="glass-card p-12 text-center flex flex-col items-center justify-center space-y-4">
+        <AlertTriangle className="w-12 h-12 text-error" />
+        <h3 className="text-xl font-semibold">{error || "No scan found"}</h3>
+        <Link to="/repositories" className="btn-secondary flex items-center gap-2">
+          <ArrowLeft className="w-4 h-4" /> Back to Repositories
+        </Link>
       </div>
     );
   }
@@ -105,84 +80,101 @@ export default function ScanReport() {
   const groupedFindings = groupFindingsByCategory(scan.findings || []);
 
   return (
-    <div className="p-6 max-w-6xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Scan Report</h1>
+    <div className="space-y-8 animate-fade-in pb-20">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-4xl font-bold text-gradient mb-2">Health Report</h1>
+          <p className="text-text-secondary text-lg">
+            Full repository security and quality scan results.
+          </p>
+        </div>
         <button
           onClick={fetchScan}
-          className="flex items-center gap-2 px-4 py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg"
+          className="btn-secondary flex items-center gap-2"
         >
           <RefreshCw className="w-4 h-4" />
-          Refresh
+          Refresh Report
         </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-        <div className={`p-6 rounded-lg ${getHealthBg(scan.health_score)}`}>
-          <div className="flex items-center gap-3 mb-2">
-            <Shield className={`w-6 h-6 ${getHealthColor(scan.health_score)}`} />
-            <span className="text-sm font-medium text-gray-600">Health Score</span>
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="glass-card p-8 bg-gradient-to-br from-success/5 to-transparent border-success/20">
+          <div className="flex items-center gap-3 mb-4">
+            <Shield className="w-6 h-6 text-success" />
+            <span className="text-xs font-bold text-text-muted uppercase tracking-wider">Health Score</span>
           </div>
-          <div className={`text-4xl font-bold ${getHealthColor(scan.health_score)}`}>
-            {scan.health_score ?? "—"}
+          <div className="text-5xl font-bold text-success">
+            {scan.health_score ?? "—"}<span className="text-xl text-text-muted">/100</span>
           </div>
+          <p className="text-xs text-text-muted mt-2">Based on issue density and severity.</p>
         </div>
 
-        <div className="bg-white border rounded-lg p-6">
-          <div className="flex items-center gap-3 mb-2">
-            <AlertTriangle className="w-6 h-6 text-orange-500" />
-            <span className="text-sm font-medium text-gray-600">Issues Found</span>
+        <div className="glass-card p-8">
+          <div className="flex items-center gap-3 mb-4">
+            <AlertTriangle className="w-6 h-6 text-warning" />
+            <span className="text-xs font-bold text-text-muted uppercase tracking-wider">Total Findings</span>
           </div>
-          <div className="text-4xl font-bold text-gray-900">
+          <div className="text-5xl font-bold text-white">
             {scan.findings?.length ?? 0}
           </div>
+          <p className="text-xs text-text-muted mt-2">Issues detected across the codebase.</p>
         </div>
 
-        <div className="bg-white border rounded-lg p-6">
-          <div className="flex items-center gap-3 mb-2">
-            <FileCode className="w-6 h-6 text-blue-500" />
-            <span className="text-sm font-medium text-gray-600">Status</span>
+        <div className="glass-card p-8">
+          <div className="flex items-center gap-3 mb-4">
+            <Activity className="w-6 h-6 text-accent" />
+            <span className="text-xs font-bold text-text-muted uppercase tracking-wider">Scan Status</span>
           </div>
-          <div className="text-4xl font-bold text-gray-900 capitalize">
+          <div className="text-4xl font-bold text-white capitalize">
             {scan.status}
           </div>
+          <p className="text-xs text-text-muted mt-2">Analysis completed {new Date().toLocaleTimeString()}.</p>
         </div>
       </div>
 
       {scan.summary && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
-          <h3 className="font-medium text-blue-900">Summary</h3>
-          <p className="text-blue-800 mt-1">{scan.summary}</p>
-        </div>
+        <section className="glass-card p-6 border-l-4 border-l-accent">
+          <div className="flex items-center gap-2 mb-4">
+            <Zap className="w-5 h-5 text-accent" />
+            <h2 className="text-lg font-bold text-white">AI Overview</h2>
+          </div>
+          <p className="text-text-secondary leading-relaxed italic">
+            "{scan.summary}"
+          </p>
+        </section>
       )}
 
       <div className="space-y-6">
         {Object.entries(groupedFindings).map(([category, findings]) => (
-          <div key={category} className="bg-white border rounded-lg overflow-hidden">
-            <div className="bg-gray-50 px-6 py-3 border-b">
-              <h2 className="font-semibold text-gray-900 capitalize">{category}</h2>
-              <span className="text-sm text-gray-500">{findings.length} findings</span>
+          <div key={category} className="glass-card overflow-hidden">
+            <div className="px-6 py-4 bg-white/5 border-b border-border flex items-center justify-between">
+              <h2 className="font-bold text-white capitalize flex items-center gap-2">
+                <FileCode className="w-4 h-4 text-accent" /> {category}
+              </h2>
+              <span className="badge badge-info">{findings.length} findings</span>
             </div>
-            <div className="divide-y">
+            <div className="divide-y divide-border/50">
               {findings.map((finding) => (
-                <div key={finding.id} className="px-6 py-4">
-                  <div className="flex items-start gap-3">
-                    {getSeverityIcon(finding.severity)}
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2">
-                        <code className="text-sm font-mono bg-gray-100 px-2 py-1 rounded">
+                <div key={finding.id} className="px-6 py-6 hover:bg-white/5 transition-colors group">
+                  <div className="flex items-start gap-4">
+                    <div className="mt-1">
+                      {finding.severity === 'critical' ? <XCircle className="w-5 h-5 text-error" /> : <AlertTriangle className="w-5 h-5 text-warning" />}
+                    </div>
+                    <div className="flex-1 space-y-2">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <code className="text-xs font-mono text-accent bg-accent/5 px-2 py-1 rounded border border-accent/10">
                           {finding.file_path}
                           {finding.line_number && `:${finding.line_number}`}
                         </code>
-                        <span className="text-xs uppercase px-2 py-0.5 rounded bg-gray-100 text-gray-600">
+                        <span className={`text-[10px] uppercase font-bold px-2 py-0.5 rounded bg-bg-tertiary ${getSeverityColor(finding.severity)}`}>
                           {finding.severity}
                         </span>
                       </div>
-                      <p className="text-gray-700 mt-2">{finding.message}</p>
+                      <p className="text-text-primary leading-relaxed">{finding.message}</p>
                       {finding.rule_id && (
-                        <span className="text-xs text-gray-500 mt-1 block">
-                          Rule: {finding.rule_id}
-                        </span>
+                        <p className="text-[10px] text-text-muted font-bold uppercase tracking-wider">
+                          Policy: {finding.rule_id}
+                        </p>
                       )}
                     </div>
                   </div>
