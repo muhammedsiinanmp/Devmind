@@ -1,3 +1,4 @@
+from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.exceptions import PermissionDenied
 from django_filters.rest_framework import DjangoFilterBackend
@@ -142,6 +143,10 @@ class RepoScanTriggerView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        responses={202: RepoScanSerializer, 429: None, 404: None},
+        summary="Trigger a full repository scan",
+    )
     def post(self, request: Request, pk: int) -> Response:
         from django.utils import timezone
         from datetime import timedelta
