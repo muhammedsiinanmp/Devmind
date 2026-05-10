@@ -1,0 +1,1219 @@
+openapi: 3.0.3
+info:
+  title: DevMind API
+  version: 1.0.0
+  description: AI-powered automated code review platform API
+paths:
+  /api/v1/auth/github/callback/:
+    get:
+      operationId: v1_auth_github_callback_retrieve
+      description: |-
+        Handle GitHub OAuth callback.
+
+        GET /api/v1/auth/github/callback/?code=XXXXX&state=YYYYY
+        Validates the state token, exchanges the code for tokens,
+        upserts the user, and returns a JWT access/refresh pair.
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - {}
+      responses:
+        '200':
+          description: No response body
+  /api/v1/auth/github/start/:
+    get:
+      operationId: v1_auth_github_start_retrieve
+      description: |-
+        Start the GitHub OAuth flow.
+
+        GET /api/v1/auth/github/start/
+        Returns: {"authorize_url": "https://github.com/login/oauth/authorize?..."}
+
+        Generates a cryptographically random `state` token, stores it in
+        Redis (TTL 10 min), and returns the full GitHub authorize URL.
+        The frontend should redirect the user to this URL.
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - {}
+      responses:
+        '200':
+          description: No response body
+  /api/v1/auth/logout/:
+    post:
+      operationId: v1_auth_logout_create
+      description: |-
+        Invalidate a refresh token by blacklisting it.
+
+        POST /api/v1/auth/logout/
+        Body: {"refresh": "<refresh_token>"}
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/auth/me/:
+    get:
+      operationId: v1_auth_me_retrieve
+      description: |-
+        Return the authenticated user's profile.
+
+        GET /api/v1/auth/me/
+        Requires: Bearer JWT in Authorization header.
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/auth/settings/llm/:
+    get:
+      operationId: v1_auth_settings_llm_retrieve
+      description: |-
+        List or create user's LLM API key configurations.
+
+        GET /api/v1/settings/llm/
+        POST /api/v1/settings/llm/
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: v1_auth_settings_llm_create
+      description: |-
+        List or create user's LLM API key configurations.
+
+        GET /api/v1/settings/llm/
+        POST /api/v1/settings/llm/
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/auth/settings/llm/{id}/:
+    get:
+      operationId: v1_auth_settings_llm_retrieve_2
+      description: |-
+        Retrieve, update, or delete a specific LLM config.
+
+        GET /api/v1/settings/llm/{id}/
+        DELETE /api/v1/settings/llm/{id}/
+        PATCH /api/v1/settings/llm/{id}/
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: No response body
+    patch:
+      operationId: v1_auth_settings_llm_partial_update
+      description: |-
+        Retrieve, update, or delete a specific LLM config.
+
+        GET /api/v1/settings/llm/{id}/
+        DELETE /api/v1/settings/llm/{id}/
+        PATCH /api/v1/settings/llm/{id}/
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: No response body
+    delete:
+      operationId: v1_auth_settings_llm_destroy
+      description: |-
+        Retrieve, update, or delete a specific LLM config.
+
+        GET /api/v1/settings/llm/{id}/
+        DELETE /api/v1/settings/llm/{id}/
+        PATCH /api/v1/settings/llm/{id}/
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/v1/auth/settings/llm/test/:
+    post:
+      operationId: v1_auth_settings_llm_test_create
+      description: |-
+        Test an LLM API key without saving.
+
+        POST /api/v1/settings/llm/test/
+        Body: {"provider": "openai", "model_name": "gpt-4o", "api_key": "...", "base_url": ""}
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/auth/token/refresh/:
+    post:
+      operationId: v1_auth_token_refresh_create
+      description: |-
+        Takes a refresh type JSON web token and returns an access type JSON web
+        token if the refresh token is valid.
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenRefreshRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TokenRefreshRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TokenRefreshRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenRefresh'
+          description: ''
+  /api/v1/repositories/:
+    get:
+      operationId: v1_repositories_list
+      description: |-
+        GET /api/v1/repositories/
+        Returns the authenticated user's active repositories.
+        Supports ?review_enabled=true filter.
+      parameters:
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedRepositoryList'
+          description: ''
+  /api/v1/repositories/{id}/:
+    get:
+      operationId: v1_repositories_retrieve
+      description: |-
+        GET /api/v1/repositories/{id}/
+        PATCH /api/v1/repositories/{id}/   — update review_enabled, default_branch
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Repository'
+          description: ''
+    put:
+      operationId: v1_repositories_update
+      description: |-
+        GET /api/v1/repositories/{id}/
+        PATCH /api/v1/repositories/{id}/   — update review_enabled, default_branch
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RepositoryUpdateRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/RepositoryUpdateRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/RepositoryUpdateRequest'
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RepositoryUpdate'
+          description: ''
+    patch:
+      operationId: v1_repositories_partial_update
+      description: |-
+        GET /api/v1/repositories/{id}/
+        PATCH /api/v1/repositories/{id}/   — update review_enabled, default_branch
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PatchedRepositoryUpdateRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/PatchedRepositoryUpdateRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/PatchedRepositoryUpdateRequest'
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RepositoryUpdate'
+          description: ''
+  /api/v1/repositories/{id}/scan/:
+    post:
+      operationId: v1_repositories_scan_create
+      description: |-
+        POST /api/v1/repositories/{id}/scan/
+        Trigger a full repository scan.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/repositories/connect/:
+    post:
+      operationId: v1_repositories_connect_create
+      description: |-
+        POST /api/v1/repositories/connect/
+        Triggers a background sync of all GitHub repositories for the authenticated user.
+        Returns 202 Accepted immediately — sync happens asynchronously.
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/reviews/:
+    get:
+      operationId: v1_reviews_list
+      description: |-
+        GET /api/v1/reviews/
+        Returns paginated list of reviews.
+
+        Query params:
+        - status: filter by status (pending, processing, completed, failed)
+        - repository: filter by repository_id
+        - search: search in pr_title
+        - ordering: order by field (created_at, -created_at, risk_score, etc.)
+      parameters:
+      - name: ordering
+        required: false
+        in: query
+        description: Which field to use when ordering the results.
+        schema:
+          type: string
+      - name: page
+        required: false
+        in: query
+        description: A page number within the paginated result set.
+        schema:
+          type: integer
+      - in: query
+        name: repository
+        schema:
+          type: integer
+      - name: search
+        required: false
+        in: query
+        description: A search term.
+        schema:
+          type: string
+      - in: query
+        name: status
+        schema:
+          type: string
+          enum:
+          - completed
+          - failed
+          - pending
+          - processing
+        description: |-
+          * `pending` - Pending
+          * `processing` - Processing
+          * `completed` - Completed
+          * `failed` - Failed
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PaginatedReviewListList'
+          description: ''
+  /api/v1/reviews/{id}/:
+    get:
+      operationId: v1_reviews_retrieve
+      description: |-
+        GET /api/v1/reviews/{id}/
+        Returns full review with nested comments and run.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Review'
+          description: ''
+  /api/v1/reviews/{id}/retrigger/:
+    post:
+      operationId: v1_reviews_retrigger_create
+      description: |-
+        POST /api/v1/reviews/{id}/retrigger/
+        Re-queues a failed review for processing.
+
+        Returns:
+        - 200: Review re-queued successfully
+        - 409: Review is currently processing
+        - 403: User is not the repository owner
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/reviews/scans/{id}/:
+    get:
+      operationId: v1_reviews_scans_retrieve
+      description: |-
+        GET /api/v1/scans/{scan_id}/
+        Get scan details and report.
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RepoScan'
+          description: ''
+  /api/v1/settings/github/callback/:
+    get:
+      operationId: v1_settings_github_callback_retrieve
+      description: |-
+        Handle GitHub OAuth callback.
+
+        GET /api/v1/auth/github/callback/?code=XXXXX&state=YYYYY
+        Validates the state token, exchanges the code for tokens,
+        upserts the user, and returns a JWT access/refresh pair.
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - {}
+      responses:
+        '200':
+          description: No response body
+  /api/v1/settings/github/start/:
+    get:
+      operationId: v1_settings_github_start_retrieve
+      description: |-
+        Start the GitHub OAuth flow.
+
+        GET /api/v1/auth/github/start/
+        Returns: {"authorize_url": "https://github.com/login/oauth/authorize?..."}
+
+        Generates a cryptographically random `state` token, stores it in
+        Redis (TTL 10 min), and returns the full GitHub authorize URL.
+        The frontend should redirect the user to this URL.
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      - {}
+      responses:
+        '200':
+          description: No response body
+  /api/v1/settings/logout/:
+    post:
+      operationId: v1_settings_logout_create
+      description: |-
+        Invalidate a refresh token by blacklisting it.
+
+        POST /api/v1/auth/logout/
+        Body: {"refresh": "<refresh_token>"}
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/settings/me/:
+    get:
+      operationId: v1_settings_me_retrieve
+      description: |-
+        Return the authenticated user's profile.
+
+        GET /api/v1/auth/me/
+        Requires: Bearer JWT in Authorization header.
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/settings/settings/llm/:
+    get:
+      operationId: v1_settings_settings_llm_retrieve
+      description: |-
+        List or create user's LLM API key configurations.
+
+        GET /api/v1/settings/llm/
+        POST /api/v1/settings/llm/
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: No response body
+    post:
+      operationId: v1_settings_settings_llm_create
+      description: |-
+        List or create user's LLM API key configurations.
+
+        GET /api/v1/settings/llm/
+        POST /api/v1/settings/llm/
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/settings/settings/llm/{id}/:
+    get:
+      operationId: v1_settings_settings_llm_retrieve_2
+      description: |-
+        Retrieve, update, or delete a specific LLM config.
+
+        GET /api/v1/settings/llm/{id}/
+        DELETE /api/v1/settings/llm/{id}/
+        PATCH /api/v1/settings/llm/{id}/
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: No response body
+    patch:
+      operationId: v1_settings_settings_llm_partial_update
+      description: |-
+        Retrieve, update, or delete a specific LLM config.
+
+        GET /api/v1/settings/llm/{id}/
+        DELETE /api/v1/settings/llm/{id}/
+        PATCH /api/v1/settings/llm/{id}/
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: No response body
+    delete:
+      operationId: v1_settings_settings_llm_destroy
+      description: |-
+        Retrieve, update, or delete a specific LLM config.
+
+        GET /api/v1/settings/llm/{id}/
+        DELETE /api/v1/settings/llm/{id}/
+        PATCH /api/v1/settings/llm/{id}/
+      parameters:
+      - in: path
+        name: id
+        schema:
+          type: integer
+        required: true
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      responses:
+        '204':
+          description: No response body
+  /api/v1/settings/settings/llm/test/:
+    post:
+      operationId: v1_settings_settings_llm_test_create
+      description: |-
+        Test an LLM API key without saving.
+
+        POST /api/v1/settings/llm/test/
+        Body: {"provider": "openai", "model_name": "gpt-4o", "api_key": "...", "base_url": ""}
+      tags:
+      - v1
+      security:
+      - jwtAuth: []
+      responses:
+        '200':
+          description: No response body
+  /api/v1/settings/token/refresh/:
+    post:
+      operationId: v1_settings_token_refresh_create
+      description: |-
+        Takes a refresh type JSON web token and returns an access type JSON web
+        token if the refresh token is valid.
+      tags:
+      - v1
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TokenRefreshRequest'
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: '#/components/schemas/TokenRefreshRequest'
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/TokenRefreshRequest'
+        required: true
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenRefresh'
+          description: ''
+  /api/v1/webhooks/github/:
+    post:
+      operationId: v1_webhooks_github_create
+      description: |-
+        POST /api/v1/webhooks/github/
+        Entry point for all GitHub webhook deliveries.
+
+        Security: Unauthenticated (GitHub cannot send JWT tokens).
+        Protection: HMAC-SHA256 signature is verified before ANY processing.
+      tags:
+      - v1
+      security:
+      - {}
+      responses:
+        '200':
+          description: No response body
+components:
+  schemas:
+    CategoryEnum:
+      enum:
+      - security
+      - quality
+      - tests
+      - style
+      - performance
+      type: string
+      description: |-
+        * `security` - Security
+        * `quality` - Quality
+        * `tests` - Tests
+        * `style` - Style
+        * `performance` - Performance
+    PaginatedRepositoryList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/Repository'
+    PaginatedReviewListList:
+      type: object
+      required:
+      - count
+      - results
+      properties:
+        count:
+          type: integer
+          example: 123
+        next:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=4
+        previous:
+          type: string
+          nullable: true
+          format: uri
+          example: http://api.example.org/accounts/?page=2
+        results:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReviewList'
+    PatchedRepositoryUpdateRequest:
+      type: object
+      description: |-
+        Write serializer for user-controlled fields.
+        Intentionally narrow — users cannot change github_id, owner, etc.
+      properties:
+        review_enabled:
+          type: boolean
+          description: Whether AI code review is enabled for pull requests.
+        default_branch:
+          type: string
+          minLength: 1
+          maxLength: 255
+    RepoScan:
+      type: object
+      description: Serializer for RepoScan model.
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        repository:
+          type: integer
+        repository_name:
+          type: string
+          readOnly: true
+        triggered_by:
+          type: integer
+        triggered_by_email:
+          type: string
+          readOnly: true
+        status:
+          $ref: '#/components/schemas/RepoScanStatusEnum'
+        progress:
+          type: integer
+          maximum: 2147483647
+          minimum: -2147483648
+          description: Scan progress percentage 0-100.
+        total_files:
+          type: integer
+          maximum: 2147483647
+          minimum: -2147483648
+          description: Total number of files to scan.
+        files_scanned:
+          type: integer
+          maximum: 2147483647
+          minimum: -2147483648
+          description: Number of files scanned so far.
+        total_issues:
+          type: integer
+          maximum: 2147483647
+          minimum: -2147483648
+          description: Total issues found.
+        critical_count:
+          type: integer
+          maximum: 2147483647
+          minimum: -2147483648
+        warning_count:
+          type: integer
+          maximum: 2147483647
+          minimum: -2147483648
+        info_count:
+          type: integer
+          maximum: 2147483647
+          minimum: -2147483648
+        scan_duration_ms:
+          type: integer
+          maximum: 2147483647
+          minimum: -2147483648
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        completed_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+      required:
+      - completed_at
+      - created_at
+      - id
+      - repository
+      - repository_name
+      - triggered_by
+      - triggered_by_email
+    RepoScanStatusEnum:
+      enum:
+      - queued
+      - scanning
+      - completed
+      - failed
+      type: string
+      description: |-
+        * `queued` - Queued
+        * `scanning` - Scanning
+        * `completed` - Completed
+        * `failed` - Failed
+    Repository:
+      type: object
+      description: Read serializer — exposes all repository metadata.
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        github_id:
+          type: integer
+          readOnly: true
+          description: GitHub's immutable numeric repository ID.
+        full_name:
+          type: string
+          readOnly: true
+          description: GitHub full name, e.g. 'acme/api'. May change on rename.
+        name:
+          type: string
+          readOnly: true
+          description: Short repository name without owner prefix.
+        description:
+          type: string
+        is_private:
+          type: boolean
+        default_branch:
+          type: string
+          maxLength: 255
+        html_url:
+          type: string
+          format: uri
+          readOnly: true
+        language:
+          type: string
+          maxLength: 100
+        topics: {}
+        stargazers_count:
+          type: integer
+          maximum: 2147483647
+          minimum: 0
+        is_active:
+          type: boolean
+          readOnly: true
+          description: 'Kill switch: False disables all DevMind processing for this
+            repo.'
+        review_enabled:
+          type: boolean
+          description: Whether AI code review is enabled for pull requests.
+        has_webhook:
+          type: boolean
+          readOnly: true
+        last_synced_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+          description: When repository metadata was last synced from GitHub.
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - created_at
+      - full_name
+      - github_id
+      - has_webhook
+      - html_url
+      - id
+      - is_active
+      - last_synced_at
+      - name
+      - updated_at
+    RepositoryUpdate:
+      type: object
+      description: |-
+        Write serializer for user-controlled fields.
+        Intentionally narrow — users cannot change github_id, owner, etc.
+      properties:
+        review_enabled:
+          type: boolean
+          description: Whether AI code review is enabled for pull requests.
+        default_branch:
+          type: string
+          maxLength: 255
+    RepositoryUpdateRequest:
+      type: object
+      description: |-
+        Write serializer for user-controlled fields.
+        Intentionally narrow — users cannot change github_id, owner, etc.
+      properties:
+        review_enabled:
+          type: boolean
+          description: Whether AI code review is enabled for pull requests.
+        default_branch:
+          type: string
+          minLength: 1
+          maxLength: 255
+    Review:
+      type: object
+      description: |-
+        Full Review serializer with nested comments and run.
+        Comments are read-only through this endpoint.
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        repository:
+          type: integer
+        repository_name:
+          type: string
+          readOnly: true
+        pr_number:
+          type: integer
+          maximum: 2147483647
+          minimum: -2147483648
+          description: GitHub pull request number.
+        pr_title:
+          type: string
+          description: Pull request title from GitHub.
+          maxLength: 500
+        head_sha:
+          type: string
+          description: SHA of the head commit being reviewed.
+          maxLength: 40
+        base_sha:
+          type: string
+          description: SHA of the base commit.
+          maxLength: 40
+        diff_url:
+          type: string
+          format: uri
+          description: URL to view the diff on GitHub.
+          maxLength: 500
+        status:
+          $ref: '#/components/schemas/StatusA8fEnum'
+        risk_score:
+          type: integer
+          maximum: 2147483647
+          minimum: -2147483648
+          nullable: true
+          description: AI-calculated risk score from 0-100.
+        summary:
+          type: string
+          description: AI-generated summary of the review.
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        completed_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+        comments:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReviewComment'
+          readOnly: true
+        run:
+          allOf:
+          - $ref: '#/components/schemas/ReviewRun'
+          readOnly: true
+      required:
+      - base_sha
+      - comments
+      - completed_at
+      - created_at
+      - diff_url
+      - head_sha
+      - id
+      - pr_number
+      - pr_title
+      - repository
+      - repository_name
+      - run
+    ReviewComment:
+      type: object
+      description: Serializer for ReviewComment model.
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        file_path:
+          type: string
+          readOnly: true
+          description: File path relative to repository root.
+        line_number:
+          type: integer
+          readOnly: true
+          description: Line number in the diff.
+        body:
+          type: string
+          readOnly: true
+          description: Comment body/description.
+        severity:
+          allOf:
+          - $ref: '#/components/schemas/SeverityEnum'
+          readOnly: true
+        category:
+          allOf:
+          - $ref: '#/components/schemas/CategoryEnum'
+          readOnly: true
+        suggested_fix:
+          type: string
+          readOnly: true
+          description: Suggested code fix in diff format.
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - body
+      - category
+      - created_at
+      - file_path
+      - id
+      - line_number
+      - severity
+      - suggested_fix
+    ReviewList:
+      type: object
+      description: |-
+        Lightweight Review serializer for list endpoint.
+        No nested comments to reduce payload size.
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        repository:
+          type: integer
+        repository_name:
+          type: string
+          readOnly: true
+        pr_number:
+          type: integer
+          maximum: 2147483647
+          minimum: -2147483648
+          description: GitHub pull request number.
+        pr_title:
+          type: string
+          description: Pull request title from GitHub.
+          maxLength: 500
+        status:
+          $ref: '#/components/schemas/StatusA8fEnum'
+        risk_score:
+          type: integer
+          maximum: 2147483647
+          minimum: -2147483648
+          nullable: true
+          description: AI-calculated risk score from 0-100.
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+        completed_at:
+          type: string
+          format: date-time
+          readOnly: true
+          nullable: true
+      required:
+      - completed_at
+      - created_at
+      - id
+      - pr_number
+      - pr_title
+      - repository
+      - repository_name
+    ReviewRun:
+      type: object
+      description: Serializer for ReviewRun model.
+      properties:
+        id:
+          type: integer
+          readOnly: true
+        agent_iterations:
+          type: integer
+          readOnly: true
+          description: Number of agent retry iterations.
+        model_used:
+          type: string
+          readOnly: true
+          description: LLM model that generated the review (e.g. google/gemini-2.0-flash).
+        prompt_tokens:
+          type: integer
+          readOnly: true
+          description: Number of tokens in the prompt.
+        completion_tokens:
+          type: integer
+          readOnly: true
+          description: Number of tokens in the completion.
+        latency_ms:
+          type: integer
+          readOnly: true
+          description: LLM response time in milliseconds.
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+      required:
+      - agent_iterations
+      - completion_tokens
+      - created_at
+      - id
+      - latency_ms
+      - model_used
+      - prompt_tokens
+    SeverityEnum:
+      enum:
+      - info
+      - warning
+      - error
+      - critical
+      type: string
+      description: |-
+        * `info` - Info
+        * `warning` - Warning
+        * `error` - Error
+        * `critical` - Critical
+    StatusA8fEnum:
+      enum:
+      - pending
+      - processing
+      - completed
+      - failed
+      type: string
+      description: |-
+        * `pending` - Pending
+        * `processing` - Processing
+        * `completed` - Completed
+        * `failed` - Failed
+    TokenRefresh:
+      type: object
+      properties:
+        access:
+          type: string
+          readOnly: true
+        refresh:
+          type: string
+      required:
+      - access
+      - refresh
+    TokenRefreshRequest:
+      type: object
+      properties:
+        refresh:
+          type: string
+          minLength: 1
+      required:
+      - refresh
+  securitySchemes:
+    jwtAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT

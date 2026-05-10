@@ -1,5 +1,6 @@
 from django.conf import settings
 import httpx
+from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.request import Request
@@ -106,6 +107,10 @@ class UserMeView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        responses={200: UserSerializer},
+        summary="Get current user profile",
+    )
     def get(self, request: Request) -> Response:
         assert request.user.is_authenticated  # nosec: B101 (used for mypy typing)
         serializer = UserSerializer(request.user)
@@ -122,6 +127,11 @@ class LogoutView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        request=None,
+        responses={205: None},
+        summary="Logout and blacklist refresh token",
+    )
     def post(self, request: Request) -> Response:
         refresh_token = request.data.get("refresh")
         if not refresh_token:
