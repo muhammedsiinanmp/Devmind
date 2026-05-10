@@ -36,6 +36,8 @@ THIRD_PARTY_APPS = [
     "django_celery_beat",
     "django_celery_results",
     "channels",
+    "django_filters",
+    "django_prometheus",
 ]
 
 LOCAL_APPS = [

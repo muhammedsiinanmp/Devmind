@@ -4,6 +4,9 @@ Tests for GitHub Comment Poster.
 
 import pytest
 from unittest.mock import Mock, patch, MagicMock
+from apps.reviews.models import Review, ReviewComment
+from apps.reviews.tests.factories import ReviewFactory, ReviewCommentFactory
+from apps.repositories.tests.factories import UserFactory, GithubTokenFactory
 from apps.reviews.services.github_poster import (
     GitHubPoster,
     group_by_file,
@@ -272,47 +275,10 @@ class TestPostGithubCommentsFunction:
     @pytest.mark.django_db
     @patch("apps.reviews.services.github_poster.GitHubPoster")
     def test_posts_comments_for_completed_review(self, mock_poster_class):
-        from apps.repositories.models import Repository, User
-        from apps.reviews.models import Review, ReviewComment
-        from apps.accounts.models import GithubToken
-        from cryptography.fernet import Fernet
-
-        user = User.objects.create_user(
-            username="gh_test_user", email="gh_test@example.com", password="testpass123"
-        )
-
-        key = Fernet.generate_key()
-        f = Fernet(key)
-        encrypted_token = f.encrypt(b"ghp_test_token_12345").decode()
-
-        token = GithubToken.objects.create(
-            user=user,
-            access_token=encrypted_token,
-            token_key=encrypted_token[:10],
-        )
-
-        repo = Repository.objects.create(
-            owner=user,
-            name="test-gh-repo",
-            full_name="gh_test_user/test-gh-repo",
-        )
-
-        review = Review.objects.create(
-            repository=repo,
-            pr_number=1,
-            pr_title="Test PR",
-            head_sha="abc123",
-            base_sha="def456",
-            diff_url="https://github.com/test/pr/1",
-            status="completed",
-            summary="2 critical",
-        )
-
-        ReviewComment.objects.create(
+        # Using factories ensures proper CustomUser and GithubToken creation
+        review = ReviewFactory(status="completed", summary="2 critical")
+        ReviewCommentFactory(
             review=review,
-            file_path="app.py",
-            line_number=10,
-            category="security",
             severity="critical",
             body="SQL Injection vulnerability",
             suggested_fix="Use parameterized queries",
@@ -333,30 +299,7 @@ class TestPostGithubCommentsFunction:
     @pytest.mark.django_db
     @patch("apps.reviews.services.github_poster.GitHubPoster")
     def test_skips_non_completed_review(self, mock_poster_class):
-        from apps.repositories.models import Repository, User
-        from apps.reviews.models import Review
-
-        user = User.objects.create_user(
-            username="gh_test_user2",
-            email="gh_test2@example.com",
-            password="testpass123",
-        )
-
-        repo = Repository.objects.create(
-            owner=user,
-            name="test-gh-repo2",
-            full_name="gh_test_user2/test-gh-repo2",
-        )
-
-        review = Review.objects.create(
-            repository=repo,
-            pr_number=1,
-            pr_title="Test PR",
-            head_sha="abc123",
-            base_sha="def456",
-            diff_url="https://github.com/test/pr/1",
-            status="pending",
-        )
+        review = ReviewFactory(status="pending")
 
         from apps.reviews.services.github_poster import post_github_comments
 
@@ -368,42 +311,7 @@ class TestPostGithubCommentsFunction:
     @pytest.mark.django_db
     @patch("apps.reviews.services.github_poster.GitHubPoster")
     def test_returns_empty_when_no_comments(self, mock_poster_class):
-        from apps.repositories.models import Repository, User
-        from apps.accounts.models import GithubToken
-        from cryptography.fernet import Fernet
-        from apps.reviews.models import Review
-
-        user = User.objects.create_user(
-            username="gh_test_user3",
-            email="gh_test3@example.com",
-            password="testpass123",
-        )
-
-        key = Fernet.generate_key()
-        f = Fernet(key)
-        encrypted_token = f.encrypt(b"ghp_test_token_12345").decode()
-
-        token = GithubToken.objects.create(
-            user=user,
-            access_token=encrypted_token,
-            token_key=encrypted_token[:10],
-        )
-
-        repo = Repository.objects.create(
-            owner=user,
-            name="test-gh-repo3",
-            full_name="gh_test_user3/test-gh-repo3",
-        )
-
-        review = Review.objects.create(
-            repository=repo,
-            pr_number=1,
-            pr_title="Test PR",
-            head_sha="abc123",
-            base_sha="def456",
-            diff_url="https://github.com/test/pr/1",
-            status="completed",
-        )
+        review = ReviewFactory(status="completed")
 
         from apps.reviews.services.github_poster import post_github_comments
 

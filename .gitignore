@@ -10,12 +10,16 @@ env/
 *.egg-info/
 dist/
 build/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
 htmlcov/
-.coverage*
-coverage.xml
+**/.coverage*
+**/coverage.xml
+**/.pytest_cache/
+**/.mypy_cache/
+**/.ruff_cache/
+**/.DS_Store
+**/__pycache__/
+*.py[cod]
+*$py.class
 
 # Django
 *.sqlite3
