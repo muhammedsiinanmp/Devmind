@@ -90,6 +90,7 @@ class ReviewListSerializer(serializers.ModelSerializer):
             "repository_name",
             "pr_number",
             "pr_title",
+            "head_sha",
             "status",
             "risk_score",
             "created_at",
