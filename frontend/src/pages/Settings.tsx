@@ -1,205 +1,185 @@
 import { useEffect, useState } from "react";
-import { settingsApi, LLMSettings } from "../api/settings";
-import { Key, Trash2, Check, Plus, Loader2 } from "lucide-react";
+import { settingsApi, LLMProvider } from "../api/settings";
+import { Key, Trash2, Check, Plus, Loader2, X, AlertTriangle, Zap, ChevronDown } from "lucide-react";
 
 export default function Settings() {
-  const [settings, setSettings] = useState<LLMSettings | null>(null);
+  const [providers, setProviders] = useState<LLMProvider[]>([]);
   const [loading, setLoading] = useState(true);
   const [testing, setTesting] = useState<number | null>(null);
   const [showAddForm, setShowAddForm] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchSettings = async () => {
+  const fetchProviders = async () => {
     setLoading(true);
     try {
       const data = await settingsApi.getLLMSettings();
-      setSettings(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load settings");
+      setProviders(data);
+    } catch {
+      setError("Failed to load LLM providers");
     } finally {
       setLoading(false);
     }
   };
 
-  useEffect(() => {
-    fetchSettings();
-  }, []);
+  useEffect(() => { fetchProviders(); }, []);
 
-  const handleTest = async (id: number) => {
-    setTesting(id);
+  const handleTest = async (provider: LLMProvider) => {
+    setTesting(provider.id);
     try {
-      await settingsApi.testProvider(id);
-      alert("Test successful!");
-    } catch (err) {
-      alert("Test failed: " + (err instanceof Error ? err.message : "Unknown error"));
+      const result = await settingsApi.testProvider({
+        provider: provider.provider,
+        model_name: provider.model_name,
+        api_key: provider.masked_key,
+        base_url: provider.base_url || undefined,
+      });
+      alert(result.message || "Test successful!");
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message || "Test failed";
+      alert(msg);
     } finally {
       setTesting(null);
     }
   };
 
   const handleDelete = async (id: number) => {
-    if (!confirm("Are you sure you want to delete this provider?")) return;
+    if (!confirm("Delete this provider?")) return;
     try {
       await settingsApi.deleteProvider(id);
-      await fetchSettings();
-    } catch (err) {
-      alert("Failed to delete: " + (err instanceof Error ? err.message : "Unknown error"));
+      setProviders((p) => p.filter((x) => x.id !== id));
+    } catch {
+      alert("Failed to delete provider");
     }
   };
 
   const handleSetDefault = async (id: number) => {
     try {
       await settingsApi.setDefaultProvider(id);
-      await fetchSettings();
-    } catch (err) {
-      alert("Failed to set default: " + (err instanceof Error ? err.message : "Unknown error"));
+      setProviders((p) =>
+        p.map((x) => ({ ...x, priority: x.id === id ? 0 : x.priority }))
+      );
+    } catch {
+      alert("Failed to set default provider");
     }
   };
 
-  const maskKey = (key: string) => {
-    if (key.length <= 8) return "••••••••";
-    return key.slice(0, 4) + "••••••••" + key.slice(-4);
-  };
+  const defaultProvider = providers.find((p) => p.priority === 0);
 
   if (loading) {
     return (
-      <div className="p-6">
-        <div className="animate-pulse space-y-4">
-          <div className="h-8 w-48 bg-gray-200 rounded" />
-          <div className="h-32 bg-gray-200 rounded-lg" />
-        </div>
+      <div className="min-h-[60vh] flex flex-col items-center justify-center space-y-4">
+        <Loader2 className="w-10 h-10 animate-spin" style={{ color: "var(--accent)" }} />
+        <p className="animate-pulse" style={{ color: "var(--text-secondary)" }}>Loading settings...</p>
       </div>
     );
   }
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">LLM Settings</h1>
-        <button
-          onClick={() => setShowAddForm(!showAddForm)}
-          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-        >
+    <div className="space-y-8 animate-fade-in">
+      <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
+        <div>
+          <h1 className="text-4xl font-bold mb-2 text-gradient">LLM Settings</h1>
+          <p className="text-lg" style={{ color: "var(--text-secondary)" }}>
+            Manage your AI model providers and API keys.
+          </p>
+        </div>
+        <button onClick={() => setShowAddForm(!showAddForm)} className="btn-primary flex items-center gap-2">
           <Plus className="w-4 h-4" />
           Add Provider
         </button>
       </div>
 
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4 text-red-700">
-          {error}
+        <div className="glass-card p-4 flex items-center gap-3" style={{ border: "1px solid rgba(239,68,68,0.2)", backgroundColor: "rgba(239,68,68,0.05)" }}>
+          <AlertTriangle className="w-5 h-5 flex-shrink-0" style={{ color: "var(--error)" }} />
+          <p className="text-sm" style={{ color: "var(--error)" }}>{error}</p>
         </div>
       )}
 
       {showAddForm && (
         <AddProviderForm
           onCancel={() => setShowAddForm(false)}
-          onSuccess={() => {
-            setShowAddForm(false);
-            fetchSettings();
-          }}
+          onSuccess={() => { setShowAddForm(false); fetchProviders(); }}
         />
       )}
 
-      <div className="space-y-4">
-        {settings?.providers.length === 0 ? (
-          <div className="bg-gray-50 border border-gray-200 rounded-lg p-8 text-center">
-            <Key className="w-12 h-12 mx-auto text-gray-400 mb-4" />
-            <h3 className="text-lg font-medium text-gray-900">No LLM providers configured</h3>
-            <p className="text-gray-500 mt-2">Add a provider to get started with AI code reviews</p>
+      {providers.length === 0 ? (
+        <div className="glass-card p-12 text-center flex flex-col items-center justify-center space-y-4">
+          <div className="w-16 h-16 rounded-2xl flex items-center justify-center border" style={{ backgroundColor: "var(--bg-tertiary)", borderColor: "var(--border)" }}>
+            <Key className="w-8 h-8" style={{ color: "var(--text-muted)" }} />
           </div>
-        ) : (
-          settings?.providers.map((provider) => (
-            <div key={provider.id} className="bg-white border rounded-lg p-6">
-              <div className="flex items-start justify-between">
-                <div className="flex-1">
-                  <div className="flex items-center gap-3">
-                    <h3 className="font-semibold text-gray-900">{provider.name}</h3>
-                    {provider.is_default && (
-                      <span className="text-xs px-2 py-1 bg-blue-100 text-blue-700 rounded">
-                        Default
-                      </span>
-                    )}
-                    {provider.is_active && (
-                      <span className="text-xs px-2 py-1 bg-green-100 text-green-700 rounded">
-                        Active
-                      </span>
-                    )}
+          <h3 className="text-xl font-semibold" style={{ color: "var(--text-primary)" }}>No LLM providers configured</h3>
+          <p className="max-w-md" style={{ color: "var(--text-secondary)" }}>
+            Add your API keys to enable AI-powered code reviews. We support OpenAI, Anthropic, Google, and custom endpoints.
+          </p>
+          <button onClick={() => setShowAddForm(true)} className="btn-primary mt-2">
+            <Plus className="w-4 h-4" /> Add Your First Provider
+          </button>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          {providers.map((provider) => (
+            <div key={provider.id} className="glass-card p-6">
+              <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
+                <div className="flex items-start gap-4">
+                  <div className="w-12 h-12 rounded-xl flex items-center justify-center border" style={{ backgroundColor: "var(--bg-tertiary)", borderColor: "var(--border)" }}>
+                    <Zap className="w-6 h-6" style={{ color: "var(--accent)" }} />
                   </div>
-                  <div className="mt-2 space-y-1 text-sm text-gray-600">
-                    <p>Provider: {provider.provider_type}</p>
-                    <p>Model: {provider.model_name}</p>
-                    <p className="flex items-center gap-2">
-                      API Key: <code className="bg-gray-100 px-2 py-1 rounded">{maskKey(provider.api_key)}</code>
-                    </p>
-                    {provider.api_endpoint && (
-                      <p>Endpoint: {provider.api_endpoint}</p>
-                    )}
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <h3 className="text-lg font-bold" style={{ color: "var(--text-primary)" }}>
+                        {provider.name || provider.provider}
+                      </h3>
+                      <span className="badge badge-info uppercase text-[10px]">{provider.provider}</span>
+                      {provider.priority === 0 && <span className="badge badge-success">Default</span>}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-4 text-sm" style={{ color: "var(--text-secondary)" }}>
+                      <span>Model: <code className="text-[var(--accent)]">{provider.model_name}</code></span>
+                      {provider.base_url && (
+                        <span>Endpoint: <code className="text-xs" style={{ color: "var(--text-muted)" }}>{provider.base_url}</code></span>
+                      )}
+                    </div>
                   </div>
                 </div>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => handleTest(provider.id)}
-                    disabled={testing === provider.id}
-                    className="px-3 py-1.5 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg flex items-center gap-1.5 disabled:opacity-50"
-                  >
-                    {testing === provider.id ? (
-                      <Loader2 className="w-3 h-3 animate-spin" />
-                    ) : (
-                      <Check className="w-3 h-3" />
-                    )}
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <button onClick={() => handleTest(provider)} disabled={testing === provider.id} className="btn-secondary flex items-center gap-1.5 text-xs">
+                    {testing === provider.id ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
                     Test
                   </button>
-                  {!provider.is_default && (
-                    <button
-                      onClick={() => handleSetDefault(provider.id)}
-                      className="px-3 py-1.5 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg"
-                    >
-                      Set Default
-                    </button>
+                  {provider.priority !== 0 && (
+                    <button onClick={() => handleSetDefault(provider.id)} className="btn-secondary text-xs">Set Default</button>
                   )}
-                  <button
-                    onClick={() => handleDelete(provider.id)}
-                    className="px-3 py-1.5 text-sm text-red-600 hover:bg-red-50 rounded-lg"
-                  >
-                    <Trash2 className="w-4 h-4" />
+                  <button onClick={() => handleDelete(provider.id)} className="btn-secondary flex items-center gap-1.5 text-xs" style={{ color: "var(--error)", borderColor: "rgba(239,68,68,0.2)" }}>
+                    <Trash2 className="w-3 h-3" />
                   </button>
                 </div>
               </div>
             </div>
-          ))
-        )}
-      </div>
+          ))}
+        </div>
+      )}
 
-      <div className="mt-8 p-4 bg-gray-50 rounded-lg">
-        <h3 className="font-medium text-gray-900 mb-2">Current Model Chain</h3>
-        <p className="text-sm text-gray-600">
-          {settings?.default_provider
-            ? `Using provider #${settings.default_provider} as default`
-            : "No default provider set. Please set a default provider."}
-        </p>
-      </div>
+      {defaultProvider && (
+        <div className="glass-card p-6" style={{ border: "1px solid rgba(16,185,129,0.2)", backgroundColor: "rgba(16,185,129,0.05)" }}>
+          <div className="flex items-center gap-2 mb-2">
+            <Check className="w-5 h-5" style={{ color: "var(--success)" }} />
+            <h3 className="font-bold" style={{ color: "var(--success)" }}>Active Model Chain</h3>
+          </div>
+          <p className="text-sm" style={{ color: "var(--text-secondary)" }}>
+            Using <code className="font-semibold" style={{ color: "var(--success)" }}>{defaultProvider.name || defaultProvider.provider}</code> ({defaultProvider.model_name}) as the default provider.
+          </p>
+        </div>
+      )}
     </div>
   );
 }
 
-function AddProviderForm({
-  onCancel,
-  onSuccess,
-}: {
-  onCancel: () => void;
-  onSuccess: () => void;
-}) {
+function AddProviderForm({ onCancel, onSuccess }: { onCancel: () => void; onSuccess: () => void }) {
   const [formData, setFormData] = useState({
-    name: "",
-    provider_type: "openai",
-    api_key: "",
-    model_name: "gpt-4",
-    api_endpoint: "",
-    is_active: true,
-    is_default: false,
+    name: "", provider: "openai", api_key: "", model_name: "gpt-4o", base_url: "", is_active: true,
   });
   const [saving, setSaving] = useState(false);
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  const [testingKey, setTestingKey] = useState(false);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -207,88 +187,91 @@ function AddProviderForm({
     try {
       await settingsApi.addProvider(formData);
       onSuccess();
-    } catch (err) {
-      alert("Failed to add provider: " + (err instanceof Error ? err.message : "Unknown error"));
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { provider?: string[] } } })?.response?.data?.provider?.[0] || "Failed to add provider";
+      alert(msg);
     } finally {
       setSaving(false);
     }
   };
 
+  const handleTestKey = async () => {
+    setTestingKey(true);
+    setTestResult(null);
+    try {
+      const result = await settingsApi.testProvider({
+        provider: formData.provider,
+        model_name: formData.model_name,
+        api_key: formData.api_key,
+        base_url: formData.base_url || undefined,
+      });
+      setTestResult({ ok: true, message: result.message || "API key is valid!" });
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message || "Invalid API key";
+      setTestResult({ ok: false, message: msg });
+    } finally {
+      setTestingKey(false);
+    }
+  };
+
   return (
-    <form onSubmit={handleSubmit} className="bg-white border rounded-lg p-6 mb-6">
-      <h3 className="font-semibold text-gray-900 mb-4">Add LLM Provider</h3>
+    <form onSubmit={handleSubmit} className="glass-card p-6 space-y-6">
+      <div className="flex items-center justify-between">
+        <h3 className="text-lg font-bold" style={{ color: "var(--text-primary)" }}>Add LLM Provider</h3>
+        <button type="button" onClick={onCancel} className="btn-ghost p-2">
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+
+      {testResult && (
+        <div className="p-3 rounded-lg border text-sm" style={testResult.ok
+          ? { borderColor: "rgba(16,185,129,0.2)", backgroundColor: "rgba(16,185,129,0.05)", color: "var(--success)" }
+          : { borderColor: "rgba(239,68,68,0.2)", backgroundColor: "rgba(239,68,68,0.05)", color: "var(--error)" }}>
+          {testResult.message}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Name</label>
-          <input
-            type="text"
-            required
-            value={formData.name}
-            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-            className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            placeholder="My OpenAI Key"
-          />
+          <label className="block text-sm font-medium mb-1" style={{ color: "var(--text-secondary)" }}>Name</label>
+          <input type="text" required value={formData.name} onChange={(e) => setFormData({ ...formData, name: e.target.value })} className="input-field" placeholder="My OpenAI Key" />
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Provider</label>
-          <select
-            value={formData.provider_type}
-            onChange={(e) => setFormData({ ...formData, provider_type: e.target.value })}
-            className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-          >
-            <option value="openai">OpenAI</option>
-            <option value="anthropic">Anthropic</option>
-            <option value="google">Google</option>
-            <option value="azure">Azure OpenAI</option>
-          </select>
+          <label className="block text-sm font-medium mb-1" style={{ color: "var(--text-secondary)" }}>Provider</label>
+          <div className="relative">
+            <select value={formData.provider} onChange={(e) => setFormData({ ...formData, provider: e.target.value })} className="input-field appearance-none pr-10">
+              <option value="openai">OpenAI</option>
+              <option value="anthropic">Anthropic</option>
+              <option value="google_vertex">Google Vertex</option>
+              <option value="mistral">Mistral</option>
+              <option value="custom">Custom (OpenAI-compatible)</option>
+            </select>
+            <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 pointer-events-none" style={{ color: "var(--text-muted)" }} />
+          </div>
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">API Key</label>
-          <input
-            type="password"
-            required
-            value={formData.api_key}
-            onChange={(e) => setFormData({ ...formData, api_key: e.target.value })}
-            className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            placeholder="sk-..."
-          />
+          <label className="block text-sm font-medium mb-1" style={{ color: "var(--text-secondary)" }}>Model</label>
+          <input type="text" required value={formData.model_name} onChange={(e) => setFormData({ ...formData, model_name: e.target.value })} className="input-field" placeholder="gpt-4o" />
         </div>
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1">Model</label>
-          <input
-            type="text"
-            required
-            value={formData.model_name}
-            onChange={(e) => setFormData({ ...formData, model_name: e.target.value })}
-            className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            placeholder="gpt-4"
-          />
+          <label className="block text-sm font-medium mb-1" style={{ color: "var(--text-secondary)" }}>API Key</label>
+          <div className="flex gap-2">
+            <input type="password" required value={formData.api_key} onChange={(e) => setFormData({ ...formData, api_key: e.target.value })} className="input-field flex-1" placeholder="sk-..." />
+            <button type="button" onClick={handleTestKey} disabled={!formData.api_key || testingKey} className="btn-secondary whitespace-nowrap">
+              {testingKey ? <Loader2 className="w-4 h-4 animate-spin" /> : "Test Key"}
+            </button>
+          </div>
         </div>
         <div className="md:col-span-2">
-          <label className="block text-sm font-medium text-gray-700 mb-1">Endpoint (optional)</label>
-          <input
-            type="text"
-            value={formData.api_endpoint}
-            onChange={(e) => setFormData({ ...formData, api_endpoint: e.target.value })}
-            className="w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            placeholder="https://api.openai.com/v1"
-          />
+          <label className="block text-sm font-medium mb-1" style={{ color: "var(--text-secondary)" }}>Endpoint (optional)</label>
+          <input type="url" value={formData.base_url} onChange={(e) => setFormData({ ...formData, base_url: e.target.value })} className="input-field" placeholder="https://api.openai.com/v1" />
         </div>
       </div>
-      <div className="flex justify-end gap-3 mt-4">
-        <button
-          type="button"
-          onClick={onCancel}
-          className="px-4 py-2 text-gray-700 hover:bg-gray-100 rounded-lg"
-        >
-          Cancel
-        </button>
-        <button
-          type="submit"
-          disabled={saving}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50"
-        >
-          {saving ? "Saving..." : "Add Provider"}
+
+      <div className="flex justify-end gap-3">
+        <button type="button" onClick={onCancel} className="btn-secondary">Cancel</button>
+        <button type="submit" disabled={saving} className="btn-primary">
+          {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : "Add Provider"}
         </button>
       </div>
     </form>

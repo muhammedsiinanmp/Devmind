@@ -117,6 +117,37 @@ class UserMeView(APIView):
         return Response(serializer.data)
 
 
+class GitHubTokenView(APIView):
+    """
+    Return the user's stored GitHub access token.
+
+    GET /api/v1/auth/github/token/
+    Requires: Bearer JWT in Authorization header.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request) -> Response:
+        assert request.user.is_authenticated
+        try:
+            token = request.user.github_token
+            if not token or not token.access_token:
+                return Response(
+                    {
+                        "error": "No GitHub token found. Please reconnect your GitHub account."
+                    },
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            return Response({"access_token": token.access_token})
+        except Exception:
+            return Response(
+                {
+                    "error": "No GitHub token found. Please reconnect your GitHub account."
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+
 class LogoutView(APIView):
     """
     Invalidate a refresh token by blacklisting it.
