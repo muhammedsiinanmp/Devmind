@@ -65,6 +65,7 @@ services:
     env_file: .env
     volumes:
       - ./backend/django:/app
+      - /app/.venv
     depends_on:
       postgres:
         condition: service_healthy
@@ -83,6 +84,7 @@ services:
     env_file: .env
     volumes:
       - ./backend/fastapi:/app
+      - /app/.venv
     depends_on:
       postgres:
         condition: service_healthy
@@ -94,6 +96,9 @@ services:
       context: ./backend/django
       target: dev
     command: uv run celery -A devmind worker -l info -Q default,review,notifications
+    volumes:
+      - ./backend/django:/app
+      - /app/.venv
     env_file: .env
     depends_on:
       - redis
@@ -105,6 +110,9 @@ services:
       context: ./backend/django
       target: dev
     command: uv run celery -A devmind beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    volumes:
+      - ./backend/django:/app
+      - /app/.venv
     env_file: .env
     depends_on:
       - redis
