@@ -87,7 +87,7 @@ class TestAnalyzeEndpoint:
             completion_tokens=5,
         )
 
-        with patch("routers.review.llm_client") as mock_llm:
+        with patch("agents.review_agent.llm_client") as mock_llm:
             mock_llm.generate = AsyncMock(return_value=mock_response)
 
             response = await analyze_review(request, secret="valid-secret")
@@ -105,7 +105,7 @@ class TestAnalyzeEndpoint:
             pr_number=1,
         )
 
-        with patch("routers.review.llm_client") as mock_llm:
+        with patch("agents.review_agent.llm_client") as mock_llm:
             mock_llm.generate.side_effect = Exception("Test error")
 
             with pytest.raises(Exception):

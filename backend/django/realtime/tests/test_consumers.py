@@ -14,35 +14,44 @@ User = get_user_model()
 
 @pytest.fixture
 def user(db):
-    return User.objects.create_user(
-        username="testuser", email="test@example.com", password="testpass123"
-    )
+    return User.objects.create_user(email="test@example.com", password="testpass123")
 
 
 @pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
 class TestReviewStatusConsumer:
     async def test_connect_authenticated(self, user, client):
         client.force_login(user)
+        headers = [(b"cookie", f"sessionid={client.session.session_key}".encode())]
         application = AuthMiddlewareStack(URLRouter(websocket_urlpatterns))
-        communicator = WebsocketCommunicator(application, "/ws/reviews/1/")
+        communicator = WebsocketCommunicator(
+            application, "/ws/reviews/1/", headers=headers
+        )
         connected, subprotocol = await communicator.connect()
         assert connected is True
         await communicator.disconnect()
 
     async def test_disconnect_cleanup(self, user, client):
         client.force_login(user)
+        headers = [(b"cookie", f"sessionid={client.session.session_key}".encode())]
         application = AuthMiddlewareStack(URLRouter(websocket_urlpatterns))
-        communicator = WebsocketCommunicator(application, "/ws/reviews/1/")
+        communicator = WebsocketCommunicator(
+            application, "/ws/reviews/1/", headers=headers
+        )
         await communicator.connect()
         await communicator.disconnect()
 
 
 @pytest.mark.django_db(transaction=True)
+@pytest.mark.asyncio
 class TestNotificationConsumer:
     async def test_connect_authenticated(self, user, client):
         client.force_login(user)
+        headers = [(b"cookie", f"sessionid={client.session.session_key}".encode())]
         application = AuthMiddlewareStack(URLRouter(websocket_urlpatterns))
-        communicator = WebsocketCommunicator(application, "/ws/notifications/")
+        communicator = WebsocketCommunicator(
+            application, "/ws/notifications/", headers=headers
+        )
         connected, subprotocol = await communicator.connect()
         assert connected is True
         await communicator.disconnect()

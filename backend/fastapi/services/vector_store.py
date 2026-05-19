@@ -179,21 +179,25 @@ class VectorStore:
         """
         query_embedding = await self.generate_embedding(query_text)
 
+        distance_col = CodeEmbedding.embedding.cosine_distance(query_embedding).label(
+            "distance"
+        )
+
         stmt = (
-            select(CodeEmbedding)
+            select(CodeEmbedding, distance_col)
             .where(CodeEmbedding.repo_full_name == repo_full_name)
-            .order_by(CodeEmbedding.embedding.cosine_distance(query_embedding))
+            .order_by(distance_col)
             .limit(top_k)
         )
 
         result = await session.execute(stmt)
-        embeddings = result.scalars().all()
+        rows = result.all()
 
         results = []
-        for emb in embeddings:
-            similarity = 1 - CodeEmbedding.embedding.cosine_distance(
-                query_embedding, emb.embedding
-            )
+        for row in rows:
+            emb = row[0]  # CodeEmbedding instance
+            distance = float(row[1])  # float from pgvector
+            similarity = 1.0 - distance
 
             if similarity >= threshold:
                 results.append(
@@ -201,7 +205,7 @@ class VectorStore:
                         chunk_text=emb.chunk_text,
                         file_path=emb.file_path,
                         language=emb.language,
-                        similarity=similarity,
+                        similarity=round(similarity, 4),
                         chunk_type=emb.chunk_type,
                     )
                 )

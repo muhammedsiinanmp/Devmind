@@ -278,8 +278,26 @@ class LLMConfigTestView(APIView):
 
         provider = serializer.validated_data["provider"]
         model_name = serializer.validated_data["model_name"]
-        api_key = serializer.validated_data["api_key"]
+        api_key = serializer.validated_data.get("api_key", "")
         base_url = serializer.validated_data.get("base_url", "")
+
+        # If config_id provided and api_key is empty, fetch the real key
+        config_id = request.data.get("config_id")
+        if config_id and not api_key:
+            try:
+                config = UserLLMConfig.objects.get(pk=config_id, user=request.user)
+                api_key = config.api_key  # Returns decrypted key via EncryptedCharField
+            except UserLLMConfig.DoesNotExist:
+                return Response(
+                    {"error": "Config not found"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+        if not api_key:
+            return Response(
+                {"error": "api_key is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         # Test the API key based on provider
         try:
