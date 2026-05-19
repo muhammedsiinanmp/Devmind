@@ -58,54 +58,30 @@ async def analyze_review(
     agent_iterations.inc()
 
     try:
-        diff_chunks = parse_diff(request.diff)
-        context = PromptContext(diff_chunks=diff_chunks)
-        prompt = build_review_prompt(context, max_tokens=8192)
+        from agents.review_agent import run_review_agent
 
-        messages = [
-            {"role": "system", "content": "You are an expert code reviewer."},
-            {
-                "role": "user",
-                "content": f"{prompt}\n\nAnalyze the code changes and provide reviews.",
-            },
-        ]
+        # Run the full LangGraph review agent
+        result = await run_review_agent(
+            diff_text=request.diff,
+            repo_full_name=request.repo_full_name,
+            pr_number=request.pr_number,
+        )
 
-        try:
-            llm_response = await llm_client.generate(messages)
-        except AllProvidersDownError:
-            review_errors_total.labels(error_type="llm_unavailable").inc()
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail={
-                    "error": "llm_unavailable",
-                    "message": "All LLM providers are temporarily unavailable",
-                },
-            )
-
-        import json
-
+        # Extract comments from agent state
+        raw_comments = result.get("synthesized_comments", [])
         comments = []
-        try:
-            content = llm_response.content
-            start_idx = content.find("[")
-            end_idx = content.rfind("]") + 1
-            if start_idx >= 0 and end_idx > start_idx:
-                data = json.loads(content[start_idx:end_idx])
-                if isinstance(data, list):
-                    for item in data:
-                        if isinstance(item, dict):
-                            comments.append(
-                                ReviewComment(
-                                    file_path=item.get("file_path", ""),
-                                    line_number=item.get("line_number", 0),
-                                    category=item.get("category", "general"),
-                                    severity=item.get("severity", "info"),
-                                    body=item.get("body", ""),
-                                    suggested_fix=item.get("suggested_fix"),
-                                )
-                            )
-        except (json.JSONDecodeError, ValueError):
-            pass
+        for item in raw_comments:
+            if isinstance(item, dict) and item.get("body"):
+                comments.append(
+                    ReviewComment(
+                        file_path=item.get("file_path", ""),
+                        line_number=item.get("line_number", 0),
+                        category=item.get("category", "general"),
+                        severity=item.get("severity", "info"),
+                        body=item.get("body", ""),
+                        suggested_fix=item.get("suggested_fix"),
+                    )
+                )
 
         comments_data = [c.model_dump() for c in comments]
         risk_score = calculate_risk_score(comments_data)
@@ -113,13 +89,16 @@ async def analyze_review(
         latency_ms = int((time.perf_counter() - start) * 1000)
         rag_pipeline_duration.observe(latency_ms)
 
+        model_used = result.get("model_used", "unknown")
+
+        # Store embedding asynchronously (fire-and-forget)
         asyncio.create_task(
             store_review_async(
                 repo_full_name=request.repo_full_name,
                 pr_number=request.pr_number,
                 diff=request.diff,
                 comments=comments_data,
-                model=llm_response.model_used,
+                model=model_used,
             )
         )
 
@@ -128,12 +107,13 @@ async def analyze_review(
             pr_number=request.pr_number,
             comments=comments,
             risk_score=risk_score,
-            model_used=llm_response.model_used,
-            provider=llm_response.provider or "unknown",
+            model_used=model_used,
+            provider=model_used.split("/")[0] if "/" in model_used else "unknown",
             latency_ms=latency_ms,
         )
 
     except AllProvidersDownError:
+        review_errors_total.labels(error_type="llm_unavailable").inc()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail={

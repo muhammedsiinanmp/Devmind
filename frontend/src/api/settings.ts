@@ -45,6 +45,7 @@ export const settingsApi = {
     model_name: string;
     api_key: string;
     base_url?: string;
+    config_id?: number;
   }): Promise<{ status: string; message: string }> => {
     const response = await apiClient.post<{ status: string; message: string }>("/settings/llm/test/", data);
     return response.data;

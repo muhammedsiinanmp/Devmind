@@ -281,6 +281,7 @@ async def format_output(state: ReviewState) -> dict[str, Any]:
 
     return {
         "confidence": confidence,
+        "iteration": iteration + 1,
     }
 
 

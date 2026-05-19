@@ -92,5 +92,5 @@ class UserLLMConfigTestSerializer(_BaseSerializer):
 
     provider = serializers.CharField()
     model_name = serializers.CharField()
-    api_key = serializers.CharField()
+    api_key = serializers.CharField(required=False, default="", allow_blank=True)
     base_url = serializers.CharField(required=False, default="")

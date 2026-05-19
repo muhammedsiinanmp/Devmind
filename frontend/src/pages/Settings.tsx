@@ -29,7 +29,8 @@ export default function Settings() {
       const result = await settingsApi.testProvider({
         provider: provider.provider,
         model_name: provider.model_name,
-        api_key: provider.masked_key,
+        api_key: "",
+        config_id: provider.id,
         base_url: provider.base_url || undefined,
       });
       alert(result.message || "Test successful!");

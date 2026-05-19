@@ -1,16 +1,56 @@
+import { useEffect, useState, useRef } from "react";
 import { CheckCircle, Clock, XCircle, RefreshCw } from "lucide-react";
 
-type ReviewStatus = "pending" | "processing" | "completed" | "failed";
+type ReviewStatusType = "pending" | "processing" | "completed" | "failed";
 
 interface ReviewStatusProps {
   reviewId?: number;
-  initialStatus?: ReviewStatus;
+  initialStatus?: ReviewStatusType;
+  onStatusChange?: (status: ReviewStatusType) => void;
 }
 
-export default function ReviewStatus({ initialStatus }: ReviewStatusProps) {
-  const status: ReviewStatus = initialStatus || "pending";
+export default function ReviewStatus({ reviewId, initialStatus, onStatusChange }: ReviewStatusProps) {
+  const [status, setStatus] = useState<ReviewStatusType>(initialStatus || "pending");
+  const wsRef = useRef<WebSocket | null>(null);
 
-  const configs: Record<ReviewStatus, { icon: typeof Clock; label: string; className: string }> = {
+  useEffect(() => {
+    if (!reviewId || status === "completed" || status === "failed") return;
+
+    const token = localStorage.getItem("access_token");
+    const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    const wsUrl = `${wsProtocol}//${window.location.host}/ws/reviews/${reviewId}/?token=${token}`;
+
+    try {
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
+
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.status && data.status !== status) {
+            setStatus(data.status);
+            onStatusChange?.(data.status);
+          }
+        } catch {
+          // ignore parse errors
+        }
+      };
+
+      ws.onerror = () => {
+        // WebSocket failed — component remains static
+        ws.close();
+      };
+
+      return () => {
+        ws.close();
+        wsRef.current = null;
+      };
+    } catch {
+      // WebSocket not available, component remains static
+    }
+  }, [reviewId, status]);
+
+  const configs: Record<ReviewStatusType, { icon: typeof Clock; label: string; className: string }> = {
     pending: { icon: Clock, label: "Pending", className: "badge-info" },
     processing: { icon: RefreshCw, label: "Processing", className: "badge-warning" },
     completed: { icon: CheckCircle, label: "Completed", className: "badge-success" },

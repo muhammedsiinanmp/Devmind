@@ -139,8 +139,50 @@ export default function ScanReport() {
         </div>
       )}
 
-      {scan && (
+      {scan && (() => {
+        const healthScore = Math.max(0, 100 - (scan.critical_count * 10) - (scan.warning_count * 5) - (scan.info_count * 1));
+        const gaugeColor = healthScore >= 70 ? "var(--success)" : healthScore >= 40 ? "var(--warning)" : "var(--error)";
+        const gaugeLabel = healthScore >= 70 ? "Healthy" : healthScore >= 40 ? "Needs Attention" : "Critical";
+
+        return (
         <>
+          {scan.status === "completed" && (
+            <div className="flex justify-center">
+              <div className="glass-card p-8 flex flex-col items-center gap-4" style={{ minWidth: 200 }}>
+                <span className="text-xs font-bold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>Health Score</span>
+                <div style={{ position: "relative", width: 120, height: 120 }}>
+                  <svg viewBox="0 0 36 36" style={{ transform: "rotate(-90deg)", width: 120, height: 120 }}>
+                    <path
+                      d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                      fill="none"
+                      stroke="var(--bg-tertiary)"
+                      strokeWidth="3"
+                    />
+                    <path
+                      d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                      fill="none"
+                      stroke={gaugeColor}
+                      strokeWidth="3"
+                      strokeDasharray={`${healthScore}, 100`}
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                  <div style={{
+                    position: "absolute", top: "50%", left: "50%",
+                    transform: "translate(-50%, -50%)",
+                    fontSize: "1.5rem", fontWeight: "bold",
+                    color: gaugeColor
+                  }}>
+                    {healthScore}
+                  </div>
+                </div>
+                <span className="text-sm" style={{ color: "var(--text-secondary)" }}>
+                  {gaugeLabel}
+                </span>
+              </div>
+            </div>
+          )}
+
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="glass-card p-8" style={{ background: "linear-gradient(135deg, rgba(16,185,129,0.05) 0%, transparent 100%)", borderColor: "rgba(16,185,129,0.2)" }}>
               <div className="flex items-center gap-3 mb-4">
@@ -221,7 +263,8 @@ export default function ScanReport() {
             )}
           </div>
         </>
-      )}
+        );
+      })()}
     </div>
   );
 }
