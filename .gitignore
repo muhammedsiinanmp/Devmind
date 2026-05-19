@@ -11,6 +11,10 @@ env/
 dist/
 build/
 htmlcov/
+.coverage*
+".coverage *"
+**/.coverage*
+coverage.xml
 **/.coverage*
 **/coverage.xml
 **/.pytest_cache/
