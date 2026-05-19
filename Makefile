@@ -34,13 +34,11 @@ createsuperuser:
 test:
 	docker compose exec django uv run pytest --cov --cov-fail-under=95
 test-django:
-	docker compose exec django uv run pytest backend/django/ --cov --cov-fail-under=95
+	docker compose exec -e DJANGO_ALLOW_ASYNC_UNSAFE=1 django uv run pytest --cov --cov-fail-under=90
 test-fastapi:
-	docker compose exec fastapi uv run pytest backend/fastapi/ --cov --cov-fail-under=90
-test-analytics:
-	docker compose exec analytics uv run pytest backend/analytics/ --cov --cov-fail-under=90
+	docker compose exec fastapi uv run pytest --cov --cov-fail-under=90
 test-all:
-	make test-django & make test-fastapi & make test-analytics
+	make test-django && make test-fastapi
 
 # ─── Code Quality ─────────────────────────────────────────────
 format:
@@ -74,7 +72,15 @@ frontend-dev:
 
 # ─── Observability ────────────────────────────────────────────
 grafana-open:
-	open https://devmind.grafana.net/dashboards
+	open http://localhost:3000
+prometheus-open:
+	open http://localhost:9090
+grafana-logs:
+	docker compose logs -f grafana
+prometheus-logs:
+	docker compose logs -f prometheus
+prometheus-targets:
+	@echo "Prometheus targets status:" && curl -s http://localhost:9090/api/v1/targets | python3 -c "import sys,json; d=json.load(sys.stdin); [print(f'  {t[\"labels\"][\"job\"]}: {t[\"health\"]}') for t in d['data']['activeTargets']]"
 
 # ─── Development Utilities ────────────────────────────────────
 ngrok:

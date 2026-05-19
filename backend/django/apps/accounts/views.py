@@ -1,5 +1,6 @@
 from django.conf import settings
 import httpx
+from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.request import Request
@@ -106,10 +107,45 @@ class UserMeView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        responses={200: UserSerializer},
+        summary="Get current user profile",
+    )
     def get(self, request: Request) -> Response:
         assert request.user.is_authenticated  # nosec: B101 (used for mypy typing)
         serializer = UserSerializer(request.user)
         return Response(serializer.data)
+
+
+class GitHubTokenView(APIView):
+    """
+    Return the user's stored GitHub access token.
+
+    GET /api/v1/auth/github/token/
+    Requires: Bearer JWT in Authorization header.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request) -> Response:
+        assert request.user.is_authenticated
+        try:
+            token = request.user.github_token
+            if not token or not token.access_token:
+                return Response(
+                    {
+                        "error": "No GitHub token found. Please reconnect your GitHub account."
+                    },
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+            return Response({"access_token": token.access_token})
+        except Exception:
+            return Response(
+                {
+                    "error": "No GitHub token found. Please reconnect your GitHub account."
+                },
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
 
 class LogoutView(APIView):
@@ -122,6 +158,11 @@ class LogoutView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @extend_schema(
+        request=None,
+        responses={205: None},
+        summary="Logout and blacklist refresh token",
+    )
     def post(self, request: Request) -> Response:
         refresh_token = request.data.get("refresh")
         if not refresh_token:
@@ -237,8 +278,26 @@ class LLMConfigTestView(APIView):
 
         provider = serializer.validated_data["provider"]
         model_name = serializer.validated_data["model_name"]
-        api_key = serializer.validated_data["api_key"]
+        api_key = serializer.validated_data.get("api_key", "")
         base_url = serializer.validated_data.get("base_url", "")
+
+        # If config_id provided and api_key is empty, fetch the real key
+        config_id = request.data.get("config_id")
+        if config_id and not api_key:
+            try:
+                config = UserLLMConfig.objects.get(pk=config_id, user=request.user)
+                api_key = config.api_key  # Returns decrypted key via EncryptedCharField
+            except UserLLMConfig.DoesNotExist:
+                return Response(
+                    {"error": "Config not found"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+        if not api_key:
+            return Response(
+                {"error": "api_key is required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         # Test the API key based on provider
         try:

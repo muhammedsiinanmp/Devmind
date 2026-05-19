@@ -1,5 +1,7 @@
+from drf_spectacular.utils import extend_schema
 from rest_framework import status
 from rest_framework.exceptions import PermissionDenied
+from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.filters import SearchFilter, OrderingFilter
 from rest_framework.generics import ListAPIView, RetrieveAPIView
 from rest_framework.permissions import IsAuthenticated
@@ -31,7 +33,8 @@ class ReviewListView(ListAPIView):
     serializer_class = ReviewListSerializer
     queryset = Review.objects.select_related("repository").all()
 
-    filter_backends = [SearchFilter, OrderingFilter]
+    filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
+    filterset_fields = ["status", "repository"]
     search_fields = ["pr_title", "repository__full_name"]
     ordering_fields = ["created_at", "risk_score", "status"]
     ordering = ["-created_at"]
@@ -140,7 +143,11 @@ class RepoScanTriggerView(APIView):
 
     permission_classes = [IsAuthenticated]
 
-    def post(self, request: Request, repo_id: int) -> Response:
+    @extend_schema(
+        responses={202: RepoScanSerializer, 429: None, 404: None},
+        summary="Trigger a full repository scan",
+    )
+    def post(self, request: Request, pk: int) -> Response:
         from django.utils import timezone
         from datetime import timedelta
         from apps.repositories.models import Repository
@@ -148,7 +155,7 @@ class RepoScanTriggerView(APIView):
         from apps.reviews.tasks import full_repo_scan_task
 
         try:
-            repo = Repository.objects.get(pk=repo_id, owner=request.user)
+            repo = Repository.objects.get(pk=pk, owner=request.user)
         except Repository.DoesNotExist:
             return Response(
                 {"error": "Repository not found"},
@@ -175,6 +182,7 @@ class RepoScanTriggerView(APIView):
 
         scan = RepoScan.objects.create(
             repository=repo,
+            triggered_by=request.user,
             status="queued",
             progress=0,
             files_scanned=0,

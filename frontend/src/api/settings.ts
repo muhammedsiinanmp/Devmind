@@ -3,26 +3,30 @@ import apiClient from "./client";
 export interface LLMProvider {
   id: number;
   name: string;
-  provider_type: string;
-  api_key: string;
-  api_endpoint?: string;
+  provider: string;
   model_name: string;
+  masked_key: string;
+  base_url: string;
   is_active: boolean;
-  is_default: boolean;
-}
-
-export interface LLMSettings {
-  providers: LLMProvider[];
-  default_provider: number | null;
+  priority: number;
+  created_at: string;
+  updated_at: string;
 }
 
 export const settingsApi = {
-  getLLMSettings: async (): Promise<LLMSettings> => {
-    const response = await apiClient.get<LLMSettings>("/settings/llm/");
+  getLLMSettings: async (): Promise<LLMProvider[]> => {
+    const response = await apiClient.get<LLMProvider[]>("/settings/llm/");
     return response.data;
   },
 
-  addProvider: async (data: Omit<LLMProvider, "id">): Promise<LLMProvider> => {
+  addProvider: async (data: {
+    name: string;
+    provider: string;
+    model_name: string;
+    api_key: string;
+    base_url?: string;
+    is_active?: boolean;
+  }): Promise<LLMProvider> => {
     const response = await apiClient.post<LLMProvider>("/settings/llm/", data);
     return response.data;
   },
@@ -36,8 +40,14 @@ export const settingsApi = {
     await apiClient.delete(`/settings/llm/${id}/`);
   },
 
-  testProvider: async (id: number): Promise<{ success: boolean; message: string }> => {
-    const response = await apiClient.post<{ success: boolean; message: string }>(`/settings/llm/${id}/test/`);
+  testProvider: async (data: {
+    provider: string;
+    model_name: string;
+    api_key: string;
+    base_url?: string;
+    config_id?: number;
+  }): Promise<{ status: string; message: string }> => {
+    const response = await apiClient.post<{ status: string; message: string }>("/settings/llm/test/", data);
     return response.data;
   },
 

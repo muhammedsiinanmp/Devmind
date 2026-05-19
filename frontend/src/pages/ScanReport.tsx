@@ -1,197 +1,270 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
-import { scanApi, ScanResult, ScanFinding } from "../api/scan";
-import { Shield, AlertTriangle, XCircle, CheckCircle, FileCode, RefreshCw } from "lucide-react";
+import { useParams, Link } from "react-router-dom";
+import apiClient from "../api/client";
+import {
+  Shield, AlertTriangle, XCircle, CheckCircle, FileCode,
+  RefreshCw, ArrowLeft, Loader2, Activity, Play
+} from "lucide-react";
+
+interface ScanResult {
+  id: number;
+  repository: number;
+  repository_name: string;
+  status: "queued" | "scanning" | "completed" | "failed";
+  progress: number;
+  total_files: number;
+  files_scanned: number;
+  total_issues: number;
+  critical_count: number;
+  warning_count: number;
+  info_count: number;
+  scan_duration_ms: number | null;
+  created_at: string;
+  completed_at: string | null;
+}
 
 export default function ScanReport() {
   const { id } = useParams<{ id: string }>();
   const [scan, setScan] = useState<ScanResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [triggering, setTriggering] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
-  const fetchScan = async () => {
-    if (!id) return;
-    setLoading(true);
-    setError(null);
+  const fetchScan = async (scanId: number) => {
     try {
-      const result = await scanApi.getLatestScan(parseInt(id));
-      setScan(result);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load scan");
+      const res = await apiClient.get<ScanResult>(`/scans/${scanId}/`);
+      setScan(res.data);
+      setError(null);
+    } catch {
+      setError("No scan found for this repository.");
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchScan();
+    if (id) {
+      const numId = parseInt(id, 10);
+      if (numId > 10000) {
+        fetchScan(numId);
+      } else {
+        setError("Scan ID not recognized.");
+        setLoading(false);
+      }
+    } else {
+      setError("No scan ID provided.");
+      setLoading(false);
+    }
   }, [id]);
 
-  const getHealthColor = (score: number | null) => {
-    if (score === null) return "text-gray-500";
-    if (score >= 70) return "text-green-600";
-    if (score >= 40) return "text-yellow-600";
-    return "text-red-600";
+  const handleRefresh = async () => {
+    if (!scan) return;
+    setRefreshing(true);
+    await fetchScan(scan.id);
+    setRefreshing(false);
   };
 
-  const getHealthBg = (score: number | null) => {
-    if (score === null) return "bg-gray-100";
-    if (score >= 70) return "bg-green-100";
-    if (score >= 40) return "bg-yellow-100";
-    return "bg-red-100";
-  };
-
-  const getSeverityIcon = (severity: string) => {
-    switch (severity) {
-      case "critical":
-        return <XCircle className="w-4 h-4 text-red-600" />;
-      case "error":
-        return <AlertTriangle className="w-4 h-4 text-orange-600" />;
-      case "warning":
-        return <AlertTriangle className="w-4 h-4 text-yellow-600" />;
-      default:
-        return <CheckCircle className="w-4 h-4 text-blue-600" />;
+  const handleTriggerScan = async () => {
+    if (!id) return;
+    setTriggering(true);
+    try {
+      await apiClient.post(`/repositories/${id}/scan/`);
+      alert("Scan queued. Wait a moment and refresh to see results.");
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error || "Failed to trigger scan";
+      alert(msg);
+    } finally {
+      setTriggering(false);
     }
   };
 
-  const groupFindingsByCategory = (findings: ScanFinding[]) => {
-    const grouped: Record<string, ScanFinding[]> = {};
-    findings.forEach((f) => {
-      if (!grouped[f.category]) grouped[f.category] = [];
-      grouped[f.category].push(f);
-    });
-    return grouped;
+  const statusColor = (status: string) => {
+    switch (status) {
+      case "completed": return "var(--success)";
+      case "failed": return "var(--error)";
+      case "scanning": case "queued": return "var(--warning)";
+      default: return "var(--text-muted)";
+    }
   };
 
   if (loading) {
     return (
-      <div className="p-6">
-        <div className="animate-pulse space-y-4">
-          <div className="h-32 bg-gray-200 rounded-lg" />
-          <div className="h-64 bg-gray-200 rounded-lg" />
-        </div>
+      <div className="min-h-[60vh] flex flex-col items-center justify-center space-y-4">
+        <Loader2 className="w-10 h-10 animate-spin" style={{ color: "var(--accent)" }} />
+        <p className="animate-pulse" style={{ color: "var(--text-secondary)" }}>Analyzing repository health...</p>
       </div>
     );
   }
-
-  if (error) {
-    return (
-      <div className="p-6">
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-red-700">
-          {error}
-        </div>
-        <button
-          onClick={fetchScan}
-          className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
-        >
-          Retry
-        </button>
-      </div>
-    );
-  }
-
-  if (!scan) {
-    return (
-      <div className="p-6">
-        <div className="bg-gray-50 border border-gray-200 rounded-lg p-8 text-center">
-          <Shield className="w-12 h-12 mx-auto text-gray-400 mb-4" />
-          <h3 className="text-lg font-medium text-gray-900">No scan found</h3>
-          <p className="text-gray-500 mt-2">Trigger a scan to see the report</p>
-        </div>
-      </div>
-    );
-  }
-
-  const groupedFindings = groupFindingsByCategory(scan.findings || []);
 
   return (
-    <div className="p-6 max-w-6xl mx-auto">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-gray-900">Scan Report</h1>
-        <button
-          onClick={fetchScan}
-          className="flex items-center gap-2 px-4 py-2 text-sm bg-gray-100 hover:bg-gray-200 rounded-lg"
-        >
-          <RefreshCw className="w-4 h-4" />
-          Refresh
-        </button>
-      </div>
-
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-        <div className={`p-6 rounded-lg ${getHealthBg(scan.health_score)}`}>
-          <div className="flex items-center gap-3 mb-2">
-            <Shield className={`w-6 h-6 ${getHealthColor(scan.health_score)}`} />
-            <span className="text-sm font-medium text-gray-600">Health Score</span>
-          </div>
-          <div className={`text-4xl font-bold ${getHealthColor(scan.health_score)}`}>
-            {scan.health_score ?? "—"}
-          </div>
+    <div className="space-y-8 animate-fade-in pb-20">
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-4xl font-bold mb-2 text-gradient">Health Report</h1>
+          <p className="text-lg" style={{ color: "var(--text-secondary)" }}>
+            Full repository security and quality scan results.
+          </p>
         </div>
-
-        <div className="bg-white border rounded-lg p-6">
-          <div className="flex items-center gap-3 mb-2">
-            <AlertTriangle className="w-6 h-6 text-orange-500" />
-            <span className="text-sm font-medium text-gray-600">Issues Found</span>
-          </div>
-          <div className="text-4xl font-bold text-gray-900">
-            {scan.findings?.length ?? 0}
-          </div>
-        </div>
-
-        <div className="bg-white border rounded-lg p-6">
-          <div className="flex items-center gap-3 mb-2">
-            <FileCode className="w-6 h-6 text-blue-500" />
-            <span className="text-sm font-medium text-gray-600">Status</span>
-          </div>
-          <div className="text-4xl font-bold text-gray-900 capitalize">
-            {scan.status}
-          </div>
+        <div className="flex items-center gap-3">
+          {scan && (
+            <button onClick={handleRefresh} disabled={refreshing} className="btn-secondary flex items-center gap-2">
+              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin' : ''}`} />
+              {refreshing ? "Refreshing..." : "Refresh"}
+            </button>
+          )}
+          {id && (
+            <button onClick={handleTriggerScan} disabled={triggering} className="btn-primary flex items-center gap-2">
+              {triggering ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
+              {triggering ? "Queuing..." : "New Scan"}
+            </button>
+          )}
         </div>
       </div>
 
-      {scan.summary && (
-        <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
-          <h3 className="font-medium text-blue-900">Summary</h3>
-          <p className="text-blue-800 mt-1">{scan.summary}</p>
+      {error && (
+        <div className="glass-card p-8 text-center space-y-4">
+          <div className="w-16 h-16 rounded-2xl flex items-center justify-center border mx-auto" style={{ backgroundColor: "var(--bg-tertiary)", borderColor: "var(--border)" }}>
+            <AlertTriangle className="w-8 h-8" style={{ color: "var(--text-muted)" }} />
+          </div>
+          <h3 className="text-xl font-semibold" style={{ color: "var(--text-primary)" }}>{error}</h3>
+          {id && (
+            <button onClick={handleTriggerScan} className="btn-primary">
+              <Play className="w-4 h-4" /> Trigger a Scan
+            </button>
+          )}
+          <Link to="/repositories" className="btn-secondary mt-2">
+            <ArrowLeft className="w-4 h-4" /> Back to Repositories
+          </Link>
         </div>
       )}
 
-      <div className="space-y-6">
-        {Object.entries(groupedFindings).map(([category, findings]) => (
-          <div key={category} className="bg-white border rounded-lg overflow-hidden">
-            <div className="bg-gray-50 px-6 py-3 border-b">
-              <h2 className="font-semibold text-gray-900 capitalize">{category}</h2>
-              <span className="text-sm text-gray-500">{findings.length} findings</span>
-            </div>
-            <div className="divide-y">
-              {findings.map((finding) => (
-                <div key={finding.id} className="px-6 py-4">
-                  <div className="flex items-start gap-3">
-                    {getSeverityIcon(finding.severity)}
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2">
-                        <code className="text-sm font-mono bg-gray-100 px-2 py-1 rounded">
-                          {finding.file_path}
-                          {finding.line_number && `:${finding.line_number}`}
-                        </code>
-                        <span className="text-xs uppercase px-2 py-0.5 rounded bg-gray-100 text-gray-600">
-                          {finding.severity}
-                        </span>
-                      </div>
-                      <p className="text-gray-700 mt-2">{finding.message}</p>
-                      {finding.rule_id && (
-                        <span className="text-xs text-gray-500 mt-1 block">
-                          Rule: {finding.rule_id}
-                        </span>
-                      )}
-                    </div>
+      {scan && (() => {
+        const healthScore = Math.max(0, 100 - (scan.critical_count * 10) - (scan.warning_count * 5) - (scan.info_count * 1));
+        const gaugeColor = healthScore >= 70 ? "var(--success)" : healthScore >= 40 ? "var(--warning)" : "var(--error)";
+        const gaugeLabel = healthScore >= 70 ? "Healthy" : healthScore >= 40 ? "Needs Attention" : "Critical";
+
+        return (
+        <>
+          {scan.status === "completed" && (
+            <div className="flex justify-center">
+              <div className="glass-card p-8 flex flex-col items-center gap-4" style={{ minWidth: 200 }}>
+                <span className="text-xs font-bold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>Health Score</span>
+                <div style={{ position: "relative", width: 120, height: 120 }}>
+                  <svg viewBox="0 0 36 36" style={{ transform: "rotate(-90deg)", width: 120, height: 120 }}>
+                    <path
+                      d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                      fill="none"
+                      stroke="var(--bg-tertiary)"
+                      strokeWidth="3"
+                    />
+                    <path
+                      d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
+                      fill="none"
+                      stroke={gaugeColor}
+                      strokeWidth="3"
+                      strokeDasharray={`${healthScore}, 100`}
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                  <div style={{
+                    position: "absolute", top: "50%", left: "50%",
+                    transform: "translate(-50%, -50%)",
+                    fontSize: "1.5rem", fontWeight: "bold",
+                    color: gaugeColor
+                  }}>
+                    {healthScore}
                   </div>
                 </div>
-              ))}
+                <span className="text-sm" style={{ color: "var(--text-secondary)" }}>
+                  {gaugeLabel}
+                </span>
+              </div>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div className="glass-card p-8" style={{ background: "linear-gradient(135deg, rgba(16,185,129,0.05) 0%, transparent 100%)", borderColor: "rgba(16,185,129,0.2)" }}>
+              <div className="flex items-center gap-3 mb-4">
+                <Shield className="w-6 h-6" style={{ color: "var(--success)" }} />
+                <span className="text-xs font-bold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>Total Issues</span>
+              </div>
+              <div className="text-5xl font-bold" style={{ color: "var(--text-primary)" }}>{scan.total_issues}</div>
+              <p className="text-xs mt-2" style={{ color: "var(--text-muted)" }}>{scan.critical_count} critical, {scan.warning_count} warnings, {scan.info_count} info</p>
+            </div>
+
+            <div className="glass-card p-8">
+              <div className="flex items-center gap-3 mb-4">
+                <FileCode className="w-6 h-6" style={{ color: "var(--warning)" }} />
+                <span className="text-xs font-bold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>Files Scanned</span>
+              </div>
+              <div className="text-5xl font-bold" style={{ color: "var(--text-primary)" }}>
+                {scan.files_scanned}<span className="text-xl" style={{ color: "var(--text-muted)" }}>/{scan.total_files}</span>
+              </div>
+              {scan.progress > 0 && (
+                <div className="w-full h-1.5 rounded-full mt-3 overflow-hidden" style={{ backgroundColor: "var(--bg-tertiary)" }}>
+                  <div className="h-full" style={{ width: `${scan.progress}%`, backgroundColor: "var(--accent)" }} />
+                </div>
+              )}
+            </div>
+
+            <div className="glass-card p-8">
+              <div className="flex items-center gap-3 mb-4">
+                <Activity className="w-6 h-6" style={{ color: "var(--accent)" }} />
+                <span className="text-xs font-bold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>Status</span>
+              </div>
+              <div className="text-3xl font-bold capitalize" style={{ color: statusColor(scan.status) }}>{scan.status}</div>
+              <p className="text-xs mt-2" style={{ color: "var(--text-muted)" }}>
+                {scan.created_at ? `Started ${new Date(scan.created_at).toLocaleString()}` : "Not started"}
+              </p>
             </div>
           </div>
-        ))}
-      </div>
+
+          {(scan.status === "queued" || scan.status === "scanning") && (
+            <div className="glass-card p-6 border-l-4" style={{ borderColor: "var(--warning)", backgroundColor: "rgba(245,158,11,0.05)" }}>
+              <div className="flex items-center gap-3">
+                <Loader2 className="w-5 h-5 animate-spin" style={{ color: "var(--warning)" }} />
+                <p style={{ color: "var(--text-secondary)" }}>
+                  Scan {scan.status === "queued" ? "is queued" : "is scanning"} — {scan.progress}% complete.
+                </p>
+              </div>
+            </div>
+          )}
+
+          {scan.status === "completed" && (
+            <div className="glass-card p-6 border-l-4" style={{ borderColor: "var(--success)", backgroundColor: "rgba(16,185,129,0.05)" }}>
+              <div className="flex items-center gap-3">
+                <CheckCircle className="w-5 h-5" style={{ color: "var(--success)" }} />
+                <p style={{ color: "var(--text-secondary)" }}>
+                  Scan completed. {scan.total_issues} issues found across {scan.files_scanned} files.
+                </p>
+              </div>
+            </div>
+          )}
+
+          <div className="flex flex-wrap gap-4">
+            {scan.critical_count > 0 && (
+              <div className="glass-card px-6 py-4 flex items-center gap-3" style={{ borderColor: "rgba(239,68,68,0.2)" }}>
+                <XCircle className="w-5 h-5" style={{ color: "var(--error)" }} />
+                <span className="font-bold" style={{ color: "var(--error)" }}>{scan.critical_count} Critical</span>
+              </div>
+            )}
+            {scan.warning_count > 0 && (
+              <div className="glass-card px-6 py-4 flex items-center gap-3" style={{ borderColor: "rgba(245,158,11,0.2)" }}>
+                <AlertTriangle className="w-5 h-5" style={{ color: "var(--warning)" }} />
+                <span className="font-bold" style={{ color: "var(--warning)" }}>{scan.warning_count} Warnings</span>
+              </div>
+            )}
+            {scan.info_count > 0 && (
+              <div className="glass-card px-6 py-4 flex items-center gap-3" style={{ borderColor: "rgba(139,92,246,0.2)" }}>
+                <FileCode className="w-5 h-5" style={{ color: "var(--accent)" }} />
+                <span className="font-bold" style={{ color: "var(--accent)" }}>{scan.info_count} Info</span>
+              </div>
+            )}
+          </div>
+        </>
+        );
+      })()}
     </div>
   );
 }

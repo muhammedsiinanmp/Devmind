@@ -90,8 +90,8 @@ class ReviewAdmin(admin.ModelAdmin):
         "id",
         "repository",
         "pr_number",
-        "status",
-        "risk_score",
+        "status_badge",
+        "risk_score_display",
         "created_at",
     ]
     list_filter = ["status", "repository__language"]

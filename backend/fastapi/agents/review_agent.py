@@ -281,6 +281,7 @@ async def format_output(state: ReviewState) -> dict[str, Any]:
 
     return {
         "confidence": confidence,
+        "iteration": iteration + 1,
     }
 
 
@@ -330,8 +331,6 @@ def build_review_graph():
         "format_output",
         retry_condition,
     )
-
-    graph.add_edge("format_output", END)
 
     return graph.compile()
 
