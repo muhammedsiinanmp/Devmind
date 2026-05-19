@@ -48,6 +48,7 @@ LOCAL_APPS = [
     "apps.notifications",
     "apps.analytics",
     "apps.core",
+    "apps.organizations",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -283,4 +284,6 @@ CELERY_TASK_ROUTES = {
     "repositories.install_webhook": {"queue": "default"},
     "repositories.remove_webhook": {"queue": "default"},
     "repositories.trigger_review": {"queue": "review"},
+    "organizations.send_invite_email_task": {"queue": "default"},
+    "organizations.sync_org_members_task": {"queue": "default"},
 }
