@@ -193,6 +193,13 @@ GITHUB_CLIENT_ID = env("GITHUB_CLIENT_ID", default="")
 GITHUB_CLIENT_SECRET = env("GITHUB_CLIENT_SECRET", default="")
 GITHUB_WEBHOOK_SECRET = env("GITHUB_WEBHOOK_SECRET", default="")
 
+# Supabase (realtime updates)
+SUPABASE_URL = env("SUPABASE_URL", default="")
+SUPABASE_SERVICE_KEY = env("SUPABASE_SERVICE_KEY", default="")
+
+# Frontend URL (used for OAuth redirect_uri)
+FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:5173")
+
 # FastAPI Internal
 FASTAPI_BASE_URL = env("FASTAPI_BASE_URL", default="http://fastapi:8001")
 FASTAPI_INTERNAL_SECRET = env("FASTAPI_INTERNAL_SECRET", default="")

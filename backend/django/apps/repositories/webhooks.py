@@ -142,6 +142,9 @@ class WebhookDispatcher:
 
         pr_number = int(str(pr_data.get("number", 0)))
         head_sha = str(pr_data.get("head", {}).get("sha", ""))  # type: ignore[union-attr]
+        pr_title = str(pr_data.get("title", ""))
+        base_sha = str(pr_data.get("base", {}).get("sha", ""))  # type: ignore[union-attr]
+        diff_url = str(pr_data.get("diff_url", ""))
 
         log.info(
             "webhook.pr.dispatching_review",
@@ -156,6 +159,9 @@ class WebhookDispatcher:
             repo_id=repo.pk,
             pr_number=pr_number,
             head_sha=head_sha,
+            pr_title=pr_title,
+            base_sha=base_sha,
+            diff_url=diff_url,
         )
 
         self._produce_pr_opened_event(full_name, pr_number, head_sha, action)

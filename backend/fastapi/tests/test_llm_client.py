@@ -197,7 +197,7 @@ class TestCheckProviderHealth:
         with patch("services.llm_client.httpx.AsyncClient") as mock_client:
             mock_instance = AsyncMock()
             mock_client.return_value.__aenter__.return_value = mock_instance
-            mock_instance.post.return_value = mock_response
+            mock_instance.get.return_value = mock_response
 
             provider, is_healthy = await check_provider_health(MODEL_CHAIN[0])
 
@@ -209,7 +209,7 @@ class TestCheckProviderHealth:
         with patch("services.llm_client.httpx.AsyncClient") as mock_client:
             mock_instance = AsyncMock()
             mock_client.return_value.__aenter__.return_value = mock_instance
-            mock_instance.post.side_effect = Exception("Network error")
+            mock_instance.get.side_effect = Exception("Network error")
 
             provider, is_healthy = await check_provider_health(MODEL_CHAIN[0])
 

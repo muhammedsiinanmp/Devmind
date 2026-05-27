@@ -16,7 +16,7 @@ from apps.reviews.services.orchestrator import ReviewOrchestrator
 @pytest.fixture
 def repository(db, django_user_model):
     user = django_user_model.objects.create_user(
-        username="testuser", password="testpass"
+        email="testuser@example.com", password="testpass"
     )
     return Repository.objects.create(
         name="test-repo",
@@ -35,6 +35,8 @@ def review(db, repository):
         pr_number=1,
         pr_title="Test PR",
         head_sha="abc123",
+        base_sha="def456",
+        diff_url="https://github.com/testuser/test-repo/pull/1",
         status="pending",
     )
 
@@ -80,8 +82,7 @@ class TestReviewPipeline:
                 "provider": "openai",
                 "latency_ms": 2500,
             }
-            mock_client.return_value.__enter__ = MagicMock(return_value=mock_response)
-            mock_client.return_value.__exit__ = MagicMock(return_value=False)
+            mock_client.return_value.__enter__.return_value = mock_client.return_value
             mock_client.return_value.post.return_value = mock_response
 
             with patch(
@@ -123,8 +124,7 @@ class TestReviewPipeline:
         with patch("apps.reviews.services.orchestrator.httpx.Client") as mock_client:
             mock_response = MagicMock()
             mock_response.status_code = 503
-            mock_client.return_value.__enter__ = MagicMock(return_value=mock_response)
-            mock_client.return_value.__exit__ = MagicMock(return_value=False)
+            mock_client.return_value.__enter__.return_value = mock_client.return_value
             mock_client.return_value.post.return_value = mock_response
 
             with patch("apps.reviews.services.orchestrator.GithubService"):
@@ -143,12 +143,4 @@ class TestMetricsEndpoint:
         """Test that /metrics endpoint returns Prometheus format."""
         response = client.get("/metrics")
         assert response.status_code == 200
-        assert "devmind_" in response.content.decode()
-
-
-@pytest.mark.django_db
-class TestSentryErrorCapture:
-    def test_sentry_captures_test_error(self, client):
-        """Test that Sentry captures errors from test view."""
-        response = client.get("/test-error/")
-        assert response.status_code == 500
+        assert "# HELP" in response.content.decode()

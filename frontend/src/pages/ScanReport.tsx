@@ -46,7 +46,7 @@ export default function ScanReport() {
   useEffect(() => {
     if (id) {
       const numId = parseInt(id, 10);
-      if (numId > 10000) {
+      if (!isNaN(numId)) {
         fetchScan(numId);
       } else {
         setError("Scan ID not recognized.");

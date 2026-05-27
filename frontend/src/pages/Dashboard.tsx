@@ -27,19 +27,21 @@ interface ReviewListResponse {
 export default function Dashboard() {
   const [reviews, setReviews] = useState<Review[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [totalCount, setTotalCount] = useState(0);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
 
   const fetchReviews = async (pageNum: number) => {
     setIsLoading(true);
+    setError(null);
     try {
       const res = await apiClient.get<ReviewListResponse>("/reviews/", { params: { page: pageNum, page_size: 10 } });
       setReviews(res.data.results);
       setTotalCount(res.data.count);
       setTotalPages(Math.ceil(res.data.count / 10));
     } catch {
-      // handle error
+      setError("Failed to load reviews. Please try again.");
     } finally {
       setIsLoading(false);
     }
@@ -52,6 +54,19 @@ export default function Dashboard() {
       <div className="min-h-[60vh] flex flex-col items-center justify-center space-y-4">
         <Loader2 className="w-10 h-10 animate-spin" style={{ color: "var(--accent)" }} />
         <p className="animate-pulse" style={{ color: "var(--text-secondary)" }}>Loading reviews...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-[60vh] flex flex-col items-center justify-center space-y-4">
+        <p className="text-sm px-4 py-2 rounded-lg" style={{ backgroundColor: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)", color: "var(--error)" }}>
+          {error}
+        </p>
+        <button onClick={() => fetchReviews(page)} className="btn-secondary text-sm">
+          Try Again
+        </button>
       </div>
     );
   }

@@ -28,21 +28,31 @@ export default function Login() {
 
   const handleCallback = async (code: string, state: string) => {
     setIsLoading(true);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
     try {
-      const res = await fetch(`/api/v1/auth/github/callback/?code=${code}&state=${state}`);
+      const res = await fetch(`/api/v1/auth/github/callback/?code=${code}&state=${state}`, {
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
       const data = await res.json();
 
       if (data.access && data.refresh) {
         setTokens(data.access, data.refresh);
-        const cleanUrl = window.location.pathname;
-        window.history.replaceState({}, "", cleanUrl);
+        window.history.replaceState({}, "", window.location.pathname);
         navigate("/dashboard", { replace: true });
-      } else if (data.error) {
-        setError(data.error);
-        setIsLoading(false);
+        return;
       }
-    } catch {
-      setError("Authentication failed. Please try again.");
+
+      setError(data.error || "Unexpected response from server.");
+      setIsLoading(false);
+    } catch (err: unknown) {
+      clearTimeout(timeout);
+      if (err instanceof DOMException && err.name === "AbortError") {
+        setError("Request timed out. Please check your connection and try again.");
+      } else {
+        setError("Authentication failed. Please try again.");
+      }
       setIsLoading(false);
     }
   };
@@ -50,8 +60,14 @@ export default function Login() {
   const handleGitHubLogin = async () => {
     setIsLoading(true);
     setError(null);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 15000);
     try {
-      const res = await fetch("/api/v1/auth/github/start/");
+      const res = await fetch(
+        `/api/v1/auth/github/start/?redirect_uri=${encodeURIComponent(window.location.origin + "/auth/callback")}`,
+        { signal: controller.signal },
+      );
+      clearTimeout(timeout);
       const data = await res.json();
 
       if (data.authorize_url) {
@@ -59,8 +75,13 @@ export default function Login() {
       } else {
         throw new Error();
       }
-    } catch {
-      setError("Could not connect to GitHub. Please try again.");
+    } catch (err: unknown) {
+      clearTimeout(timeout);
+      if (err instanceof DOMException && err.name === "AbortError") {
+        setError("Request timed out. Please check your connection and try again.");
+      } else {
+        setError("Could not connect to GitHub. Please try again.");
+      }
       setIsLoading(false);
     }
   };
