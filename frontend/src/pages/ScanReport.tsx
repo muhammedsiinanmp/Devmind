@@ -33,7 +33,7 @@ export default function ScanReport() {
 
   const fetchScan = async (scanId: number) => {
     try {
-      const res = await apiClient.get<ScanResult>(`/scans/${scanId}/`);
+      const res = await apiClient.get<ScanResult>(`/reviews/scans/${scanId}/`);
       setScan(res.data);
       setError(null);
     } catch {
@@ -66,10 +66,13 @@ export default function ScanReport() {
   };
 
   const handleTriggerScan = async () => {
-    if (!id) return;
+    if (!scan?.repository) {
+      alert("Repository context is missing for this scan.");
+      return;
+    }
     setTriggering(true);
     try {
-      await apiClient.post(`/repositories/${id}/scan/`);
+      await apiClient.post(`/repositories/${scan.repository}/scan/`);
       alert("Scan queued. Wait a moment and refresh to see results.");
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error || "Failed to trigger scan";

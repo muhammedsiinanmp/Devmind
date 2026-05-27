@@ -25,6 +25,9 @@ class ReviewState(TypedDict):
     repo_full_name: str
     pr_number: int
     user_id: int
+    diff_chunks: list
+    similar_patterns: list[str]
+    prebuilt_prompt: str
 
     conventions: dict
     security_comments: list[ReviewComment]

@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { useParams, Link } from "react-router-dom";
-import apiClient from "../api/client";
+import apiClient, { authApi } from "../api/client";
 import ReviewStatus from "../components/review/ReviewStatus";
+import DiffViewer, { type DiffFile } from "../components/review/DiffViewer";
 import {
   Loader2, CheckCircle, AlertTriangle, Info, ArrowLeft, ExternalLink,
   ChevronRight, GitPullRequest, RefreshCw
@@ -34,6 +35,95 @@ interface ReviewDetail {
   comments: ReviewComment[];
 }
 
+function normalizePath(path: string): string {
+  return path.replace(/^a\//, "").replace(/^b\//, "");
+}
+
+function parseUnifiedDiff(diffText: string): DiffFile[] {
+  type MutableDiffFile = {
+    file_path: string;
+    additions: number;
+    deletions: number;
+    patchLines: string[];
+    oldLines: string[];
+    newLines: string[];
+    inHunk: boolean;
+  };
+
+  const lines = diffText.replace(/\r\n/g, "\n").split("\n");
+  const files: DiffFile[] = [];
+  let current: MutableDiffFile | null = null;
+
+  const pushCurrent = () => {
+    if (!current) return;
+    files.push({
+      file_path: normalizePath(current.file_path),
+      additions: current.additions,
+      deletions: current.deletions,
+      patch: current.patchLines.join("\n"),
+      old_content: current.oldLines.join("\n"),
+      new_content: current.newLines.join("\n"),
+    });
+    current = null;
+  };
+
+  for (const line of lines) {
+    if (line.startsWith("diff --git ")) {
+      pushCurrent();
+      const match = line.match(/^diff --git a\/(.+?) b\/(.+)$/);
+      current = {
+        file_path: match?.[2] || "",
+        additions: 0,
+        deletions: 0,
+        patchLines: [],
+        oldLines: [],
+        newLines: [],
+        inHunk: false,
+      };
+      continue;
+    }
+
+    if (!current) continue;
+
+    if (line.startsWith("@@")) {
+      current.inHunk = true;
+      current.patchLines.push(line);
+      continue;
+    }
+
+    if (!current.inHunk) continue;
+
+    if (line.startsWith("+") && !line.startsWith("+++")) {
+      current.additions += 1;
+      current.patchLines.push(line);
+      current.newLines.push(line.slice(1));
+      continue;
+    }
+
+    if (line.startsWith("-") && !line.startsWith("---")) {
+      current.deletions += 1;
+      current.patchLines.push(line);
+      current.oldLines.push(line.slice(1));
+      continue;
+    }
+
+    if (line.startsWith(" ")) {
+      const content = line.slice(1);
+      current.patchLines.push(line);
+      current.oldLines.push(content);
+      current.newLines.push(content);
+      continue;
+    }
+
+    if (line.startsWith("\\ No newline at end of file")) {
+      current.patchLines.push(line);
+    }
+  }
+
+  pushCurrent();
+  return files.filter((file) => file.file_path);
+}
+
 export default function ReviewDetail() {
   const { id } = useParams<{ id: string }>();
   const [review, setReview] = useState<ReviewDetail | null>(null);
@@ -41,6 +131,9 @@ export default function ReviewDetail() {
   const [error, setError] = useState<string | null>(null);
   const [activeFilter, setActiveFilter] = useState("all");
   const [retriggering, setRetriggering] = useState(false);
+  const [diffFiles, setDiffFiles] = useState<DiffFile[]>([]);
+  const [diffLoading, setDiffLoading] = useState(false);
+  const [diffError, setDiffError] = useState<string | null>(null);
 
   useEffect(() => {
     if (id) fetchReview(parseInt(id, 10));
@@ -58,6 +151,62 @@ export default function ReviewDetail() {
       setIsLoading(false);
     }
   };
+
+  const fetchDiffFiles = async (reviewData: ReviewDetail) => {
+    setDiffLoading(true);
+    setDiffError(null);
+
+    try {
+      let diffText = "";
+
+      if (reviewData.diff_url) {
+        try {
+          const direct = await fetch(reviewData.diff_url);
+          if (direct.ok) {
+            diffText = await direct.text();
+          }
+        } catch {
+          // ignore direct fetch failures and fallback to GitHub API with token
+        }
+      }
+
+      if (!diffText || !diffText.includes("diff --git")) {
+        const tokenData = await authApi.getGithubToken();
+        const ghRes = await fetch(
+          `https://api.github.com/repos/${reviewData.repository_name}/pulls/${reviewData.pr_number}`,
+          {
+            headers: {
+              Accept: "application/vnd.github.v3.diff",
+              Authorization: `Bearer ${tokenData.access_token}`,
+              "X-GitHub-Api-Version": "2022-11-28",
+            },
+          }
+        );
+
+        if (!ghRes.ok) {
+          throw new Error(`GitHub API returned ${ghRes.status}`);
+        }
+        diffText = await ghRes.text();
+      }
+
+      const parsed = parseUnifiedDiff(diffText);
+      setDiffFiles(parsed);
+
+      if (parsed.length === 0) {
+        setDiffError("Diff was fetched, but no file hunks could be parsed for inline view.");
+      }
+    } catch {
+      setDiffFiles([]);
+      setDiffError("Unable to load inline diff. You can still review issues and open GitHub diff.");
+    } finally {
+      setDiffLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (!review) return;
+    fetchDiffFiles(review);
+  }, [review?.id]);
 
   const handleRetrigger = async () => {
     if (!id || !review) return;
@@ -187,11 +336,28 @@ export default function ReviewDetail() {
             </section>
           )}
 
+          <section className="glass-card p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h2 className="text-xl font-bold" style={{ color: "var(--text-primary)" }}>Diff + AI Overlays</h2>
+              {diffError && (
+                <span className="text-xs" style={{ color: "var(--warning)" }}>
+                  {diffError}
+                </span>
+              )}
+            </div>
+            <DiffViewer
+              files={diffFiles}
+              comments={review.comments}
+              diffUrl={review.diff_url}
+              isLoading={diffLoading}
+            />
+          </section>
+
           <section className="space-y-4">
             <div className="flex items-center justify-between">
               <h2 className="text-xl font-bold" style={{ color: "var(--text-primary)" }}>Audit Findings</h2>
               <div className="flex items-center gap-2 p-1 rounded-xl border" style={{ backgroundColor: "var(--bg-tertiary)", borderColor: "var(--border)" }}>
-                {["all", "critical", "warning", "info"].map(filter => (
+                {["all", "critical", "error", "warning", "info"].map(filter => (
                   <button key={filter} onClick={() => setActiveFilter(filter)}
                     className="px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all"
                     style={activeFilter === filter

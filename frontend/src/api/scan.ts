@@ -28,18 +28,22 @@ export const scanApi = {
     return response.data;
   },
 
-  getScanStatus: async (repositoryId: number, scanId: string): Promise<ScanResult> => {
-    const response = await apiClient.get<ScanResult>(`/repositories/${repositoryId}/scans/${scanId}/`);
+  getScanStatus: async (_repositoryId: number, scanId: string): Promise<ScanResult> => {
+    const response = await apiClient.get<ScanResult>(`/reviews/scans/${scanId}/`);
     return response.data;
   },
 
   getLatestScan: async (repositoryId: number): Promise<ScanResult | null> => {
-    const response = await apiClient.get<ScanResult | null>(`/repositories/${repositoryId}/scans/latest/`);
-    return response.data;
+    // No dedicated latest-scan endpoint exists in backend contract yet.
+    // Keep the API stable and return null until implemented.
+    void repositoryId;
+    return null;
   },
 
   listScans: async (repositoryId: number): Promise<{ results: ScanResult[] }> => {
-    const response = await apiClient.get<{ results: ScanResult[] }>(`/repositories/${repositoryId}/scans/`);
-    return response.data;
+    // No list-scans endpoint exists in backend contract yet.
+    // Keep the API stable and return an empty list until implemented.
+    void repositoryId;
+    return { results: [] };
   },
 };

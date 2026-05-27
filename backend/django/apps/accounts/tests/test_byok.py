@@ -5,6 +5,7 @@ Tests key encryption, masking, CRUD operations, and validation.
 """
 
 import pytest
+from django.test import override_settings
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 from rest_framework_simplejwt.tokens import RefreshToken
@@ -196,3 +197,65 @@ class TestPriority:
                 model_name="gpt-4o",
                 api_key="sk-keyb123456",
             )
+
+
+@pytest.mark.django_db
+class TestCreateValidation:
+    @override_settings(SKIP_LLM_KEY_VALIDATION=False)
+    def test_create_rejects_invalid_provider_key(self, authed_client, mocker):
+        client, _user = authed_client
+
+        mock_response = mocker.Mock()
+        mock_response.status_code = 401
+        mock_http_client = mocker.MagicMock()
+        mock_http_client.get.return_value = mock_response
+        mocker.patch(
+            "apps.accounts.views.httpx.Client"
+        ).return_value.__enter__.return_value = mock_http_client
+
+        resp = client.post(
+            "/api/v1/auth/settings/llm/",
+            {
+                "name": "Bad Key",
+                "provider": "openai",
+                "model_name": "gpt-4o",
+                "api_key": "sk-invalid",
+            },
+            format="json",
+        )
+
+        assert resp.status_code == 400
+        assert resp.data["error"] == "invalid_key"
+
+
+@pytest.mark.django_db
+class TestInternalLLMConfigsEndpoint:
+    @override_settings(FASTAPI_INTERNAL_SECRET="test-internal-secret")
+    def test_internal_endpoint_returns_active_configs(self, authed_client):
+        client, user = authed_client
+        UserLLMConfig.objects.create(
+            user=user,
+            provider="openai",
+            model_name="gpt-4o",
+            api_key="sk-internal-key",
+            is_active=True,
+            priority=0,
+        )
+
+        resp = client.get(
+            f"/api/v1/auth/internal/llm-configs/?user_id={user.id}",
+            HTTP_X_INTERNAL_SECRET="test-internal-secret",
+        )
+        assert resp.status_code == 200
+        assert len(resp.data) == 1
+        assert resp.data[0]["provider"] == "openai"
+        assert resp.data[0]["api_key"] == "sk-internal-key"
+
+    @override_settings(FASTAPI_INTERNAL_SECRET="test-internal-secret")
+    def test_internal_endpoint_rejects_bad_secret(self, authed_client):
+        client, user = authed_client
+        resp = client.get(
+            f"/api/v1/auth/internal/llm-configs/?user_id={user.id}",
+            HTTP_X_INTERNAL_SECRET="wrong",
+        )
+        assert resp.status_code == 403

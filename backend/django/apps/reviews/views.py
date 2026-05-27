@@ -10,6 +10,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from apps.reviews.models import Review
+from apps.reviews.tasks import trigger_review_task
 from apps.reviews.serializers import (
     ReviewListSerializer,
     ReviewSerializer,
@@ -113,6 +114,8 @@ class ReviewRetriggerView(APIView):
         review.summary = ""
         review.completed_at = None
         review.save()
+
+        trigger_review_task.delay(review.pk)
 
         return Response(
             {

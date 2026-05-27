@@ -427,7 +427,7 @@ async def scan_repository(
     )
 
 
-@router.post("/full", response_model=ScanResponse)
+@router.post("/full", response_model=ScanResponse, status_code=status.HTTP_202_ACCEPTED)
 async def start_full_scan(request: ScanRequest):
     """Start a full repository scan."""
     scan_id = hash(f"{request.repo_full_name}{time.time()}") % 100000

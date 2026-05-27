@@ -123,10 +123,13 @@ class ReviewOrchestrator:
     def _fetch_diff(self) -> str:
         """Fetch diff from GitHub."""
         try:
-            from apps.repositories.services.github import GithubService
+            from apps.repositories.services import GitHubService
 
             repo = self.review.repository
-            github_service = GithubService(repo.owner.github_token)
+            github_service = GitHubService(
+                access_token=repo.owner.github_token.access_token,
+                user=repo.owner,
+            )
 
             return github_service.get_pull_request_diff(
                 repo_full_name=repo.full_name,
@@ -151,6 +154,7 @@ class ReviewOrchestrator:
                         "diff": diff,
                         "repo_full_name": self.review.repository.full_name,
                         "pr_number": self.review.pr_number,
+                        "user_id": self.review.repository.owner_id,
                     },
                     headers={
                         "X-Internal-Secret": self.fastapi_secret,

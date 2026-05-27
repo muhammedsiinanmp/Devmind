@@ -25,7 +25,7 @@ class TestScanEndpoints:
             },
         )
 
-        assert response.status_code == 200
+        assert response.status_code == 202
         data = response.json()
         assert "scan_id" in data
         assert data["status"] == "queued"

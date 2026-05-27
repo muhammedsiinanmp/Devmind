@@ -20,6 +20,7 @@ from services.llm_client import (
     ServiceUnavailableError,
     TimeoutError,
     check_provider_health,
+    LLMConfig,
 )
 
 
@@ -175,6 +176,43 @@ class TestAllProvidersDown:
 
             with pytest.raises(AllProvidersDownError):
                 await client.generate(mock_messages)
+
+
+class TestBYOKPriority:
+    @pytest.mark.asyncio
+    async def test_user_configs_are_tried_before_default_chain(self, mock_messages):
+        client = LLMClient()
+        user_cfg = LLMConfig(
+            provider=LLMProvider.OPENAI,
+            model="gpt-4o",
+            api_key="sk-test",
+            base_url="https://api.openai.com/v1",
+            max_tokens=4096,
+            rpm_limit=30,
+        )
+
+        with (
+            patch.object(
+                client, "get_user_llm_configs", AsyncMock(return_value=[user_cfg])
+            ),
+            patch.object(client, "_call_provider", AsyncMock()) as mock_call_provider,
+        ):
+            # fail user config once, then succeed on first default provider
+            mock_call_provider.side_effect = [
+                RateLimitError("rate limit"),
+                MagicMock(
+                    content="ok",
+                    model_used="google/gemini-2.0-flash",
+                    provider="google",
+                    prompt_tokens=1,
+                    completion_tokens=1,
+                ),
+            ]
+
+            await client.generate(mock_messages, user_id=123)
+
+            first_call_cfg = mock_call_provider.call_args_list[0].args[0]
+            assert first_call_cfg.provider == LLMProvider.OPENAI
 
 
 class TestRateLimiter:

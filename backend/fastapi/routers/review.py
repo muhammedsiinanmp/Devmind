@@ -10,18 +10,88 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import Field
 
 from core.security import verify_internal_token
 from core.metrics import rag_pipeline_duration, agent_iterations, review_errors_total
-from models.review import ReviewRequest, ReviewResponse, ReviewComment, ReviewError
+from models.review import ReviewRequest, ReviewResponse, ReviewComment
 from services.code_parser import DiffChunk, parse_diff
 from services.prompt_builder import PromptContext, build_review_prompt
-from services.llm_client import llm_client, AllProvidersDownError
+from services.llm_client import AllProvidersDownError
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/review", tags=["review"])
+
+
+def _chunk_text(chunk: DiffChunk) -> str:
+    lines = []
+    if chunk.hunk_header:
+        lines.append(chunk.hunk_header)
+    if chunk.added_lines:
+        lines.append("Added:")
+        lines.extend(chunk.added_lines[:60])
+    if chunk.removed_lines:
+        lines.append("Removed:")
+        lines.extend(chunk.removed_lines[:60])
+    if chunk.context_lines:
+        lines.append("Context:")
+        lines.extend(chunk.context_lines[:40])
+    return "\n".join(lines).strip()
+
+
+async def _prepare_rag_context(
+    request: ReviewRequest,
+) -> tuple[list[DiffChunk], list[str], str]:
+    """
+    Run the RAG context preparation steps:
+    parse diff -> embed/store chunks -> similarity search -> build prompt.
+    """
+    parsed_chunks = parse_diff(request.diff)
+    similar_patterns: list[str] = []
+
+    try:
+        from core.database import AsyncSessionLocal
+        from services.vector_store import vector_store, VectorStoreError
+
+        async with AsyncSessionLocal() as session:
+            for chunk in parsed_chunks[:20]:
+                chunk_text = _chunk_text(chunk)
+                if not chunk_text:
+                    continue
+                try:
+                    await vector_store.store_code_embedding(
+                        session=session,
+                        repo_full_name=request.repo_full_name,
+                        file_path=chunk.file_path or f"PR#{request.pr_number}",
+                        chunk_text=chunk_text[:4000],
+                        language=chunk.language or "unknown",
+                        chunk_type=chunk.chunk_type or "hunk",
+                    )
+                except VectorStoreError:
+                    # duplicate or transient embedding issues should not block reviews
+                    continue
+
+            search_query = request.diff[:2000]
+            similar_chunks = await vector_store.search_similar(
+                session=session,
+                query_text=search_query,
+                repo_full_name=request.repo_full_name,
+                top_k=5,
+                threshold=0.6,
+            )
+            similar_patterns = [
+                f"{item.file_path} ({item.language}, sim={item.similarity}): {item.chunk_text[:300]}"
+                for item in similar_chunks
+            ]
+    except Exception as exc:
+        logger.warning("review.rag_context_partial error=%s", str(exc))
+
+    prompt_context = PromptContext(
+        diff_chunks=parsed_chunks,
+        similar_patterns=similar_patterns,
+    )
+    prebuilt_prompt = build_review_prompt(prompt_context)
+    return parsed_chunks, similar_patterns, prebuilt_prompt
 
 
 def calculate_risk_score(comments: list[dict]) -> int:
@@ -60,11 +130,19 @@ async def analyze_review(
     try:
         from agents.review_agent import run_review_agent
 
-        # Run the full LangGraph review agent
+        parsed_chunks, similar_patterns, prebuilt_prompt = await _prepare_rag_context(
+            request
+        )
+
+        # Run the review agent with RAG-prepared context
         result = await run_review_agent(
             diff_text=request.diff,
             repo_full_name=request.repo_full_name,
             pr_number=request.pr_number,
+            user_id=request.user_id,
+            diff_chunks=parsed_chunks,
+            similar_patterns=similar_patterns,
+            prebuilt_prompt=prebuilt_prompt,
         )
 
         # Extract comments from agent state

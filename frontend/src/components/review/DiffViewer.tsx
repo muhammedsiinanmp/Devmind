@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import DiffViewerBase from "react-diff-viewer-continued";
 import CommentOverlay, { type CommentData } from "./CommentOverlay";
 import { Code2, MessageSquare } from "lucide-react";
@@ -8,6 +8,8 @@ export interface DiffFile {
   additions: number;
   deletions: number;
   patch: string;
+  old_content?: string;
+  new_content?: string;
 }
 
 interface DiffViewerProps {
@@ -17,21 +19,38 @@ interface DiffViewerProps {
   isLoading?: boolean;
 }
 
+function normalizePath(path: string): string {
+  return path.replace(/^a\//, "").replace(/^b\//, "");
+}
+
 export default function DiffViewer({ files, comments, diffUrl, isLoading }: DiffViewerProps) {
-  const [selectedFile, setSelectedFile] = useState<string>(files[0]?.file_path || "");
+  const [selectedFile, setSelectedFile] = useState<string>("");
+
+  useEffect(() => {
+    if (files.length === 0) {
+      setSelectedFile("");
+      return;
+    }
+
+    const normalized = files.map((file) => normalizePath(file.file_path));
+    if (!selectedFile || !normalized.includes(selectedFile)) {
+      setSelectedFile(normalized[0]);
+    }
+  }, [files, selectedFile]);
 
   const commentsByFile = useMemo(() => {
     const map: Record<string, CommentData[]> = {};
     for (const c of comments) {
-      if (!map[c.file_path]) map[c.file_path] = [];
-      map[c.file_path].push(c);
+      const key = normalizePath(c.file_path);
+      if (!map[key]) map[key] = [];
+      map[key].push(c);
     }
     return map;
   }, [comments]);
 
   const filesByPath = useMemo(() => {
     const map: Record<string, DiffFile> = {};
-    for (const f of files) map[f.file_path] = f;
+    for (const f of files) map[normalizePath(f.file_path)] = f;
     return map;
   }, [files]);
 
@@ -68,18 +87,22 @@ export default function DiffViewer({ files, comments, diffUrl, isLoading }: Diff
 
   const fileComments = selectedFile ? (commentsByFile[selectedFile] || []) : [];
   const selectedFileData = filesByPath[selectedFile];
+  const highlightLines = fileComments.flatMap((comment) =>
+    comment.line_number > 0 ? [`R-${comment.line_number}`, `L-${comment.line_number}`] : []
+  );
 
   return (
     <div className="flex gap-6 h-full">
       <div className="flex-1 min-w-0 space-y-4">
         <div className="flex items-center gap-2 overflow-x-auto pb-2">
           {files.map((file) => {
-            const isSelected = file.file_path === selectedFile;
-            const fileComms = commentsByFile[file.file_path] || [];
+            const normalizedPath = normalizePath(file.file_path);
+            const isSelected = normalizedPath === selectedFile;
+            const fileComms = commentsByFile[normalizedPath] || [];
             return (
               <button
                 key={file.file_path}
-                onClick={() => setSelectedFile(file.file_path)}
+                onClick={() => setSelectedFile(normalizedPath)}
                 className="flex-shrink-0 px-3 py-2 rounded-lg border text-xs font-mono transition-all max-w-[200px]"
                 style={
                   isSelected
@@ -110,15 +133,17 @@ export default function DiffViewer({ files, comments, diffUrl, isLoading }: Diff
           <div className="rounded-xl border overflow-hidden" style={{ borderColor: "var(--border)", backgroundColor: "var(--bg-secondary)" }}>
             <div className="px-4 py-2 border-b flex items-center gap-2" style={{ borderColor: "var(--border)", backgroundColor: "var(--bg-tertiary)" }}>
               <Code2 className="w-4 h-4" style={{ color: "var(--accent)" }} />
-              <span className="text-xs font-mono" style={{ color: "var(--text-secondary)" }}>{selectedFile}</span>
+              <span className="text-xs font-mono" style={{ color: "var(--text-secondary)" }}>{normalizePath(selectedFileData.file_path)}</span>
             </div>
             <DiffViewerBase
-              oldValue={""}
-              newValue={selectedFileData.patch}
-              splitView={false}
-              highlightLines={fileComments.map((c) => String(c.line_number))}
+              oldValue={selectedFileData.old_content || ""}
+              newValue={selectedFileData.new_content || selectedFileData.patch}
+              splitView={true}
+              highlightLines={highlightLines}
               extraLinesSurroundingDiff={3}
               useDarkTheme={true}
+              showDiffOnly={false}
+              summary={normalizePath(selectedFileData.file_path)}
               leftTitle={<span style={{ color: "var(--text-muted)", fontSize: "12px" }}>Before</span>}
               rightTitle={<span style={{ color: "var(--text-muted)", fontSize: "12px" }}>After</span>}
             />
