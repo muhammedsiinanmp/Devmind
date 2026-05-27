@@ -290,7 +290,7 @@ export default function ReviewDetail() {
         <div className="flex flex-col md:flex-row md:items-start justify-between gap-6">
           <div className="space-y-4">
             <div className="flex items-center gap-3">
-              <div className="w-12 h-12 rounded-2xl flex items-center justify-center border" style={{ backgroundColor: "rgba(139,92,246,0.1)", borderColor: "rgba(139,92,246,0.2)" }}>
+              <div className="w-12 h-12 flex items-center justify-center border" style={{ backgroundColor: "rgba(139,92,246,0.1)", borderColor: "rgba(139,92,246,0.2)" }}>
                 <GitPullRequest className="w-6 h-6" style={{ color: "var(--accent)" }} />
               </div>
               <div>
@@ -300,7 +300,7 @@ export default function ReviewDetail() {
             </div>
             <div className="flex flex-wrap items-center gap-4 pt-2">
               <ReviewStatus reviewId={review.id} initialStatus={review.status} />
-              <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl border" style={{ backgroundColor: "var(--bg-tertiary)", borderColor: "var(--border)" }}>
+              <div className="flex items-center gap-2 px-3 py-1.5 border" style={{ backgroundColor: "var(--bg-tertiary)", borderColor: "var(--border)" }}>
                 <span className="text-xs font-bold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>Risk Score</span>
                 <span className="text-sm font-bold" style={{ color: riskColor(review.risk_score) }}>
                   {review.risk_score !== null ? `${review.risk_score}%` : "—"}
@@ -314,7 +314,7 @@ export default function ReviewDetail() {
               <span className="font-medium" style={{ color: "var(--text-secondary)" }}>Critical Issues</span>
               <span className="font-bold" style={{ color: "var(--error)" }}>{severityCounts.critical || 0}</span>
             </div>
-            <div className="w-full h-2 rounded-full overflow-hidden" style={{ backgroundColor: "var(--bg-tertiary)" }}>
+                            <div className="w-full h-2" style={{ backgroundColor: "var(--bg-tertiary)" }}>
               <div className="h-full" style={{ width: `${((severityCounts.critical || 0) / Math.max(review.comments.length, 1)) * 100}%`, backgroundColor: "var(--error)" }} />
             </div>
             <p className="text-[10px] font-bold uppercase tracking-widest pt-1" style={{ color: "var(--text-muted)" }}>
@@ -324,121 +324,117 @@ export default function ReviewDetail() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        <div className="lg:col-span-2 space-y-6">
-          {review.summary && (
-            <section className="glass-card p-6 border-l-4" style={{ borderColor: "var(--accent)" }}>
-              <div className="flex items-center gap-2 mb-4">
-                <Info className="w-5 h-5" style={{ color: "var(--accent)" }} />
-                <h2 className="text-lg font-bold" style={{ color: "var(--text-primary)" }}>Executive Summary</h2>
+      <div className="flex flex-wrap gap-6">
+        <section className="glass-card p-6 flex-1 min-w-[200px]">
+          <h3 className="font-bold mb-4 flex items-center gap-2" style={{ color: "var(--text-primary)" }}>
+            <Info className="w-4 h-4" style={{ color: "var(--accent)" }} /> Metadata
+          </h3>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {[
+              ["Created At", new Date(review.created_at).toLocaleString()],
+              ["Status", review.status],
+              ["Repository", review.repository_name],
+              ["Issues Found", `${review.comments.length} items`],
+            ].map(([label, value]) => (
+              <div key={label}>
+                <p className="text-[10px] font-bold uppercase tracking-widest mb-1" style={{ color: "var(--text-muted)" }}>{label}</p>
+                <p className="text-sm font-medium capitalize" style={{ color: "var(--text-primary)" }}>{value}</p>
               </div>
-              <p className="leading-relaxed italic" style={{ color: "var(--text-secondary)" }}>"{review.summary}"</p>
-            </section>
-          )}
+            ))}
+          </div>
+        </section>
 
-          <section className="glass-card p-6 space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-xl font-bold" style={{ color: "var(--text-primary)" }}>Diff + AI Overlays</h2>
-              {diffError && (
-                <span className="text-xs" style={{ color: "var(--warning)" }}>
-                  {diffError}
-                </span>
-              )}
-            </div>
-            <DiffViewer
-              files={diffFiles}
-              comments={review.comments}
-              diffUrl={review.diff_url}
-              isLoading={diffLoading}
-            />
-          </section>
-
-          <section className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-xl font-bold" style={{ color: "var(--text-primary)" }}>Audit Findings</h2>
-              <div className="flex items-center gap-2 p-1 rounded-xl border" style={{ backgroundColor: "var(--bg-tertiary)", borderColor: "var(--border)" }}>
-                {["all", "critical", "error", "warning", "info"].map(filter => (
-                  <button key={filter} onClick={() => setActiveFilter(filter)}
-                    className="px-3 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider transition-all"
-                    style={activeFilter === filter
-                      ? { backgroundColor: "var(--accent)", color: "white", boxShadow: "0 0 8px rgba(139,92,246,0.4)" }
-                      : { color: "var(--text-muted)" }
-                    }>
-                    {filter}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {filteredComments.length === 0 ? (
-              <div className="glass-card p-12 text-center space-y-2 opacity-60">
-                <CheckCircle className="w-8 h-8 mx-auto" style={{ color: "var(--success)" }} />
-                <p className="font-semibold" style={{ color: "var(--text-primary)" }}>No issues found for this filter</p>
-              </div>
-            ) : (
-              <div className="space-y-4">
-                {filteredComments.map((comment) => (
-                  <div key={comment.id} className="glass-card overflow-hidden border-l-4 transition-all"
-                    style={{ borderLeftColor: comment.severity === "critical" || comment.severity === "error" ? "var(--error)" : comment.severity === "warning" ? "var(--warning)" : "var(--info)" }}>
-                    <div className="p-5 space-y-4">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-3">
-                          <span className={`badge ${badgeSeverity(comment.severity)}`}>{comment.severity}</span>
-                          <span className="text-[10px] font-bold uppercase px-2 py-0.5 rounded" style={{ backgroundColor: "var(--bg-tertiary)", color: "var(--text-muted)" }}>
-                            {comment.category}
-                          </span>
-                        </div>
-                        <span className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>
-                          {comment.file_path.split('/').pop()}:{comment.line_number}
-                        </span>
-                      </div>
-                      <p className="leading-relaxed" style={{ color: "var(--text-primary)" }}>{comment.body}</p>
-                      {comment.suggested_fix && (
-                        <div className="rounded-xl overflow-hidden border" style={{ borderColor: "var(--border)", backgroundColor: "rgba(0,0,0,0.3)" }}>
-                          <div className="px-4 py-2 border-b flex items-center justify-between" style={{ borderColor: "var(--border)", backgroundColor: "rgba(255,255,255,0.05)" }}>
-                            <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: "var(--accent)" }}>Suggested Fix</span>
-                          </div>
-                          <pre className="p-4 text-xs font-mono overflow-x-auto whitespace-pre-wrap" style={{ color: "var(--text-secondary)" }}>
-                            {comment.suggested_fix}
-                          </pre>
-                        </div>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </section>
-        </div>
-
-        <div className="space-y-6">
-          <section className="glass-card p-6">
-            <h3 className="font-bold mb-4 flex items-center gap-2" style={{ color: "var(--text-primary)" }}>
-              <Info className="w-4 h-4" style={{ color: "var(--accent)" }} /> Metadata
-            </h3>
-            <div className="space-y-4">
-              {[
-                ["Created At", new Date(review.created_at).toLocaleString()],
-                ["Status", review.status],
-                ["Repository", review.repository_name],
-                ["Issues Found", `${review.comments.length} items`],
-              ].map(([label, value]) => (
-                <div key={label}>
-                  <p className="text-[10px] font-bold uppercase tracking-widest mb-1" style={{ color: "var(--text-muted)" }}>{label}</p>
-                  <p className="text-sm font-medium capitalize" style={{ color: "var(--text-primary)" }}>{value}</p>
-                </div>
-              ))}
-            </div>
-          </section>
-
-          <section className="glass-card p-6" style={{ backgroundColor: "rgba(139,92,246,0.05)", borderColor: "rgba(139,92,246,0.2)" }}>
-            <h3 className="font-bold mb-2" style={{ color: "var(--accent)" }}>AI Auditor</h3>
-            <p className="text-xs leading-relaxed" style={{ color: "var(--text-secondary)" }}>
-              This report was generated using DevMind's proprietary code analysis engine using the latest LLM models. All security findings should be verified by a human maintainer.
-            </p>
-          </section>
-        </div>
+        <section className="glass-card p-6 max-w-sm flex-1 min-w-[200px]" style={{ backgroundColor: "rgba(139,92,246,0.05)", borderColor: "rgba(139,92,246,0.2)" }}>
+          <h3 className="font-bold mb-2" style={{ color: "var(--accent)" }}>AI Auditor</h3>
+          <p className="text-xs leading-relaxed" style={{ color: "var(--text-secondary)" }}>
+            This report was generated using DevMind's proprietary code analysis engine using the latest LLM models. All security findings should be verified by a human maintainer.
+          </p>
+        </section>
       </div>
+
+      {review.summary && (
+        <section className="glass-card p-6 border-l-4" style={{ borderColor: "var(--accent)" }}>
+          <div className="flex items-center gap-2 mb-4">
+            <Info className="w-5 h-5" style={{ color: "var(--accent)" }} />
+            <h2 className="text-lg font-bold" style={{ color: "var(--text-primary)" }}>Executive Summary</h2>
+          </div>
+          <p className="leading-relaxed italic" style={{ color: "var(--text-secondary)" }}>"{review.summary}"</p>
+        </section>
+      )}
+
+      <section className="glass-card p-6 space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-bold" style={{ color: "var(--text-primary)" }}>Diff + AI Overlays</h2>
+          {diffError && (
+            <span className="text-xs" style={{ color: "var(--warning)" }}>
+              {diffError}
+            </span>
+          )}
+        </div>
+        <DiffViewer
+          files={diffFiles}
+          comments={review.comments}
+          diffUrl={review.diff_url}
+          isLoading={diffLoading}
+        />
+      </section>
+
+      <section className="space-y-4">
+        <div className="flex items-center justify-between">
+          <h2 className="text-xl font-bold" style={{ color: "var(--text-primary)" }}>Audit Findings</h2>
+          <div className="flex items-center gap-2 p-1 border" style={{ backgroundColor: "var(--bg-tertiary)", borderColor: "var(--border)" }}>
+            {["all", "critical", "error", "warning", "info"].map(filter => (
+                <button key={filter} onClick={() => setActiveFilter(filter)}
+                  className="px-3 py-1.5 text-xs font-bold uppercase tracking-wider transition-all"
+                  style={activeFilter === filter
+                    ? { backgroundColor: "var(--accent)", color: "white" }
+                    : { color: "var(--text-muted)" }
+                  }>
+                {filter}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {filteredComments.length === 0 ? (
+          <div className="glass-card p-12 text-center space-y-2 opacity-60">
+            <CheckCircle className="w-8 h-8 mx-auto" style={{ color: "var(--success)" }} />
+            <p className="font-semibold" style={{ color: "var(--text-primary)" }}>No issues found for this filter</p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {filteredComments.map((comment) => (
+              <div key={comment.id} className="glass-card overflow-hidden border-l-4 transition-all"
+                style={{ borderLeftColor: comment.severity === "critical" || comment.severity === "error" ? "var(--error)" : comment.severity === "warning" ? "var(--warning)" : "var(--info)" }}>
+                <div className="p-5 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-3">
+                      <span className={`badge ${badgeSeverity(comment.severity)}`}>{comment.severity}</span>
+                      <span className="text-[10px] font-bold uppercase px-2 py-0.5" style={{ backgroundColor: "var(--bg-tertiary)", color: "var(--text-muted)" }}>
+                        {comment.category}
+                      </span>
+                    </div>
+                    <span className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>
+                      {comment.file_path.split('/').pop()}:{comment.line_number}
+                    </span>
+                  </div>
+                  <p className="leading-relaxed" style={{ color: "var(--text-primary)" }}>{comment.body}</p>
+                  {comment.suggested_fix && (
+                    <div className="border" style={{ borderColor: "var(--border)", backgroundColor: "rgba(0,0,0,0.3)" }}>
+                      <div className="px-4 py-2 border-b flex items-center justify-between" style={{ borderColor: "var(--border)", backgroundColor: "rgba(255,255,255,0.05)" }}>
+                        <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: "var(--accent)" }}>Suggested Fix</span>
+                      </div>
+                      <pre className="p-4 text-xs font-mono overflow-x-auto whitespace-pre-wrap" style={{ color: "var(--text-secondary)" }}>
+                        {comment.suggested_fix}
+                      </pre>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
     </div>
   );
 }

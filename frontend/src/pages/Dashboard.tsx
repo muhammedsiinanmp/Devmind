@@ -61,7 +61,7 @@ export default function Dashboard() {
   if (error) {
     return (
       <div className="min-h-[60vh] flex flex-col items-center justify-center space-y-4">
-        <p className="text-sm px-4 py-2 rounded-lg" style={{ backgroundColor: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)", color: "var(--error)" }}>
+        <p className="text-sm px-4 py-2" style={{ backgroundColor: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)", color: "var(--error)" }}>
           {error}
         </p>
         <button onClick={() => fetchReviews(page)} className="btn-secondary text-sm">
@@ -87,7 +87,7 @@ export default function Dashboard() {
             Monitor and manage AI-powered pull request analysis.
           </p>
         </div>
-        <div className="flex items-center gap-4 p-1 rounded-xl border" style={{ borderColor: "var(--border)", backgroundColor: "var(--bg-secondary)" }}>
+        <div className="flex items-center gap-4 p-1 border" style={{ borderColor: "var(--border)", backgroundColor: "var(--bg-secondary)" }}>
           <div className="px-4 py-2 text-center">
             <p className="text-xs font-bold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>Total Reviews</p>
             <p className="text-xl font-bold" style={{ color: "var(--text-primary)" }}>{totalCount}</p>
@@ -97,7 +97,7 @@ export default function Dashboard() {
 
       {reviews.length === 0 ? (
         <div className="glass-card p-12 text-center flex flex-col items-center justify-center space-y-4">
-          <div className="w-16 h-16 rounded-2xl flex items-center justify-center border" style={{ backgroundColor: "var(--bg-tertiary)", borderColor: "var(--border)" }}>
+          <div className="w-16 h-16 flex items-center justify-center border" style={{ backgroundColor: "var(--bg-tertiary)", borderColor: "var(--border)" }}>
             <GitPullRequest className="w-8 h-8" style={{ color: "var(--text-muted)" }} />
           </div>
           <h3 className="text-xl font-semibold" style={{ color: "var(--text-primary)" }}>No reviews yet</h3>
@@ -125,7 +125,7 @@ export default function Dashboard() {
                       <tr key={review.id} className="border-b transition-colors" style={{ borderColor: "rgba(255,255,255,0.05)" }}>
                         <td className="px-6 py-6">
                           <div className="flex items-center gap-3">
-                            <div className="w-10 h-10 rounded-lg flex items-center justify-center border transition-colors group"
+                            <div className="w-10 h-10 flex items-center justify-center border transition-colors group"
                               style={{ backgroundColor: "var(--bg-tertiary)", borderColor: "var(--border)" }}>
                               <GitPullRequest className="w-5 h-5" style={{ color: "var(--accent)" }} />
                             </div>
@@ -144,7 +144,7 @@ export default function Dashboard() {
                         </td>
                         <td className="px-6 py-6">
                           <div className="flex justify-center">
-                            <div className="w-12 h-12 rounded-xl flex items-center justify-center font-bold text-lg border"
+                            <div className="w-12 h-12 flex items-center justify-center font-bold text-lg border"
                               style={{ backgroundColor: rc.bg, color: rc.color, borderColor: rc.border }}>
                               {review.risk_score === null ? "—" : review.risk_score}
                             </div>
@@ -171,9 +171,9 @@ export default function Dashboard() {
                   const p = i + 1;
                   return (
                     <button key={p} onClick={() => setPage(p)}
-                      className="w-10 h-10 rounded-lg transition-all"
+                      className="w-10 h-10 transition-all"
                       style={page === p
-                        ? { backgroundColor: "var(--accent)", color: "white", fontWeight: "bold", boxShadow: "0 0 8px rgba(139,92,246,0.4)" }
+                        ? { backgroundColor: "var(--accent)", color: "white", fontWeight: "bold" }
                         : { color: "var(--text-secondary)" }
                       }>
                       {p}

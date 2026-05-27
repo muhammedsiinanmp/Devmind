@@ -87,15 +87,11 @@ export default function Login() {
   };
 
   return (
-    <div className="min-h-screen flex flex-col relative overflow-hidden" style={{ backgroundColor: "var(--bg-primary)" }}>
-      <div className="absolute top-0 left-0 w-full h-full overflow-hidden pointer-events-none">
-        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full opacity-10 blur-[120px]" style={{ backgroundColor: "var(--accent)" }} />
-        <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] rounded-full opacity-10 blur-[120px]" style={{ backgroundColor: "var(--accent-dark)" }} />
-      </div>
+    <div className="min-h-screen flex flex-col" style={{ backgroundColor: "var(--bg-primary)" }}>
 
       <header className="relative z-10 p-8 flex items-center justify-between max-w-7xl mx-auto w-full">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl flex items-center justify-center shadow-accent" style={{ background: "linear-gradient(135deg, var(--accent) 0%, var(--accent-dark) 100%)" }}>
+          <div className="w-10 h-10 flex items-center justify-center" style={{ background: "var(--accent)" }}>
             <Terminal className="text-white w-6 h-6" />
           </div>
           <span className="text-xl font-bold tracking-tight" style={{ color: "var(--text-primary)" }}>DevMind</span>
@@ -104,7 +100,7 @@ export default function Login() {
 
       <main className="relative z-10 flex-1 flex flex-col items-center justify-center px-4 py-12 text-center max-w-4xl mx-auto">
         <div className="space-y-6 animate-fade-in">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full text-xs font-bold uppercase tracking-widest" style={{ backgroundColor: "rgba(139,92,246,0.1)", border: "1px solid rgba(139,92,246,0.2)", color: "var(--accent)" }}>
+          <div className="inline-flex items-center gap-2 px-3 py-1 text-xs font-bold uppercase tracking-widest" style={{ backgroundColor: "rgba(139,92,246,0.1)", border: "1px solid rgba(139,92,246,0.2)", color: "var(--accent)" }}>
             <Zap className="w-3 h-3" /> Now in Beta
           </div>
           <h1 className="text-6xl md:text-7xl font-bold tracking-tight leading-tight" style={{ color: "var(--text-primary)" }}>
@@ -119,7 +115,7 @@ export default function Login() {
             <button
               onClick={handleGitHubLogin}
               disabled={isLoading}
-              className="group relative inline-flex items-center gap-3 px-8 py-4 rounded-2xl font-bold text-lg transition-all duration-300 shadow-xl"
+              className="group relative inline-flex items-center gap-3 px-8 py-4 font-bold text-lg transition-all duration-300"
               style={{
                 background: "white",
                 color: "var(--bg-primary)",
@@ -137,7 +133,7 @@ export default function Login() {
               )}
             </button>
             {error && (
-              <p className="mt-4 font-medium text-sm rounded-lg inline-block px-4 py-2" style={{ backgroundColor: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)", color: "var(--error)" }}>
+              <p className="mt-4 font-medium text-sm inline-block px-4 py-2" style={{ backgroundColor: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)", color: "var(--error)" }}>
                 {error}
               </p>
             )}
@@ -149,8 +145,8 @@ export default function Login() {
               { icon: Code2, title: "Quality Guards", desc: "Enforces best practices, readability, and architectural patterns." },
               { icon: Zap, title: "Instant Feedback", desc: "AI reviews delivered in seconds, right in your PR comments." },
             ].map(({ icon: Icon, title, desc }) => (
-              <div key={title} className="glass-card p-6 text-left space-y-3" style={{ background: "linear-gradient(135deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.01) 100%)", border: "1px solid var(--border)", borderRadius: "16px" }}>
-                <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ backgroundColor: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)" }}>
+              <div key={title} className="glass-card p-6 text-left space-y-3">
+                <div className="w-10 h-10 flex items-center justify-center" style={{ backgroundColor: "var(--bg-tertiary)", border: "1px solid var(--border)" }}>
                   <Icon className="w-5 h-5" style={{ color: "var(--accent)" }} />
                 </div>
                 <h3 className="font-bold" style={{ color: "var(--text-primary)" }}>{title}</h3>

@@ -127,7 +127,7 @@ export default function ScanReport() {
 
       {error && (
         <div className="glass-card p-8 text-center space-y-4">
-          <div className="w-16 h-16 rounded-2xl flex items-center justify-center border mx-auto" style={{ backgroundColor: "var(--bg-tertiary)", borderColor: "var(--border)" }}>
+          <div className="w-16 h-16 flex items-center justify-center border mx-auto" style={{ backgroundColor: "var(--bg-tertiary)", borderColor: "var(--border)" }}>
             <AlertTriangle className="w-8 h-8" style={{ color: "var(--text-muted)" }} />
           </div>
           <h3 className="text-xl font-semibold" style={{ color: "var(--text-primary)" }}>{error}</h3>
@@ -167,7 +167,7 @@ export default function ScanReport() {
                       stroke={gaugeColor}
                       strokeWidth="3"
                       strokeDasharray={`${healthScore}, 100`}
-                      strokeLinecap="round"
+                      strokeLinecap="butt"
                     />
                   </svg>
                   <div style={{
@@ -205,7 +205,7 @@ export default function ScanReport() {
                 {scan.files_scanned}<span className="text-xl" style={{ color: "var(--text-muted)" }}>/{scan.total_files}</span>
               </div>
               {scan.progress > 0 && (
-                <div className="w-full h-1.5 rounded-full mt-3 overflow-hidden" style={{ backgroundColor: "var(--bg-tertiary)" }}>
+                <div className="w-full h-1.5 mt-3" style={{ backgroundColor: "var(--bg-tertiary)" }}>
                   <div className="h-full" style={{ width: `${scan.progress}%`, backgroundColor: "var(--accent)" }} />
                 </div>
               )}

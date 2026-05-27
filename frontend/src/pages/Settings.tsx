@@ -105,7 +105,7 @@ export default function Settings() {
 
       {providers.length === 0 ? (
         <div className="glass-card p-12 text-center flex flex-col items-center justify-center space-y-4">
-          <div className="w-16 h-16 rounded-2xl flex items-center justify-center border" style={{ backgroundColor: "var(--bg-tertiary)", borderColor: "var(--border)" }}>
+          <div className="w-16 h-16 flex items-center justify-center border" style={{ backgroundColor: "var(--bg-tertiary)", borderColor: "var(--border)" }}>
             <Key className="w-8 h-8" style={{ color: "var(--text-muted)" }} />
           </div>
           <h3 className="text-xl font-semibold" style={{ color: "var(--text-primary)" }}>No LLM providers configured</h3>
@@ -122,7 +122,7 @@ export default function Settings() {
             <div key={provider.id} className="glass-card p-6">
               <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
                 <div className="flex items-start gap-4">
-                  <div className="w-12 h-12 rounded-xl flex items-center justify-center border" style={{ backgroundColor: "var(--bg-tertiary)", borderColor: "var(--border)" }}>
+                  <div className="w-12 h-12 flex items-center justify-center border" style={{ backgroundColor: "var(--bg-tertiary)", borderColor: "var(--border)" }}>
                     <Zap className="w-6 h-6" style={{ color: "var(--accent)" }} />
                   </div>
                   <div className="space-y-1">
@@ -225,7 +225,7 @@ function AddProviderForm({ onCancel, onSuccess }: { onCancel: () => void; onSucc
       </div>
 
       {testResult && (
-        <div className="p-3 rounded-lg border text-sm" style={testResult.ok
+        <div className="p-3 border text-sm" style={testResult.ok
           ? { borderColor: "rgba(16,185,129,0.2)", backgroundColor: "rgba(16,185,129,0.05)", color: "var(--success)" }
           : { borderColor: "rgba(239,68,68,0.2)", backgroundColor: "rgba(239,68,68,0.05)", color: "var(--error)" }}>
           {testResult.message}

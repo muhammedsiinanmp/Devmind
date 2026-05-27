@@ -11,7 +11,7 @@ export default function Analytics() {
       </div>
 
       <div className="glass-card p-12 text-center flex flex-col items-center justify-center space-y-4">
-        <div className="w-16 h-16 rounded-2xl flex items-center justify-center border" style={{ backgroundColor: "var(--bg-tertiary)", borderColor: "var(--border)" }}>
+        <div className="w-16 h-16 flex items-center justify-center border" style={{ backgroundColor: "var(--bg-tertiary)", borderColor: "var(--border)" }}>
           <BarChart3 className="w-8 h-8" style={{ color: "var(--text-muted)" }} />
         </div>
         <h3 className="text-xl font-semibold" style={{ color: "var(--text-primary)" }}>Coming Soon</h3>
