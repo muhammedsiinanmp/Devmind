@@ -140,7 +140,7 @@ export default function Dashboard() {
                           </div>
                         </td>
                         <td className="px-6 py-6">
-                          <ReviewStatus initialStatus={review.status} />
+                          <ReviewStatus reviewId={review.id} initialStatus={review.status} />
                         </td>
                         <td className="px-6 py-6">
                           <div className="flex justify-center">
