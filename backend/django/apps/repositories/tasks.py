@@ -16,6 +16,8 @@ from celery import shared_task
 from django.contrib.auth import get_user_model
 from django.utils import timezone
 
+from django.db import transaction
+
 from apps.repositories.exceptions import GitHubRateLimitError, GitHubServiceError
 from apps.repositories.models import Repository
 from apps.repositories.services import GitHubService
@@ -212,22 +214,87 @@ def remove_webhook_task(self: remove_webhook_task, repo_id: int) -> None:
 
 
 @shared_task(
+    bind=True,
     name="repositories.trigger_review",
     queue="review",
     max_retries=3,
     default_retry_delay=60,
     acks_late=True,
 )
-def trigger_review_task(repo_id: int, pr_number: int, head_sha: str) -> None:
+def trigger_review_task(
+    self: trigger_review_task,
+    repo_id: int,
+    pr_number: int,
+    head_sha: str,
+    pr_title: str = "",
+    base_sha: str = "",
+    diff_url: str = "",
+) -> None:
     """
-    Placeholder for Phase 2 review orchestration.
-    Enqueued by WebhookDispatcher when a PR is opened/updated.
-    Phase 2 (P2-10) will fill this with the ReviewOrchestrator call.
+    Creates a Review record and launches the ReviewOrchestrator.
+    Called by WebhookDispatcher when a PR is opened/synchronized/reopened.
     """
     log.info(
-        "task.trigger_review.received",
+        "task.trigger_review.start",
         repo_id=repo_id,
         pr_number=pr_number,
         head_sha=head_sha[:8],
     )
-    # Phase 4 implementation goes here
+
+    try:
+        repo = Repository.objects.select_related("owner").get(pk=repo_id)
+    except Repository.DoesNotExist:
+        log.error("task.trigger_review.repo_not_found", repo_id=repo_id)
+        return
+
+    with transaction.atomic():
+        from apps.reviews.models import Review
+
+        review = Review.objects.create(
+            repository=repo,
+            pr_number=pr_number,
+            pr_title=pr_title,
+            head_sha=head_sha,
+            base_sha=base_sha or head_sha,
+            diff_url=diff_url or f"{repo.html_url}/pull/{pr_number}",
+            status="pending",
+        )
+
+        log.info(
+            "task.trigger_review.review_created",
+            review_id=review.pk,
+            repo=repo.full_name,
+            pr_number=pr_number,
+        )
+
+    try:
+        from apps.reviews.services.orchestrator import ReviewOrchestrator
+
+        orchestrator = ReviewOrchestrator(review)
+        orchestrator.run()
+        log.info(
+            "task.trigger_review.complete",
+            review_id=review.pk,
+            repo=repo.full_name,
+            pr_number=pr_number,
+        )
+    except Exception as exc:
+        log.error(
+            "task.trigger_review.failed",
+            review_id=review.pk,
+            repo=repo.full_name,
+            pr_number=pr_number,
+            error=str(exc),
+        )
+        try:
+            review.refresh_from_db()
+            review.status = "failed"
+            review.summary = f"Review failed: {str(exc)[:500]}"
+            review.save(update_fields=["status", "summary"])
+        except Exception as save_exc:
+            log.error(
+                "task.trigger_review.failed_to_update_status",
+                review_id=review.pk,
+                error=str(save_exc),
+            )
+        raise self.retry(exc=exc) from exc

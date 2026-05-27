@@ -28,18 +28,20 @@ interface Repository {
 export default function Repositories() {
   const [repositories, setRepositories] = useState<Repository[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
 
   const fetchRepositories = async (pageNum: number) => {
     setIsLoading(true);
+    setError(null);
     try {
       const res = await apiClient.get<{ count: number; results: Repository[] }>("/repositories/", { params: { page: pageNum, page_size: 10 } });
       setRepositories(res.data.results);
       setTotalPages(Math.ceil(res.data.count / 10));
     } catch {
-      // handle error
+      setError("Failed to load repositories.");
     } finally {
       setIsLoading(false);
     }
@@ -49,11 +51,12 @@ export default function Repositories() {
 
   const handleSync = async () => {
     setIsSyncing(true);
+    setError(null);
     try {
       await apiClient.post("/repositories/connect/");
       await fetchRepositories(page);
     } catch {
-      // handle error
+      setError("Failed to sync repositories.");
     } finally {
       setIsSyncing(false);
     }
@@ -64,7 +67,7 @@ export default function Repositories() {
       const res = await apiClient.patch<Repository>(`/repositories/${id}/`, { review_enabled: !enabled });
       setRepositories(repos => repos.map(r => r.id === id ? res.data : r));
     } catch {
-      // handle error
+      setError("Failed to update review setting.");
     }
   };
 
@@ -73,6 +76,19 @@ export default function Repositories() {
       <div className="min-h-[60vh] flex flex-col items-center justify-center space-y-4">
         <Loader2 className="w-10 h-10 animate-spin" style={{ color: "var(--accent)" }} />
         <p className="animate-pulse" style={{ color: "var(--text-secondary)" }}>Fetching your repositories...</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="min-h-[60vh] flex flex-col items-center justify-center space-y-4">
+        <p className="text-sm px-4 py-2 rounded-lg" style={{ backgroundColor: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)", color: "var(--error)" }}>
+          {error}
+        </p>
+        <button onClick={() => fetchRepositories(page)} className="btn-secondary text-sm">
+          Try Again
+        </button>
       </div>
     );
   }

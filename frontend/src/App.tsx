@@ -8,6 +8,7 @@ import Settings from "./pages/Settings";
 import Repositories from "./pages/Repositories";
 import Analytics from "./pages/Analytics";
 import Login from "./pages/Login";
+import AuthCallback from "./pages/AuthCallback";
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
@@ -22,6 +23,7 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<Login />} />
+        <Route path="/auth/callback" element={<AuthCallback />} />
         <Route
           path="/"
           element={

@@ -20,7 +20,7 @@ from apps.reviews.serializers import (
 class ReviewListView(ListAPIView):
     """
     GET /api/v1/reviews/
-    Returns paginated list of reviews.
+    Returns paginated list of reviews for repositories owned by the authenticated user.
 
     Query params:
     - status: filter by status (pending, processing, completed, failed)
@@ -31,7 +31,11 @@ class ReviewListView(ListAPIView):
 
     permission_classes = [IsAuthenticated]
     serializer_class = ReviewListSerializer
-    queryset = Review.objects.select_related("repository").all()
+
+    def get_queryset(self):
+        return Review.objects.filter(
+            repository__owner=self.request.user
+        ).select_related("repository")
 
     filter_backends = [DjangoFilterBackend, SearchFilter, OrderingFilter]
     filterset_fields = ["status", "repository"]

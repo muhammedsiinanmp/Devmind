@@ -1,33 +1,33 @@
 @import "tailwindcss";
 
 @theme {
-  --color-accent: var(--accent);
-  --color-accent-light: var(--accent-light);
-  --color-accent-dark: var(--accent-dark);
-  --color-bg-primary: var(--bg-primary);
-  --color-bg-secondary: var(--bg-secondary);
-  --color-bg-tertiary: var(--bg-tertiary);
-  --color-text-primary: var(--text-primary);
-  --color-text-secondary: var(--text-secondary);
-  --color-text-muted: var(--text-muted);
-  --color-success: var(--success);
-  --color-warning: var(--warning);
-  --color-error: var(--error);
-  --color-info: var(--info);
-  --color-border: var(--border);
-  --color-border-bright: var(--border-bright);
+  --color-accent: #8b5cf6;
+  --color-accent-light: #a78bfa;
+  --color-accent-dark: #7c3aed;
+  --color-bg-primary: #0a0a0c;
+  --color-bg-secondary: #141418;
+  --color-bg-tertiary: #1f1f23;
+  --color-text-primary: #f8fafc;
+  --color-text-secondary: #94a3b8;
+  --color-text-muted: #64748b;
+  --color-success: #10b981;
+  --color-warning: #f59e0b;
+  --color-error: #ef4444;
+  --color-info: #3b82f6;
+  --color-border: rgba(255, 255, 255, 0.08);
+  --color-border-bright: rgba(255, 255, 255, 0.15);
 }
 
 :root {
+  --accent: #8b5cf6;
+  --accent-light: #a78bfa;
+  --accent-dark: #7c3aed;
   --bg-primary: #0a0a0c;
   --bg-secondary: #141418;
   --bg-tertiary: #1f1f23;
   --text-primary: #f8fafc;
   --text-secondary: #94a3b8;
   --text-muted: #64748b;
-  --accent: #8b5cf6;
-  --accent-light: #a78bfa;
-  --accent-dark: #7c3aed;
   --accent-glow: rgba(139, 92, 246, 0.3);
   --border: rgba(255, 255, 255, 0.08);
   --border-bright: rgba(255, 255, 255, 0.15);
