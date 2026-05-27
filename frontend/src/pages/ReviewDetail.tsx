@@ -299,7 +299,7 @@ export default function ReviewDetail() {
               </div>
             </div>
             <div className="flex flex-wrap items-center gap-4 pt-2">
-              <ReviewStatus initialStatus={review.status} />
+              <ReviewStatus reviewId={review.id} initialStatus={review.status} />
               <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl border" style={{ backgroundColor: "var(--bg-tertiary)", borderColor: "var(--border)" }}>
                 <span className="text-xs font-bold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>Risk Score</span>
                 <span className="text-sm font-bold" style={{ color: riskColor(review.risk_score) }}>
