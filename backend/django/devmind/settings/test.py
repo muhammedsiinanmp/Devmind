@@ -32,3 +32,6 @@ FASTAPI_INTERNAL_SECRET = "test-secret"
 # Disable Supabase in tests
 SUPABASE_URL = ""
 SUPABASE_SERVICE_KEY = ""
+
+# Skip outbound provider validation calls for BYOK create tests
+SKIP_LLM_KEY_VALIDATION = True

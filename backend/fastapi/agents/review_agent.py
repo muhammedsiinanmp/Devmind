@@ -58,13 +58,14 @@ async def analyze_security(state: ReviewState) -> dict[str, Any]:
     """
     logger.info("analyze_security repo=%s", state["repo_full_name"])
 
-    diff_chunks = parse_diff(state["diff_text"])
+    diff_chunks = state.get("diff_chunks") or parse_diff(state["diff_text"])
     context = PromptContext(
         diff_chunks=diff_chunks,
-        similar_patterns=state.get("conventions", {}).get("security_patterns", []),
+        similar_patterns=state.get("similar_patterns", [])
+        or state.get("conventions", {}).get("security_patterns", []),
     )
 
-    prompt = build_review_prompt(context)
+    prompt = state.get("prebuilt_prompt") or build_review_prompt(context)
     system_msg = create_system_message("security")
 
     messages = [
@@ -75,7 +76,7 @@ async def analyze_security(state: ReviewState) -> dict[str, Any]:
         },
     ]
 
-    response = await llm_client.generate(messages)
+    response = await llm_client.generate(messages, user_id=state.get("user_id"))
 
     comments = _parse_llm_comments(response.content, "security")
 
@@ -95,13 +96,13 @@ async def analyze_quality(state: ReviewState) -> dict[str, Any]:
     """
     logger.info("analyze_quality repo=%s", state["repo_full_name"])
 
-    diff_chunks = parse_diff(state["diff_text"])
+    diff_chunks = state.get("diff_chunks") or parse_diff(state["diff_text"])
     context = PromptContext(
         diff_chunks=diff_chunks,
         quality_patterns=state.get("conventions", {}).get("quality_patterns", []),
     )
 
-    prompt = build_review_prompt(context)
+    prompt = state.get("prebuilt_prompt") or build_review_prompt(context)
     system_msg = create_system_message("quality")
 
     messages = [
@@ -112,7 +113,7 @@ async def analyze_quality(state: ReviewState) -> dict[str, Any]:
         },
     ]
 
-    response = await llm_client.generate(messages)
+    response = await llm_client.generate(messages, user_id=state.get("user_id"))
 
     comments = _parse_llm_comments(response.content, "quality")
 
@@ -120,6 +121,7 @@ async def analyze_quality(state: ReviewState) -> dict[str, Any]:
 
     return {
         "quality_comments": comments,
+        "model_used": response.model_used,
     }
 
 
@@ -131,12 +133,12 @@ async def analyze_tests(state: ReviewState) -> dict[str, Any]:
     """
     logger.info("analyze_tests repo=%s", state["repo_full_name"])
 
-    diff_chunks = parse_diff(state["diff_text"])
+    diff_chunks = state.get("diff_chunks") or parse_diff(state["diff_text"])
     context = PromptContext(
         diff_chunks=diff_chunks,
     )
 
-    prompt = build_review_prompt(context)
+    prompt = state.get("prebuilt_prompt") or build_review_prompt(context)
     system_msg = create_system_message("tests")
 
     messages = [
@@ -147,7 +149,7 @@ async def analyze_tests(state: ReviewState) -> dict[str, Any]:
         },
     ]
 
-    response = await llm_client.generate(messages)
+    response = await llm_client.generate(messages, user_id=state.get("user_id"))
 
     comments = _parse_llm_comments(response.content, "tests")
 
@@ -155,6 +157,7 @@ async def analyze_tests(state: ReviewState) -> dict[str, Any]:
 
     return {
         "test_comments": comments,
+        "model_used": response.model_used,
     }
 
 
@@ -343,6 +346,9 @@ async def run_review_agent(
     repo_full_name: str,
     pr_number: int = 0,
     user_id: int = 0,
+    diff_chunks: list | None = None,
+    similar_patterns: list[str] | None = None,
+    prebuilt_prompt: str = "",
 ) -> dict[str, Any]:
     """
     Run the full review agent.
@@ -361,6 +367,9 @@ async def run_review_agent(
         "repo_full_name": repo_full_name,
         "pr_number": pr_number,
         "user_id": user_id,
+        "diff_chunks": diff_chunks or [],
+        "similar_patterns": similar_patterns or [],
+        "prebuilt_prompt": prebuilt_prompt,
         "conventions": {},
         "security_comments": [],
         "quality_comments": [],

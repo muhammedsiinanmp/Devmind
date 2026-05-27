@@ -146,6 +146,29 @@ class TestFastAPICall:
                 orchestrator._call_fastapi("test diff")
 
 
+class TestFetchDiff:
+    @pytest.mark.django_db
+    def test_fetch_diff_uses_github_service(self):
+        review = ReviewFactory(status="pending")
+        orchestrator = ReviewOrchestrator(review)
+
+        with patch("apps.repositories.services.GitHubService") as mock_service_cls:
+            mock_service = mock_service_cls.return_value
+            mock_service.get_pull_request_diff.return_value = "diff --git a b"
+
+            diff = orchestrator._fetch_diff()
+
+            assert diff == "diff --git a b"
+            mock_service_cls.assert_called_once_with(
+                access_token=review.repository.owner.github_token.access_token,
+                user=review.repository.owner,
+            )
+            mock_service.get_pull_request_diff.assert_called_once_with(
+                repo_full_name=review.repository.full_name,
+                pr_number=review.pr_number,
+            )
+
+
 class TestSummaryBuilding:
     def test_build_summary_with_critical(self):
         review = MagicMock()

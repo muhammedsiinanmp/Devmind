@@ -29,6 +29,10 @@ class LLMProvider(str, Enum):
     GOOGLE = "google"
     GROQ = "groq"
     GITHUB = "github"
+    OPENAI = "openai"
+    CUSTOM = "custom"
+    MISTRAL = "mistral"
+    GOOGLE_VERTEX = "google_vertex"
 
 
 class RateLimitError(Exception):
@@ -81,6 +85,19 @@ class LLMResponse:
 MODEL_CHAIN: list[LLMConfig] = []
 
 
+def _parse_provider(provider: str) -> LLMProvider | None:
+    mapping = {
+        "google": LLMProvider.GOOGLE,
+        "groq": LLMProvider.GROQ,
+        "github": LLMProvider.GITHUB,
+        "openai": LLMProvider.OPENAI,
+        "custom": LLMProvider.CUSTOM,
+        "mistral": LLMProvider.MISTRAL,
+        "google_vertex": LLMProvider.GOOGLE_VERTEX,
+    }
+    return mapping.get(provider.strip().lower())
+
+
 def _init_model_chain() -> list[LLMConfig]:
     """Initialize the model chain with configurations."""
     return [
@@ -126,6 +143,80 @@ class LLMClient:
         for config in MODEL_CHAIN:
             rate_limiter.add_provider(config.provider.value, config.rpm_limit)
 
+    async def get_user_llm_configs(self, user_id: int) -> list[LLMConfig]:
+        """
+        Fetch active user BYOK configs from Django.
+
+        FastAPI fetches decrypted keys through an internal authenticated endpoint.
+        """
+        if not user_id:
+            return []
+
+        base_url = getattr(settings, "django_base_url", "").rstrip("/")
+        internal_secret = settings.fastapi_internal_secret
+        if not base_url or not internal_secret:
+            return []
+
+        endpoint = f"{base_url}/api/v1/auth/internal/llm-configs/"
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.get(
+                    endpoint,
+                    params={"user_id": user_id},
+                    headers={"X-Internal-Secret": internal_secret},
+                )
+                if response.status_code != 200:
+                    logger.warning(
+                        "llm.byok_fetch_failed status=%s user_id=%s",
+                        response.status_code,
+                        user_id,
+                    )
+                    return []
+
+                payload = response.json()
+        except Exception as exc:
+            logger.warning("llm.byok_fetch_error user_id=%s error=%s", user_id, exc)
+            return []
+
+        configs: list[LLMConfig] = []
+        for item in payload:
+            provider_raw = str(item.get("provider", ""))
+            provider = _parse_provider(provider_raw)
+            if provider is None:
+                continue
+
+            model = str(item.get("model_name", "")).strip()
+            api_key = str(item.get("api_key", "")).strip()
+            base_url = str(item.get("base_url", "")).strip()
+            if not model or not api_key:
+                continue
+
+            if provider == LLMProvider.OPENAI and not base_url:
+                base_url = "https://api.openai.com/v1"
+            elif provider == LLMProvider.GROQ and not base_url:
+                base_url = "https://api.groq.com/openai/v1"
+            elif provider == LLMProvider.MISTRAL and not base_url:
+                base_url = "https://api.mistral.ai/v1"
+            elif provider == LLMProvider.GOOGLE_VERTEX and not base_url:
+                base_url = "https://generativelanguage.googleapis.com/v1beta/openai"
+
+            if not base_url:
+                # custom providers require explicit URL
+                continue
+
+            config = LLMConfig(
+                provider=provider,
+                model=model,
+                api_key=api_key,
+                base_url=base_url,
+                max_tokens=4096,
+                rpm_limit=30,
+            )
+            configs.append(config)
+            rate_limiter.add_provider(config.provider.value, config.rpm_limit)
+
+        return configs
+
     async def generate(
         self,
         messages: list[dict[str, str]],
@@ -147,12 +238,15 @@ class LLMClient:
         Raises:
             AllProvidersDownError: If all providers fail
         """
+        user_chain = await self.get_user_llm_configs(user_id or 0)
+        active_chain = user_chain + MODEL_CHAIN
+
         if not settings.llm_failover_enabled:
-            if MODEL_CHAIN:
-                return await self._call_provider(MODEL_CHAIN[0], messages, **kwargs)
+            if active_chain:
+                return await self._call_provider(active_chain[0], messages, **kwargs)
             raise AllProvidersDownError("No LLM providers configured")
 
-        for config in MODEL_CHAIN:
+        for config in active_chain:
             try:
                 response = await self._call_provider(config, messages, **kwargs)
                 logger.info(
@@ -230,7 +324,7 @@ class LLMClient:
                 return LLMResponse(
                     content=choice["message"]["content"],
                     model_used=f"{config.provider.value}/{config.model}",
-                    provider=config.provider.value,
+                    provider=config.provider,
                     prompt_tokens=usage.get("prompt_tokens", 0),
                     completion_tokens=usage.get("completion_tokens", 0),
                 )

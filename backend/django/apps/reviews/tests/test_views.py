@@ -104,20 +104,24 @@ class TestReviewDetailView:
 class TestReviewRetriggerView:
     """Tests for ReviewRetriggerView."""
 
-    def test_retrigger_pending_review(self, auth_client, user):
+    def test_retrigger_pending_review(self, auth_client, user, mocker):
         """Can retrigger a pending review."""
         review = ReviewFactory(status="pending", repository__owner=user)
+        mock_task = mocker.patch("apps.reviews.views.trigger_review_task.delay")
 
         response = auth_client.post(f"/api/v1/reviews/{review.pk}/retrigger/")
         assert response.status_code == status.HTTP_200_OK
         assert response.json()["status"] == "pending"
+        mock_task.assert_called_once_with(review.pk)
 
-    def test_retrigger_failed_review(self, auth_client, user):
+    def test_retrigger_failed_review(self, auth_client, user, mocker):
         """Can retrigger a failed review."""
         review = ReviewFactory(status="failed", repository__owner=user)
+        mock_task = mocker.patch("apps.reviews.views.trigger_review_task.delay")
 
         response = auth_client.post(f"/api/v1/reviews/{review.pk}/retrigger/")
         assert response.status_code == status.HTTP_200_OK
+        mock_task.assert_called_once_with(review.pk)
 
     def test_retrigger_processing_returns_409(self, auth_client, user):
         """Cannot retrigger a processing review."""

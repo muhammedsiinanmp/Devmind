@@ -49,7 +49,7 @@ function App() {
           }
         />
         <Route
-          path="/repositories/:id/scan"
+          path="/scans/:id"
           element={
             <ProtectedRoute>
               <ScanReport />

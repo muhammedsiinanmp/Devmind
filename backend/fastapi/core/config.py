@@ -26,6 +26,7 @@ class Settings(BaseSettings):
 
     # Security
     fastapi_internal_secret: str = ""
+    django_base_url: str = "http://django:8000"
 
     # Sentry
     sentry_dsn_fastapi: str = ""

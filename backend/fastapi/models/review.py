@@ -23,6 +23,7 @@ class ReviewRequest(BaseModel):
     diff: str = Field(..., description="Git diff text")
     repo_full_name: str = Field(..., description="Repository full name (owner/repo)")
     pr_number: int = Field(default=0, description="PR number")
+    user_id: int = Field(default=0, description="Owning user ID for BYOK priority")
 
 
 class ReviewResponse(BaseModel):
