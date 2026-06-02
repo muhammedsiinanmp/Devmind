@@ -92,7 +92,7 @@ export default function DiffViewer({ files, comments, diffUrl, isLoading }: Diff
   );
 
   return (
-    <div className="flex gap-6 h-full">
+    <div className="flex flex-col lg:flex-row gap-6">
       <div className="flex-1 min-w-0 space-y-4">
         <div className="flex items-center gap-2 overflow-x-auto pb-2">
           {files.map((file) => {
@@ -103,7 +103,7 @@ export default function DiffViewer({ files, comments, diffUrl, isLoading }: Diff
               <button
                 key={file.file_path}
                 onClick={() => setSelectedFile(normalizedPath)}
-                className="flex-shrink-0 px-3 py-2 rounded-lg border text-xs font-mono transition-all max-w-[200px]"
+                className="flex-shrink-0 px-3 py-2 border text-xs font-mono transition-all max-w-[200px]"
                 style={
                   isSelected
                     ? { backgroundColor: "var(--bg-tertiary)", borderColor: "var(--accent)", color: "var(--accent)" }
@@ -130,28 +130,61 @@ export default function DiffViewer({ files, comments, diffUrl, isLoading }: Diff
         </div>
 
         {selectedFileData && (
-          <div className="rounded-xl border overflow-hidden" style={{ borderColor: "var(--border)", backgroundColor: "var(--bg-secondary)" }}>
+          <div style={{ border: "1px solid var(--border)", backgroundColor: "var(--bg-secondary)", overflowX: "auto" }}>
             <div className="px-4 py-2 border-b flex items-center gap-2" style={{ borderColor: "var(--border)", backgroundColor: "var(--bg-tertiary)" }}>
               <Code2 className="w-4 h-4" style={{ color: "var(--accent)" }} />
               <span className="text-xs font-mono" style={{ color: "var(--text-secondary)" }}>{normalizePath(selectedFileData.file_path)}</span>
             </div>
             <DiffViewerBase
-              oldValue={selectedFileData.old_content || ""}
-              newValue={selectedFileData.new_content || selectedFileData.patch}
-              splitView={true}
-              highlightLines={highlightLines}
-              extraLinesSurroundingDiff={3}
-              useDarkTheme={true}
-              showDiffOnly={false}
-              summary={normalizePath(selectedFileData.file_path)}
-              leftTitle={<span style={{ color: "var(--text-muted)", fontSize: "12px" }}>Before</span>}
-              rightTitle={<span style={{ color: "var(--text-muted)", fontSize: "12px" }}>After</span>}
-            />
+                oldValue={selectedFileData.old_content || ""}
+                newValue={selectedFileData.new_content || selectedFileData.patch}
+                splitView={true}
+                highlightLines={highlightLines}
+                extraLinesSurroundingDiff={3}
+                useDarkTheme={true}
+                showDiffOnly={false}
+                summary={normalizePath(selectedFileData.file_path)}
+                leftTitle={<span style={{ color: "var(--text-muted)", fontSize: "12px" }}>Before</span>}
+                rightTitle={<span style={{ color: "var(--text-muted)", fontSize: "12px" }}>After</span>}
+                styles={{
+                  variables: {
+                    dark: {
+                      diffViewerBackground: "var(--bg-primary)",
+                      diffViewerColor: "var(--text-primary)",
+                      diffViewerTitleBackground: "var(--bg-tertiary)",
+                      diffViewerTitleColor: "var(--text-secondary)",
+                      diffViewerTitleBorderColor: "var(--border)",
+                      addedBackground: "rgba(16,185,129,0.1)",
+                      addedColor: "var(--text-primary)",
+                      removedBackground: "rgba(239,68,68,0.1)",
+                      removedColor: "var(--text-primary)",
+                      wordAddedBackground: "rgba(16,185,129,0.25)",
+                      wordRemovedBackground: "rgba(239,68,68,0.25)",
+                      addedGutterBackground: "rgba(16,185,129,0.15)",
+                      removedGutterBackground: "rgba(239,68,68,0.15)",
+                      gutterBackground: "var(--bg-tertiary)",
+                      gutterBackgroundDark: "var(--bg-secondary)",
+                      gutterColor: "var(--text-muted)",
+                      addedGutterColor: "var(--success)",
+                      removedGutterColor: "var(--error)",
+                      codeFoldGutterBackground: "var(--bg-tertiary)",
+                      codeFoldBackground: "var(--bg-tertiary)",
+                      codeFoldContentColor: "var(--text-muted)",
+                      emptyLineBackground: "var(--bg-primary)",
+                      highlightBackground: "rgba(139,92,246,0.1)",
+                      highlightGutterBackground: "rgba(139,92,246,0.15)",
+                    },
+                  },
+                  diffContainer: { minWidth: 0 },
+                  codeFoldExpandButton: { borderRadius: 0 },
+                  titleBlock: { borderTop: "none" },
+                }}
+              />
           </div>
         )}
       </div>
 
-      <div className="w-80 flex-shrink-0 space-y-3 overflow-y-auto max-h-[80vh]">
+      <div className="w-full lg:w-80 flex-shrink-0 space-y-3 overflow-y-auto max-h-[80vh]">
         <div className="flex items-center gap-2 px-1">
           <MessageSquare className="w-4 h-4" style={{ color: "var(--accent)" }} />
           <h3 className="text-sm font-bold" style={{ color: "var(--text-primary)" }}>

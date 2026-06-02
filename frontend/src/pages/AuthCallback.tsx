@@ -50,15 +50,15 @@ export default function AuthCallback() {
   if (error) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center" style={{ backgroundColor: "var(--bg-primary)" }}>
-        <div className="glass-card p-8 text-center max-w-md space-y-4" style={{ backgroundColor: "rgba(255,255,255,0.05)", border: "1px solid var(--border)", borderRadius: "16px" }}>
-          <div className="w-12 h-12 rounded-xl flex items-center justify-center mx-auto" style={{ backgroundColor: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)" }}>
+        <div className="glass-card p-8 text-center max-w-md space-y-4">
+          <div className="w-12 h-12 flex items-center justify-center mx-auto" style={{ backgroundColor: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)" }}>
             <AlertCircle className="w-6 h-6" style={{ color: "var(--error)" }} />
           </div>
           <h2 className="text-xl font-bold" style={{ color: "var(--text-primary)" }}>Authentication Failed</h2>
           <p className="text-sm" style={{ color: "var(--text-secondary)" }}>{error}</p>
           <button
             onClick={() => navigate("/login", { replace: true })}
-            className="px-6 py-3 rounded-xl font-bold transition-all"
+            className="px-6 py-3 font-bold transition-all"
             style={{ backgroundColor: "var(--accent)", color: "white" }}
           >
             Back to Login

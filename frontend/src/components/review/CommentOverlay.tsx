@@ -58,7 +58,7 @@ export default function CommentOverlay({ comment }: CommentOverlayProps) {
 
   return (
     <div
-      className="p-4 rounded-xl border text-sm"
+      className="p-4 border text-sm"
       style={{
         backgroundColor: cfg.bg,
         borderColor: cfg.border,
@@ -67,10 +67,10 @@ export default function CommentOverlay({ comment }: CommentOverlayProps) {
     >
       <div className="flex items-center gap-2 mb-3">
         <Icon className="w-4 h-4 flex-shrink-0" />
-        <span
-          className="text-[10px] px-2 py-0.5 rounded font-bold uppercase tracking-wider"
-          style={{ backgroundColor: cfg.badgeBg, color: cfg.badgeText }}
-        >
+          <span
+            className="text-[10px] px-2 py-0.5 font-bold uppercase tracking-wider"
+            style={{ backgroundColor: cfg.badgeBg, color: cfg.badgeText }}
+          >
           {comment.severity}
         </span>
         <span className="text-xs" style={{ color: "var(--text-muted)" }}>
@@ -89,7 +89,7 @@ export default function CommentOverlay({ comment }: CommentOverlayProps) {
             Suggested Fix
           </span>
           <pre
-            className="mt-2 text-xs font-mono whitespace-pre-wrap p-3 rounded-lg"
+            className="mt-2 text-xs font-mono whitespace-pre-wrap p-3"
             style={{
               backgroundColor: "rgba(0,0,0,0.3)",
               color: "var(--text-secondary)",

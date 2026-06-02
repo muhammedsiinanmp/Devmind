@@ -226,6 +226,24 @@ class GitHubService:
         self._handle_response_errors(response)
         log.info("github.webhook.deleted", repo=repo_full_name, webhook_id=webhook_id)
 
+    def get_pull_request(
+        self, repo_full_name: str, pr_number: int
+    ) -> dict[str, object]:
+        """Fetches pull request metadata from GitHub API."""
+        response = self._session.get(
+            f"{GITHUB_API_BASE}/repos/{repo_full_name}/pulls/{pr_number}",
+            headers={"Accept": "application/vnd.github+json"},
+            timeout=30.0,
+        )
+        self._handle_response_errors(response)
+        data: dict[str, object] = response.json()
+        return {
+            "title": str(data.get("title", "")),
+            "head_sha": str(data.get("head", {}).get("sha", "")),
+            "base_sha": str(data.get("base", {}).get("sha", "")),
+            "diff_url": str(data.get("diff_url", "")),
+        }
+
     def get_pull_request_diff(self, repo_full_name: str, pr_number: int) -> str:
         """Fetches the unified diff for a pull request as a plain string."""
         response = self._session.get(

@@ -83,7 +83,7 @@ export default function Repositories() {
   if (error) {
     return (
       <div className="min-h-[60vh] flex flex-col items-center justify-center space-y-4">
-        <p className="text-sm px-4 py-2 rounded-lg" style={{ backgroundColor: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)", color: "var(--error)" }}>
+        <p className="text-sm px-4 py-2" style={{ backgroundColor: "rgba(239,68,68,0.1)", border: "1px solid rgba(239,68,68,0.2)", color: "var(--error)" }}>
           {error}
         </p>
         <button onClick={() => fetchRepositories(page)} className="btn-secondary text-sm">
@@ -109,7 +109,7 @@ export default function Repositories() {
 
       {repositories.length === 0 ? (
         <div className="glass-card p-12 text-center flex flex-col items-center justify-center space-y-4">
-          <div className="w-16 h-16 rounded-2xl flex items-center justify-center border" style={{ backgroundColor: "var(--bg-tertiary)", borderColor: "var(--border)" }}>
+          <div className="w-16 h-16 flex items-center justify-center border" style={{ backgroundColor: "var(--bg-tertiary)", borderColor: "var(--border)" }}>
             <GitBranch className="w-8 h-8" style={{ color: "var(--text-muted)" }} />
           </div>
           <h3 className="text-xl font-semibold" style={{ color: "var(--text-primary)" }}>No repositories found</h3>
@@ -122,7 +122,7 @@ export default function Repositories() {
           {repositories.map((repo) => (
             <div key={repo.id} className="glass-card p-6 flex flex-col md:flex-row md:items-center justify-between gap-6">
               <div className="flex items-start gap-4">
-                <div className="w-12 h-12 rounded-xl flex items-center justify-center border transition-colors"
+                <div className="w-12 h-12 flex items-center justify-center border transition-colors"
                   style={{ backgroundColor: "var(--bg-tertiary)", borderColor: "var(--border)" }}>
                   <GitBranch className="w-6 h-6" style={{ color: repo.is_active ? "var(--accent)" : "var(--text-muted)" }} />
                 </div>
@@ -130,7 +130,7 @@ export default function Repositories() {
                   <div className="flex items-center gap-2">
                     <h3 className="text-lg font-bold" style={{ color: "var(--text-primary)" }}>{repo.full_name}</h3>
                     {repo.is_private && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded font-bold uppercase tracking-wider" style={{ backgroundColor: "var(--bg-tertiary)", color: "var(--text-muted)", border: "1px solid var(--border)" }}>
+                      <span className="text-[10px] px-1.5 py-0.5 font-bold uppercase tracking-wider" style={{ backgroundColor: "var(--bg-tertiary)", color: "var(--text-muted)", border: "1px solid var(--border)" }}>
                         Private
                       </span>
                     )}
@@ -141,7 +141,7 @@ export default function Repositories() {
                   <div className="flex flex-wrap items-center gap-4 text-xs pt-1" style={{ color: "var(--text-muted)" }}>
                     {repo.language && (
                       <span className="flex items-center gap-1.5">
-                        <span className="w-2 h-2 rounded-full" style={{ backgroundColor: "var(--accent)" }} />
+                        <span className="w-2 h-2" style={{ backgroundColor: "var(--accent)" }} />
                         {repo.language}
                       </span>
                     )}
@@ -157,7 +157,7 @@ export default function Repositories() {
                 </div>
               </div>
 
-              <div className="flex items-center gap-3 p-3 rounded-2xl border" style={{ backgroundColor: "rgba(31,31,35,0.5)", borderColor: "var(--border)" }}>
+              <div className="flex items-center gap-3 p-3 border" style={{ backgroundColor: "rgba(31,31,35,0.5)", borderColor: "var(--border)" }}>
                 <div className="flex flex-col gap-1 pr-4 border-r" style={{ borderColor: "var(--border)" }}>
                   <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>Webhook</span>
                   {repo.has_webhook ? (
@@ -176,7 +176,7 @@ export default function Repositories() {
                     <span className="text-xs font-semibold" style={{ color: "var(--text-secondary)" }}>AI Review</span>
                     <button onClick={() => handleToggleReview(repo.id, repo.review_enabled)}
                       style={{ backgroundColor: repo.review_enabled ? "var(--accent)" : "var(--bg-tertiary)", border: "1px solid var(--border)" }}>
-                      <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${repo.review_enabled ? 'translate-x-6' : 'translate-x-1'}`} />
+                      <span className={`inline-block h-3 w-3 transform bg-white transition-transform ${repo.review_enabled ? 'translate-x-6' : 'translate-x-1'}`} />
                     </button>
                   </div>
                   <div className="flex items-center justify-between gap-4">

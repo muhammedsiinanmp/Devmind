@@ -93,7 +93,7 @@ export default function CommentThread({ comments, onCommentClick }: CommentThrea
             <div key={path}>
               <button
                 onClick={() => setSelectedFile(selectedFile === path ? null : path)}
-                className="w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-all text-left"
+                className="w-full flex items-center gap-3 px-3 py-2 transition-all text-left"
                 style={{
                   backgroundColor: selectedFile === path ? "var(--bg-tertiary)" : "transparent",
                   border: "1px solid transparent",
@@ -134,7 +134,7 @@ export default function CommentThread({ comments, onCommentClick }: CommentThrea
                       <button
                         key={comment.id}
                         onClick={() => onCommentClick?.(comment)}
-                        className="w-full text-left p-3 rounded-lg border transition-all"
+                        className="w-full text-left p-3 border transition-all"
                         style={{
                           backgroundColor: "rgba(0,0,0,0.2)",
                           borderColor: "var(--border)",
