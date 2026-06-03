@@ -1,10 +1,5 @@
-"""
-Review Orchestrator — Django/FastAPI bridge.
-
-Orchestrates the full review pipeline: fetch diff → call FastAPI → save results.
-"""
-
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -16,6 +11,9 @@ from django.utils import timezone
 from apps.reviews.models import Review, ReviewComment, ReviewRun
 
 logger = logging.getLogger(__name__)
+
+VALID_CATEGORIES = frozenset({"security", "quality", "tests", "style", "performance"})
+VALID_SEVERITIES = frozenset({"info", "warning", "error", "critical"})
 
 
 class ReviewAlreadyProcessingError(Exception):
@@ -41,35 +39,38 @@ class ReviewResult:
     model_used: str = ""
     provider: str = ""
     latency_ms: int = 0
+    # FIX (Bug 2b): added token counts and agent_iterations
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    agent_iterations: int = 1
 
 
 class ReviewOrchestrator:
     """
     Orchestrates reviews between Django and FastAPI.
-
-    Handles status transitions: pending → processing → completed/failed
+    Status transitions: pending → processing → completed | failed
     """
 
     def __init__(self, review: Review):
         self.review = review
         self.fastapi_url = getattr(
-            settings, "FASTAPI_BASE_URL", "http://localhost:8001"
-        )
+            settings, "FASTAPI_BASE_URL", "http://fastapi:8001"
+        ).rstrip("/")
         self.fastapi_secret = getattr(settings, "FASTAPI_INTERNAL_SECRET", "")
+        # FIX (Bug 3A): warn loudly on startup so misconfiguration is visible
+        if not self.fastapi_secret:
+            logger.error(
+                "FASTAPI_INTERNAL_SECRET is not set or empty. "
+                "All calls to FastAPI /review/analyze will be rejected with 403. "
+                "Set FASTAPI_INTERNAL_SECRET in your .env file."
+            )
+        # FIX (Bug 3C): read timeout from settings instead of hard-coding 60s
+        self.timeout = float(getattr(settings, "FASTAPI_TIMEOUT_SECONDS", 120))
 
     def run(self) -> ReviewResult:
         """
         Run the full review pipeline.
-
-        Args:
-            review: Review instance
-
-        Returns:
-            ReviewResult from FastAPI
-
-        Raises:
-            ReviewAlreadyProcessingError: If review is already processing
-            FastAPIError: If FastAPI call fails
+        Status machine: pending → processing → completed | failed
         """
         if self.review.status != "pending":
             if self.review.status == "processing":
@@ -87,9 +88,7 @@ class ReviewOrchestrator:
 
         try:
             diff = self._fetch_diff()
-
             result = self._call_fastapi(diff)
-
             self._save_results(result)
 
             self.review.status = "completed"
@@ -105,9 +104,7 @@ class ReviewOrchestrator:
                 {"summary": self.review.summary, "risk_score": self.review.risk_score},
             )
             self._push_status_to_supabase("completed")
-
             self._trigger_github_post()
-
             self._produce_kafka_event()
 
             return result
@@ -130,7 +127,6 @@ class ReviewOrchestrator:
                 access_token=repo.owner.github_token.access_token,
                 user=repo.owner,
             )
-
             return github_service.get_pull_request_diff(
                 repo_full_name=repo.full_name,
                 pr_number=self.review.pr_number,
@@ -145,69 +141,154 @@ class ReviewOrchestrator:
             raise FastAPIError(f"Failed to fetch diff: {e}")
 
     def _call_fastapi(self, diff: str) -> ReviewResult:
-        """Call FastAPI /review/analyze endpoint."""
-        try:
-            with httpx.Client(timeout=60.0) as client:
-                response = client.post(
-                    f"{self.fastapi_url}/review/analyze",
-                    json={
-                        "diff": diff,
-                        "repo_full_name": self.review.repository.full_name,
-                        "pr_number": self.review.pr_number,
-                        "user_id": self.review.repository.owner_id,
-                    },
-                    headers={
-                        "X-Internal-Secret": self.fastapi_secret,
-                        "Content-Type": "application/json",
-                    },
-                )
+        """
+        Call FastAPI /review/analyze with retry logic.
+
+        FIX (Bug 3A): guard against empty secret.
+        FIX (Bug 3B): retry up to 3 times on 503 with exponential back-off.
+        FIX (Bug 3C): use self.timeout instead of hard-coded 60.
+        """
+        # FIX 3A: fail fast with a clear message instead of a cryptic 403
+        if not self.fastapi_secret:
+            raise FastAPIError(
+                "FASTAPI_INTERNAL_SECRET is empty — the FastAPI service will "
+                "reject this request with 403. Configure this value in .env."
+            )
+
+        payload = {
+            "diff": diff,
+            "repo_full_name": self.review.repository.full_name,
+            "pr_number": self.review.pr_number,
+            "user_id": self.review.repository.owner_id,
+        }
+        headers = {
+            "X-Internal-Secret": self.fastapi_secret,
+            "Content-Type": "application/json",
+        }
+
+        # FIX 3B: retry on 503 / timeout
+        max_retries = 3
+        backoff = 5.0
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                with httpx.Client(timeout=self.timeout) as client:
+                    response = client.post(
+                        f"{self.fastapi_url}/review/analyze",
+                        json=payload,
+                        headers=headers,
+                    )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    return ReviewResult(
+                        repo_full_name=data.get("repo_full_name", ""),
+                        pr_number=data.get("pr_number", 0),
+                        comments=data.get("comments", []),
+                        risk_score=data.get("risk_score", 0),
+                        model_used=data.get("model_used", ""),
+                        provider=data.get("provider", ""),
+                        latency_ms=data.get("latency_ms", 0),
+                        # FIX 2b: extract token counts from response
+                        prompt_tokens=data.get("prompt_tokens", 0),
+                        completion_tokens=data.get("completion_tokens", 0),
+                        agent_iterations=data.get("agent_iterations", 1),
+                    )
+
+                if response.status_code == 403:
+                    # Secret mismatch — retrying won't help
+                    raise FastAPIError(
+                        "FastAPI rejected the request with 403 Forbidden. "
+                        "Verify that FASTAPI_INTERNAL_SECRET is identical in "
+                        "both Django .env and FastAPI .env."
+                    )
 
                 if response.status_code == 503:
-                    raise FastAPIError("All LLM providers unavailable")
+                    logger.warning(
+                        "orchestrator.fastapi.503 attempt=%d/%d review_id=%d",
+                        attempt,
+                        max_retries,
+                        self.review.pk,
+                    )
+                    if attempt < max_retries:
+                        time.sleep(backoff)
+                        backoff *= 2
+                        continue
+                    raise FastAPIError(
+                        f"All LLM providers unavailable (503 after {max_retries} attempts)."
+                    )
 
-                if response.status_code != 200:
-                    raise FastAPIError(f"FastAPI error: {response.status_code}")
-
-                data = response.json()
-
-                return ReviewResult(
-                    repo_full_name=data.get("repo_full_name", ""),
-                    pr_number=data.get("pr_number", 0),
-                    comments=data.get("comments", []),
-                    risk_score=data.get("risk_score", 0),
-                    model_used=data.get("model_used", ""),
-                    provider=data.get("provider", ""),
-                    latency_ms=data.get("latency_ms", 0),
+                raise FastAPIError(
+                    f"FastAPI error {response.status_code}: {response.text[:200]}"
                 )
 
-        except httpx.TimeoutException:
-            raise FastAPIError("FastAPI request timed out")
-        except httpx.HTTPError as e:
-            logger.error("orchestrator.fastapi.error error=%s", str(e))
-            raise FastAPIError(f"FastAPI HTTP error: {e}")
+            except httpx.TimeoutException:
+                logger.warning(
+                    "orchestrator.fastapi.timeout attempt=%d/%d review_id=%d timeout=%.0fs",
+                    attempt,
+                    max_retries,
+                    self.review.pk,
+                    self.timeout,
+                )
+                if attempt < max_retries:
+                    time.sleep(backoff)
+                    backoff *= 2
+                    continue
+                raise FastAPIError(
+                    f"FastAPI timed out after {self.timeout}s ({max_retries} attempts)."
+                )
+
+            except httpx.HTTPError as exc:
+                logger.error(
+                    "orchestrator.fastapi.http_error review_id=%d error=%s",
+                    self.review.pk,
+                    str(exc),
+                )
+                raise FastAPIError(f"FastAPI HTTP error: {exc}")
+
+        raise FastAPIError("FastAPI call failed after all retries.")
 
     @transaction.atomic
     def _save_results(self, result: ReviewResult) -> None:
-        """Save comments and run record."""
-        run = ReviewRun.objects.create(
+        """
+        Save ReviewRun and ReviewComment records.
+
+        FIX (Bug 2a): validate category and severity — unknown values are
+                      mapped to safe defaults instead of storing invalid data.
+        FIX (Bug 2b): populate prompt_tokens, completion_tokens,
+                      agent_iterations on ReviewRun.
+        """
+        ReviewRun.objects.create(
             review=self.review,
+            # FIX 2b: these were always 0 before
+            agent_iterations=result.agent_iterations,
             model_used=result.model_used,
+            prompt_tokens=result.prompt_tokens,
+            completion_tokens=result.completion_tokens,
             latency_ms=result.latency_ms,
         )
 
         for comment_data in result.comments:
+            # FIX 2a: validate category
+            raw_category = comment_data.get("category", "")
+            category = raw_category if raw_category in VALID_CATEGORIES else "quality"
+
+            # FIX 2a: validate severity
+            raw_severity = comment_data.get("severity", "")
+            severity = raw_severity if raw_severity in VALID_SEVERITIES else "info"
+
             ReviewComment.objects.create(
                 review=self.review,
                 file_path=comment_data.get("file_path", ""),
                 line_number=comment_data.get("line_number", 0),
-                category=comment_data.get("category", "general"),
-                severity=comment_data.get("severity", "info"),
+                category=category,
+                severity=severity,
                 body=comment_data.get("body", ""),
-                suggested_fix=comment_data.get("suggested_fix", ""),
+                suggested_fix=comment_data.get("suggested_fix", "") or "",
             )
 
     def _build_summary(self, comments: list[dict]) -> str:
-        """Build summary from comments."""
+        """Build a human-readable summary from comment severities."""
         if not comments:
             return "No issues found."
 
@@ -226,7 +307,7 @@ class ReviewOrchestrator:
         return ", ".join(parts) if parts else "Review complete."
 
     def _trigger_github_post(self) -> None:
-        """Trigger async task to post comments to GitHub."""
+        """Trigger async Celery task to post comments to GitHub."""
         try:
             from apps.reviews.tasks import post_github_comments_task
 
@@ -242,7 +323,7 @@ class ReviewOrchestrator:
             )
 
     def _produce_kafka_event(self) -> None:
-        """Produce review completed event to Kafka."""
+        """Produce review.completed event to Kafka (fire-and-forget)."""
         try:
             from devmind.kafka import produce, TOPIC_REVIEW_COMPLETED
 
@@ -262,9 +343,6 @@ class ReviewOrchestrator:
                 ),
             }
             produce(TOPIC_REVIEW_COMPLETED, payload)
-            logger.info(
-                "orchestrator.kafka_event_produced review_id=%d", self.review.pk
-            )
         except Exception as e:
             logger.error(
                 "orchestrator.kafka_event_failed review_id=%d error=%s",
@@ -273,15 +351,13 @@ class ReviewOrchestrator:
             )
 
     def _push_status_to_channels(self, status: str, extra: dict | None = None) -> None:
-        """Push status update to WebSocket channels."""
+        """Push status update to WebSocket channel group."""
         try:
-            import asyncio
             from asgiref.sync import async_to_sync
             from channels.layers import get_channel_layer
 
             channel_layer = get_channel_layer()
             group_name = f"review_{self.review.pk}"
-
             message = {
                 "type": "review.status.update",
                 "review_id": self.review.pk,
@@ -290,15 +366,7 @@ class ReviewOrchestrator:
             if extra:
                 message.update(extra)
 
-            async def _send():
-                await channel_layer.group_send(group_name, message)
-
-            async_to_sync(_send)()
-            logger.info(
-                "orchestrator.channel_pushed review_id=%d status=%s",
-                self.review.pk,
-                status,
-            )
+            async_to_sync(channel_layer.group_send)(group_name, message)
         except Exception as e:
             logger.error(
                 "orchestrator.channel_push_failed review_id=%d error=%s",
@@ -307,16 +375,13 @@ class ReviewOrchestrator:
             )
 
     def _push_status_to_supabase(self, status: str) -> None:
-        """Insert status update into Supabase review_status_updates table."""
+        """Insert status update into Supabase (optional — skipped if not configured)."""
         supabase_url = getattr(settings, "SUPABASE_URL", None)
         supabase_key = getattr(settings, "SUPABASE_SERVICE_KEY", None)
-
         if not supabase_url or not supabase_key:
-            logger.warning("Supabase not configured, skipping status push")
             return
 
         try:
-            import asyncio
             from asgiref.sync import async_to_sync
 
             async def _insert():
@@ -339,11 +404,6 @@ class ReviewOrchestrator:
                     )
 
             async_to_sync(_insert)()
-            logger.info(
-                "orchestrator.supabase_pushed review_id=%d status=%s",
-                self.review.pk,
-                status,
-            )
         except Exception as e:
             logger.error(
                 "orchestrator.supabase_push_failed review_id=%d error=%s",
@@ -353,11 +413,7 @@ class ReviewOrchestrator:
 
 
 def trigger_review_task(review_id: int) -> None:
-    """
-    Celery task to trigger a review.
-
-    Wraps ReviewOrchestrator.run() for async execution.
-    """
+    """Standalone function wrapper used by reviews/tasks.py."""
     try:
         review = Review.objects.get(pk=review_id)
         orchestrator = ReviewOrchestrator(review)

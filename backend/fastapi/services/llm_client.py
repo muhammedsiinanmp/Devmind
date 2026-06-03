@@ -100,32 +100,45 @@ def _parse_provider(provider: str) -> LLMProvider | None:
 
 def _init_model_chain() -> list[LLMConfig]:
     """Initialize the model chain with configurations."""
-    return [
-        LLMConfig(
-            provider=LLMProvider.GOOGLE,
-            model="gemini-2.0-flash",
-            api_key=settings.google_ai_api_key,
-            base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-            max_tokens=8192,
-            rpm_limit=15,
-        ),
-        LLMConfig(
-            provider=LLMProvider.GROQ,
-            model="llama-3.1-70b-versatile",
-            api_key=settings.groq_api_key,
-            base_url="https://api.groq.com/openai/v1",
-            max_tokens=4096,
-            rpm_limit=30,
-        ),
-        LLMConfig(
-            provider=LLMProvider.GITHUB,
-            model="gpt-4o-mini",
-            api_key=settings.github_token,
-            base_url="https://models.inference.ai.azure.com",
-            max_tokens=4096,
-            rpm_limit=150,
-        ),
-    ]
+    chain = []
+
+    if settings.google_ai_api_key:
+        chain.append(
+            LLMConfig(
+                provider=LLMProvider.GOOGLE,
+                model="gemini-2.0-flash",
+                api_key=settings.google_ai_api_key,
+                base_url="https://generativelanguage.googleapis.com/v1beta/openai",
+                max_tokens=8192,
+                rpm_limit=15,
+            )
+        )
+
+    if settings.groq_api_key:
+        chain.append(
+            LLMConfig(
+                provider=LLMProvider.GROQ,
+                model="llama-3.3-70b-versatile",
+                api_key=settings.groq_api_key,
+                base_url="https://api.groq.com/openai/v1",
+                max_tokens=4096,
+                rpm_limit=30,
+            )
+        )
+
+    if settings.github_token:
+        chain.append(
+            LLMConfig(
+                provider=LLMProvider.GITHUB,
+                model="gpt-4o-mini",
+                api_key=settings.github_token,
+                base_url="https://models.inference.ai.azure.com",
+                max_tokens=4096,
+                rpm_limit=150,
+            )
+        )
+
+    return chain
 
 
 class LLMClient:
@@ -290,10 +303,12 @@ class LLMClient:
         """
         await rate_limiter.wait_for_token(config.provider.value)
 
+        base_url = config.base_url.rstrip("/")
+
         async with httpx.AsyncClient(timeout=30.0) as client:
             try:
                 response = await client.post(
-                    f"{config.base_url}/chat/completions",
+                    f"{base_url}/chat/completions",
                     headers={
                         "Authorization": f"Bearer {config.api_key}",
                         "Content-Type": "application/json",
@@ -355,7 +370,7 @@ async def check_provider_health(config: LLMConfig) -> tuple[str, bool]:
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
             response = await client.get(
-                f"{config.base_url}/models",
+                f"{config.base_url.rstrip('/')}/models",
                 headers={
                     "Authorization": f"Bearer {config.api_key}",
                 },

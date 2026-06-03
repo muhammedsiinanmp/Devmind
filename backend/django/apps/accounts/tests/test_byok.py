@@ -38,7 +38,7 @@ class TestLLMConfigCRUD:
         """Creating a config returns 201 with masked key."""
         client, user = authed_client
         resp = client.post(
-            "/api/v1/auth/settings/llm/",
+            "/api/v1/settings/llm/",
             {
                 "name": "Test Key",
                 "provider": "openai",
@@ -61,7 +61,7 @@ class TestLLMConfigCRUD:
             model_name="gpt-4o",
             api_key="sk-key1test123456",
         )
-        resp = client.get("/api/v1/auth/settings/llm/")
+        resp = client.get("/api/v1/settings/llm/")
         assert resp.status_code == 200
         assert len(resp.data) >= 1
 
@@ -74,7 +74,7 @@ class TestLLMConfigCRUD:
             model_name="claude-3",
             api_key="sk-ant-key123456",
         )
-        resp = client.get(f"/api/v1/auth/settings/llm/{config.pk}/")
+        resp = client.get(f"/api/v1/settings/llm/{config.pk}/")
         assert resp.status_code == 200
         assert resp.data["provider"] == "anthropic"
 
@@ -87,7 +87,7 @@ class TestLLMConfigCRUD:
             model_name="gpt-4o",
             api_key="sk-key3test123456",
         )
-        resp = client.delete(f"/api/v1/auth/settings/llm/{config.pk}/")
+        resp = client.delete(f"/api/v1/settings/llm/{config.pk}/")
         assert resp.status_code == 204
         assert not UserLLMConfig.objects.filter(pk=config.pk).exists()
 
@@ -101,7 +101,7 @@ class TestLLMConfigCRUD:
             api_key="sk-original123456",
         )
         resp = client.patch(
-            f"/api/v1/auth/settings/llm/{config.pk}/",
+            f"/api/v1/settings/llm/{config.pk}/",
             {"model_name": "gpt-4o-mini", "api_key": "sk-hacked"},
             format="json",
         )
@@ -125,7 +125,7 @@ class TestLLMConfigCRUD:
             model_name="gpt-4o",
             api_key="sk-other123456",
         )
-        resp = client.get(f"/api/v1/auth/settings/llm/{config.pk}/")
+        resp = client.get(f"/api/v1/settings/llm/{config.pk}/")
         assert resp.status_code == 404
 
 
@@ -214,7 +214,7 @@ class TestCreateValidation:
         ).return_value.__enter__.return_value = mock_http_client
 
         resp = client.post(
-            "/api/v1/auth/settings/llm/",
+            "/api/v1/settings/llm/",
             {
                 "name": "Bad Key",
                 "provider": "openai",

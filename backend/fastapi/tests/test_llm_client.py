@@ -24,6 +24,21 @@ from services.llm_client import (
 )
 
 
+@pytest.fixture(autouse=True)
+def mock_model_chain(monkeypatch):
+    from services import llm_client
+
+    monkeypatch.setattr(llm_client.settings, "google_ai_api_key", "mock-google-key")
+    monkeypatch.setattr(llm_client.settings, "groq_api_key", "mock-groq-key")
+    monkeypatch.setattr(llm_client.settings, "github_token", "mock-github-token")
+    new_chain = llm_client._init_model_chain()
+    monkeypatch.setattr(llm_client, "MODEL_CHAIN", new_chain)
+    import tests.test_llm_client
+
+    monkeypatch.setattr(tests.test_llm_client, "MODEL_CHAIN", new_chain)
+    yield
+
+
 @pytest.fixture
 def llm_client():
     return LLMClient()

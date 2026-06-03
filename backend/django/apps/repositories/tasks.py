@@ -104,6 +104,8 @@ def initial_repository_sync_task(
             install_webhook_task.delay(repo_id=repo.pk)
         else:
             updated_count += 1
+            if not repo.has_webhook():
+                install_webhook_task.delay(repo_id=repo.pk)
 
     log.info(
         "task.initial_sync.complete",
@@ -222,7 +224,7 @@ def remove_webhook_task(self: remove_webhook_task, repo_id: int) -> None:
     acks_late=True,
 )
 def trigger_review_task(
-    self: trigger_review_task,
+    self,
     repo_id: int,
     pr_number: int,
     head_sha: str,
@@ -231,8 +233,16 @@ def trigger_review_task(
     diff_url: str = "",
 ) -> None:
     """
-    Creates a Review record and launches the ReviewOrchestrator.
-    Called by WebhookDispatcher when a PR is opened/synchronized/reopened.
+    Creates a Review record and dispatches to the review orchestrator task.
+
+    This task is responsible ONLY for:
+      1. Looking up the repository.
+      2. Creating the Review DB record (idempotent — skips if one already
+         exists for this repo + pr_number + head_sha combination).
+      3. Handing off to reviews.tasks.trigger_review_task via .delay().
+
+    The orchestrator (status transitions, FastAPI call, GitHub posting) lives
+    entirely inside reviews.tasks.trigger_review_task.
     """
     log.info(
         "task.trigger_review.start",
@@ -247,9 +257,33 @@ def trigger_review_task(
         log.error("task.trigger_review.repo_not_found", repo_id=repo_id)
         return
 
-    with transaction.atomic():
-        from apps.reviews.models import Review
+    # ── Idempotency guard ────────────────────────────────────────────────────
+    # If the webhook fires twice (GitHub retries on 5xx), don't create a
+    # duplicate Review for the same commit SHA.
+    from apps.reviews.models import Review
 
+    existing = Review.objects.filter(
+        repository=repo,
+        pr_number=pr_number,
+        head_sha=head_sha,
+    ).first()
+
+    if existing:
+        log.info(
+            "task.trigger_review.already_exists",
+            review_id=existing.pk,
+            repo=repo.full_name,
+            pr_number=pr_number,
+        )
+        # Still dispatch the review task in case the previous attempt failed.
+        if existing.status in ("pending", "failed"):
+            from apps.reviews.tasks import trigger_review_task as run_review_task
+
+            run_review_task.delay(existing.pk)
+        return
+
+    # ── Create the Review record ─────────────────────────────────────────────
+    with transaction.atomic():
         review = Review.objects.create(
             repository=repo,
             pr_number=pr_number,
@@ -260,41 +294,21 @@ def trigger_review_task(
             status="pending",
         )
 
-        log.info(
-            "task.trigger_review.review_created",
-            review_id=review.pk,
-            repo=repo.full_name,
-            pr_number=pr_number,
-        )
+    log.info(
+        "task.trigger_review.review_created",
+        review_id=review.pk,
+        repo=repo.full_name,
+        pr_number=pr_number,
+    )
 
-    try:
-        from apps.reviews.services.orchestrator import ReviewOrchestrator
+    # ── Hand off to the reviews orchestrator task ────────────────────────────
+    # Import here to avoid circular imports at module load time.
+    from apps.reviews.tasks import trigger_review_task as run_review_task
 
-        orchestrator = ReviewOrchestrator(review)
-        orchestrator.run()
-        log.info(
-            "task.trigger_review.complete",
-            review_id=review.pk,
-            repo=repo.full_name,
-            pr_number=pr_number,
-        )
-    except Exception as exc:
-        log.error(
-            "task.trigger_review.failed",
-            review_id=review.pk,
-            repo=repo.full_name,
-            pr_number=pr_number,
-            error=str(exc),
-        )
-        try:
-            review.refresh_from_db()
-            review.status = "failed"
-            review.summary = f"Review failed: {str(exc)[:500]}"
-            review.save(update_fields=["status", "summary"])
-        except Exception as save_exc:
-            log.error(
-                "task.trigger_review.failed_to_update_status",
-                review_id=review.pk,
-                error=str(save_exc),
-            )
-        raise self.retry(exc=exc) from exc
+    run_review_task.delay(review.pk)
+
+    log.info(
+        "task.trigger_review.dispatched",
+        review_id=review.pk,
+        repo=repo.full_name,
+    )

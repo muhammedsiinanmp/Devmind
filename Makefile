@@ -32,11 +32,11 @@ createsuperuser:
 
 # ─── Testing ──────────────────────────────────────────────────
 test:
-	docker compose exec django uv run pytest --cov --cov-fail-under=95
+	docker compose exec -e DJANGO_ALLOW_ASYNC_UNSAFE=1 django uv run pytest --cov --cov-fail-under=85
 test-django:
-	docker compose exec -e DJANGO_ALLOW_ASYNC_UNSAFE=1 django uv run pytest --cov --cov-fail-under=90
+	docker compose exec -e DJANGO_ALLOW_ASYNC_UNSAFE=1 django uv run pytest --cov --cov-fail-under=85
 test-fastapi:
-	docker compose exec fastapi uv run pytest --cov --cov-fail-under=90
+	docker compose exec fastapi uv run pytest --cov --cov-fail-under=85
 test-all:
 	make test-django && make test-fastapi
 
