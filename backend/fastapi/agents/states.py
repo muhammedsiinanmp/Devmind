@@ -1,10 +1,21 @@
-"""
-State definitions for LangGraph agents.
+from typing import TypedDict, Optional, Annotated
 
-Contains ReviewState and BugIntelState TypedDicts.
-"""
 
-from typing import TypedDict, Optional
+def _extend_list(current: list, new_value: list) -> list:
+    """
+    Reducer that extends a list rather than replacing it.
+    Used on comment fields so parallel analyzer nodes accumulate results.
+    """
+    if not isinstance(current, list):
+        current = []
+    if not isinstance(new_value, list):
+        return current
+    return current + new_value
+
+
+def reduce_model_used(current: str, new_value: str) -> str:
+    """Keep the most recent non-empty model string."""
+    return new_value or current
 
 
 class ReviewComment(TypedDict):
@@ -21,31 +32,35 @@ class ReviewComment(TypedDict):
 class ReviewState(TypedDict):
     """State for the Review Agent graph."""
 
+    # ── inputs ───────────────────────────────────────────────────────────────
     diff_text: str
     repo_full_name: str
     pr_number: int
     user_id: int
     diff_chunks: list
-    similar_patterns: list[str]
+    similar_patterns: list
     prebuilt_prompt: str
 
+    # ── intermediate ─────────────────────────────────────────────────────────
     conventions: dict
-    security_comments: list[ReviewComment]
-    quality_comments: list[ReviewComment]
-    test_comments: list[ReviewComment]
 
+    # ── FIX: Annotated with _extend_list so parallel branches accumulate ─────
+    # Without this, last-write-wins and two of the three analyzers are silently
+    # discarded.
+    security_comments: Annotated[list[ReviewComment], _extend_list]
+    quality_comments: Annotated[list[ReviewComment], _extend_list]
+    test_comments: Annotated[list[ReviewComment], _extend_list]
+
+    # ── outputs ──────────────────────────────────────────────────────────────
     synthesized_comments: list[ReviewComment]
     suggested_fixes: list[dict]
 
-    model_used: str
+    model_used: Annotated[str, reduce_model_used]
     confidence: float
-
     iteration: int
 
 
 class BugIntelComment(TypedDict):
-    """A comment from bug intelligence."""
-
     bug_type: str
     severity: str
     description: str
@@ -54,14 +69,10 @@ class BugIntelComment(TypedDict):
 
 
 class BugIntelState(TypedDict):
-    """State for the Bug Intelligence Agent."""
-
     issue_description: str
     repo_full_name: str
-
     similar_bugs: list[BugIntelComment]
     root_cause: str
     fix_suggestion: str
-
     model_used: str
     confidence: float

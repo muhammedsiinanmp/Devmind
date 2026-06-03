@@ -71,17 +71,12 @@ class VectorStore:
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await client.post(
-                "https://generativelanguage.googleapis.com/v1beta/models/text-embedding-004:embedContent",
+                f"https://generativelanguage.googleapis.com/v1beta/models/{self.embedding_model}:embedContent",
                 headers={
-                    "Authorization": f"Bearer {settings.google_ai_api_key}",
+                    "x-goog-api-key": settings.google_ai_api_key,
                     "Content-Type": "application/json",
                 },
-                json={
-                    "content": {
-                        "type": "PLAIN_TEXT",
-                        "text": text,
-                    }
-                },
+                json={"content": {"parts": [{"text": text}]}},
             )
 
             if response.status_code != 200:

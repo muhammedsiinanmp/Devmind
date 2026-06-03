@@ -64,3 +64,5 @@ implementation/
 devmind.html
 *.tsbuildinfo
 *.log
+repomix-output.xml
+codebase_prompt.txt
