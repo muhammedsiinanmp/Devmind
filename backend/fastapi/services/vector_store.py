@@ -42,13 +42,14 @@ class VectorStore:
 
     def __init__(self):
         self.embedding_dims = 768
-        self.embedding_model = "text-embedding-004"
+        self.embedding_model = settings.embedding_model
         self._cache: dict[str, list[float]] = {}
 
     async def generate_embedding(
         self,
         text: str,
         use_cache: bool = True,
+        task_type: str = "RETRIEVAL_DOCUMENT",
     ) -> list[float]:
         """
         Generate embedding using Google AI.
@@ -56,15 +57,19 @@ class VectorStore:
         Args:
             text: Text to embed
             use_cache: Whether to use embedding cache
+            task_type: Google AI task type — use RETRIEVAL_DOCUMENT for storage,
+                       RETRIEVAL_QUERY for similarity search queries
 
         Returns:
             768-dimensional embedding vector
         """
-        text_hash = hashlib.sha256(text.encode()).hexdigest()
+        # Include task_type in the cache key — the same text produces different
+        # embeddings depending on task type, so they must be cached separately.
+        cache_key = hashlib.sha256(f"{task_type}:{text}".encode()).hexdigest()
 
-        if use_cache and text_hash in self._cache:
-            logger.info("vector_store.cache_hit hash=%s", text_hash[:8])
-            return self._cache[text_hash]
+        if use_cache and cache_key in self._cache:
+            logger.info("vector_store.cache_hit hash=%s", cache_key[:8])
+            return self._cache[cache_key]
 
         if not settings.google_ai_api_key:
             raise VectorStoreError("Google AI API key not configured")
@@ -76,12 +81,15 @@ class VectorStore:
                     "x-goog-api-key": settings.google_ai_api_key,
                     "Content-Type": "application/json",
                 },
-                json={"content": {"parts": [{"text": text}]}},
+                json={
+                    "content": {"parts": [{"text": text}]},
+                    "taskType": task_type,
+                },
             )
 
             if response.status_code != 200:
                 raise VectorStoreError(
-                    f"Failed to generate embedding: {response.status_code}"
+                    f"Failed to generate embedding: {response.status_code} {response.text[:200]}"
                 )
 
             data = response.json()
@@ -93,7 +101,7 @@ class VectorStore:
                 )
 
             if use_cache:
-                self._cache[text_hash] = embedding_values
+                self._cache[cache_key] = embedding_values
 
             return embedding_values
 
@@ -126,7 +134,7 @@ class VectorStore:
         existing = await session.execute(
             select(CodeEmbedding).where(CodeEmbedding.sha256 == text_hash)
         )
-        if existing.scalar_one_or_none:
+        if existing.scalar_one_or_none():
             raise VectorStoreError(f"Embedding already exists: {text_hash[:8]}")
 
         code_embedding = CodeEmbedding(
@@ -172,7 +180,9 @@ class VectorStore:
         Returns:
             List of similar chunks (empty if no results above threshold)
         """
-        query_embedding = await self.generate_embedding(query_text)
+        query_embedding = await self.generate_embedding(
+            query_text, task_type="RETRIEVAL_QUERY"
+        )
 
         distance_col = CodeEmbedding.embedding.cosine_distance(query_embedding).label(
             "distance"

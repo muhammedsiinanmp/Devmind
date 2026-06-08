@@ -32,8 +32,16 @@ class TestVectorStore:
         assert store.embedding_dims == 768
         assert store.embedding_model == "text-embedding-004"
 
+    def test_embedding_model_read_from_settings(self):
+        """embedding_model must come from Settings, not a hardcoded string."""
+        with patch("services.vector_store.settings") as mock_settings:
+            mock_settings.embedding_model = "text-embedding-preview-0409"
+            store = VectorStore()
+            assert store.embedding_model == "text-embedding-preview-0409"
+
     @pytest.mark.asyncio
-    async def test_generate_embedding_success(self):
+    async def test_generate_embedding_success_sends_task_type(self):
+        """Request body must include taskType: RETRIEVAL_DOCUMENT by default."""
         store = VectorStore()
 
         mock_response = MagicMock()
@@ -49,6 +57,51 @@ class TestVectorStore:
 
             assert len(embedding) == 768
             assert embedding[0] == 0.1
+
+            call_kwargs = mock_instance.post.call_args.kwargs
+            assert call_kwargs["json"]["taskType"] == "RETRIEVAL_DOCUMENT"
+
+    @pytest.mark.asyncio
+    async def test_generate_embedding_retrieval_query_task_type(self):
+        """search_similar should send taskType: RETRIEVAL_QUERY."""
+        store = VectorStore()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"embedding": {"values": [0.2] * 768}}
+
+        with patch("services.vector_store.httpx.AsyncClient") as mock_client:
+            mock_instance = AsyncMock()
+            mock_client.return_value.__aenter__.return_value = mock_instance
+            mock_instance.post.return_value = mock_response
+
+            embedding = await store.generate_embedding(
+                "search query", task_type="RETRIEVAL_QUERY"
+            )
+
+            assert len(embedding) == 768
+            call_kwargs = mock_instance.post.call_args.kwargs
+            assert call_kwargs["json"]["taskType"] == "RETRIEVAL_QUERY"
+
+    @pytest.mark.asyncio
+    async def test_generate_embedding_cache_keys_differ_by_task_type(self):
+        """Same text with different task types must not share a cache entry."""
+        store = VectorStore()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json.return_value = {"embedding": {"values": [0.1] * 768}}
+
+        with patch("services.vector_store.httpx.AsyncClient") as mock_client:
+            mock_instance = AsyncMock()
+            mock_client.return_value.__aenter__.return_value = mock_instance
+            mock_instance.post.return_value = mock_response
+
+            await store.generate_embedding("hello", task_type="RETRIEVAL_DOCUMENT")
+            await store.generate_embedding("hello", task_type="RETRIEVAL_QUERY")
+
+            # Two distinct API calls — cache keys must differ
+            assert mock_instance.post.call_count == 2
 
     @pytest.mark.asyncio
     async def test_generate_embedding_cache_hit(self):
@@ -111,7 +164,9 @@ class TestVectorStore:
                 mock_code_embedding.id = 1
 
                 mock_session.execute = AsyncMock()
-                mock_session.execute.return_value.scalar_one_or_none = None
+                mock_session.execute.return_value.scalar_one_or_none = MagicMock(
+                    return_value=None
+                )
 
                 with patch("services.vector_store.select", return_value=MagicMock()):
                     with patch(
