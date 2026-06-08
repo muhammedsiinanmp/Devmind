@@ -87,7 +87,9 @@ class TestVectorStoreEdgeCases:
 
                 with patch("services.vector_store.select", return_value=MagicMock()):
                     mock_existing = MagicMock()
-                    mock_existing.scalar_one_or_none = MagicMock()
+                    mock_existing.scalar_one_or_none = MagicMock(
+                        return_value=MagicMock()
+                    )
 
                     mock_session.execute = AsyncMock(return_value=mock_existing)
 

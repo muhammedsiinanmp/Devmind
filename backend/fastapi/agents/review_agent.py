@@ -4,10 +4,13 @@ LangGraph Review Agent with 7 nodes.
 Implements the full review workflow for analyzing code changes.
 """
 
+import json
 import logging
+import re
 from typing import Any
 
 from langgraph.graph import END, StateGraph
+from pydantic import BaseModel, field_validator
 
 from agents.states import ReviewState, ReviewComment
 from services.code_parser import DiffChunk, parse_diff
@@ -161,32 +164,101 @@ async def analyze_tests(state: ReviewState) -> dict[str, Any]:
     }
 
 
+_SEVERITY_VALUES = {"critical", "error", "warning", "info"}
+
+
+class _LLMCommentSchema(BaseModel):
+    file_path: str = ""
+    line_number: int = 0
+    category: str = "general"
+    severity: str = "warning"
+    body: str = ""
+    suggested_fix: str | None = None
+
+    @field_validator("severity", mode="before")
+    @classmethod
+    def normalise_severity(cls, v: object) -> str:
+        s = str(v).lower()
+        return s if s in _SEVERITY_VALUES else "warning"
+
+
 def _parse_llm_comments(content: str, default_category: str) -> list[ReviewComment]:
-    """Parse LLM response into ReviewComment list."""
-    import json
+    """Parse LLM response into ReviewComment list.
 
-    comments = []
+    Handles four real-world LLM output formats:
+    - Bare JSON array:              [...]
+    - Markdown-fenced JSON:         ```json\\n[...]\\n```
+    - Dict-wrapped array:           {"issues": [...]}
+    - Prefix text before array:     "Here are the issues: [...]"
+    """
+    if not content:
+        return []
 
+    # Strip markdown code fences before attempting any parse
+    cleaned = re.sub(r"```(?:json)?\s*", "", content).strip()
+
+    raw_list: list | None = None
+
+    # Strategy 1: direct json.loads — handles bare array and dict-wrapped
     try:
-        start = content.find("[")
-        end = content.rfind("]") + 1
-        if start >= 0 and end > start:
-            data = json.loads(content[start:end])
-            if isinstance(data, list):
-                for item in data:
-                    if isinstance(item, dict):
-                        comments.append(
-                            {
-                                "file_path": item.get("file_path", ""),
-                                "line_number": item.get("line_number", 0),
-                                "category": item.get("category", default_category),
-                                "severity": item.get("severity", "warning"),
-                                "body": item.get("body", ""),
-                                "suggested_fix": item.get("suggested_fix"),
-                            }
-                        )
-    except (json.JSONDecodeError, ValueError):
+        parsed = json.loads(cleaned)
+        if isinstance(parsed, list):
+            raw_list = parsed
+        elif isinstance(parsed, dict):
+            for key in ("issues", "comments", "findings", "results", "data"):
+                if isinstance(parsed.get(key), list):
+                    raw_list = parsed[key]
+                    break
+    except json.JSONDecodeError:
         pass
+
+    # Strategy 2: extract outermost [...] then parse — handles prefix text
+    if raw_list is None:
+        start = cleaned.find("[")
+        end = cleaned.rfind("]") + 1
+        if start >= 0 and end > start:
+            try:
+                parsed = json.loads(cleaned[start:end])
+                if isinstance(parsed, list):
+                    raw_list = parsed
+            except json.JSONDecodeError:
+                pass
+
+    if raw_list is None:
+        logger.warning(
+            "llm_parse_failed category=%s preview=%.200s",
+            default_category,
+            content,
+        )
+        return []
+
+    comments: list[ReviewComment] = []
+    for item in raw_list:
+        if not isinstance(item, dict):
+            continue
+        try:
+            v = _LLMCommentSchema.model_validate(
+                {
+                    "file_path": item.get("file_path", ""),
+                    "line_number": item.get("line_number", 0),
+                    "category": item.get("category", default_category),
+                    "severity": item.get("severity", "warning"),
+                    "body": item.get("body", ""),
+                    "suggested_fix": item.get("suggested_fix"),
+                }
+            )
+            comments.append(
+                {
+                    "file_path": v.file_path,
+                    "line_number": v.line_number,
+                    "category": v.category,
+                    "severity": v.severity,
+                    "body": v.body,
+                    "suggested_fix": v.suggested_fix,
+                }
+            )
+        except Exception:
+            continue
 
     return comments
 
@@ -261,25 +333,32 @@ async def format_output(state: ReviewState) -> dict[str, Any]:
     """
     Node 7: Format final output.
 
-    Computes confidence and prepares response.
+    Computes confidence based on findings relative to diff size.
+    Small diffs (≤10 lines) always pass. Larger diffs need at least
+    1 comment per 50 diff lines to reach the confidence threshold.
     """
-    logger.info("format_output")
-
     comments = state.get("synthesized_comments", [])
     total = len(comments)
+    diff_lines = len(state.get("diff_text", "").splitlines())
 
-    if total == 0:
+    if diff_lines <= 10:
+        # Trivial diff — zero findings is acceptable
         confidence = 1.0
+    elif total == 0:
+        # Non-trivial diff with no findings — suspicious, trigger retry
+        confidence = 0.0
     else:
-        failed = sum(1 for c in comments if not c.get("body"))
-        confidence = 1.0 - (failed / total)
+        expected_min = max(1, diff_lines // 50)
+        confidence = min(1.0, total / expected_min)
 
     iteration = state.get("iteration", 0)
 
     logger.info(
-        "format_output confidence=%.2f iteration=%d",
+        "format_output confidence=%.2f iteration=%d comments=%d diff_lines=%d",
         confidence,
         iteration,
+        total,
+        diff_lines,
     )
 
     return {
@@ -327,7 +406,10 @@ def build_review_graph():
 
     def retry_condition(state: ReviewState) -> str:
         if should_retry(state):
-            return "synthesize"
+            # Return to fetch_conventions so all three analysis nodes re-run,
+            # making new LLM calls. _extend_list reducers accumulate findings;
+            # synthesize deduplicates them across iterations.
+            return "fetch_conventions"
         return END
 
     graph.add_conditional_edges(
@@ -382,18 +464,4 @@ async def run_review_agent(
     }
 
     result = await review_graph.ainvoke(initial_state)
-
-    iteration = result.get("iteration", 0)
-    if (
-        result.get("confidence", 1.0) < CONFIDENCE_THRESHOLD
-        and iteration < MAX_ITERATIONS
-    ):
-        for i in range(iteration, MAX_ITERATIONS):
-            result["iteration"] = i + 1
-
-            result = await review_graph.ainvoke(result)
-
-            if result.get("confidence", 1.0) >= CONFIDENCE_THRESHOLD:
-                break
-
     return result

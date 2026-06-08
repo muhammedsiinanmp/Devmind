@@ -5,7 +5,7 @@ Tests for Review Agent.
 import pytest
 from unittest.mock import AsyncMock, patch
 
-from agents.states import ReviewState, ReviewComment
+from agents.states import ReviewState
 from agents.review_agent import (
     create_system_message,
     should_retry,
@@ -104,6 +104,69 @@ class TestParseLLMComments:
         comments = _parse_llm_comments("", "security")
 
         assert comments == []
+
+    def test_parse_markdown_fenced_json(self):
+        """Gemini frequently wraps output in ```json fences."""
+        content = '```json\n[{"file_path": "app.py", "line_number": 5, "category": "security", "severity": "critical", "body": "Hardcoded secret", "suggested_fix": null}]\n```'
+        comments = _parse_llm_comments(content, "security")
+
+        assert len(comments) == 1
+        assert comments[0]["file_path"] == "app.py"
+        assert comments[0]["severity"] == "critical"
+
+    def test_parse_plain_code_fence(self):
+        """Handle ``` without json label."""
+        content = '```\n[{"file_path": "main.py", "line_number": 1, "category": "quality", "severity": "warning", "body": "Missing docstring", "suggested_fix": null}]\n```'
+        comments = _parse_llm_comments(content, "quality")
+
+        assert len(comments) == 1
+        assert comments[0]["body"] == "Missing docstring"
+
+    def test_parse_prefix_text_before_array(self):
+        """LLM adds prose before the JSON array."""
+        content = 'Here are the security issues I found:\n[{"file_path": "views.py", "line_number": 42, "category": "security", "severity": "error", "body": "XSS risk", "suggested_fix": "Escape output"}]'
+        comments = _parse_llm_comments(content, "security")
+
+        assert len(comments) == 1
+        assert comments[0]["body"] == "XSS risk"
+
+    def test_parse_dict_wrapped_array(self):
+        """LLM returns {"issues": [...]} instead of a bare array."""
+        content = '{"issues": [{"file_path": "db.py", "line_number": 10, "category": "security", "severity": "critical", "body": "SQL injection", "suggested_fix": "Use ORM"}]}'
+        comments = _parse_llm_comments(content, "security")
+
+        assert len(comments) == 1
+        assert comments[0]["severity"] == "critical"
+
+    def test_parse_dict_wrapped_findings_key(self):
+        """Handle 'findings' key in dict-wrapped response."""
+        content = '{"findings": [{"file_path": "api.py", "line_number": 7, "category": "quality", "severity": "warning", "body": "No error handling", "suggested_fix": null}]}'
+        comments = _parse_llm_comments(content, "quality")
+
+        assert len(comments) == 1
+
+    def test_parse_invalid_severity_normalised(self):
+        """Unknown severity values are normalised to 'warning'."""
+        content = '[{"file_path": "a.py", "line_number": 1, "category": "security", "severity": "BLOCKER", "body": "Issue", "suggested_fix": null}]'
+        comments = _parse_llm_comments(content, "security")
+
+        assert len(comments) == 1
+        assert comments[0]["severity"] == "warning"
+
+    def test_parse_default_category_applied(self):
+        """Items missing category fall back to default_category."""
+        content = '[{"file_path": "a.py", "line_number": 1, "severity": "warning", "body": "Issue", "suggested_fix": null}]'
+        comments = _parse_llm_comments(content, "tests")
+
+        assert len(comments) == 1
+        assert comments[0]["category"] == "tests"
+
+    def test_parse_skips_non_dict_items(self):
+        """Non-dict items in the array are silently skipped."""
+        content = '[{"file_path": "a.py", "line_number": 1, "category": "security", "severity": "warning", "body": "Issue", "suggested_fix": null}, "stray string", 42]'
+        comments = _parse_llm_comments(content, "security")
+
+        assert len(comments) == 1
 
 
 class TestConstants:
@@ -247,3 +310,109 @@ class TestNodes:
 
         assert "confidence" in result
         assert result["confidence"] == 1.0
+
+    @pytest.mark.asyncio
+    async def test_format_output_zero_comments_large_diff(self):
+        """0 comments on a 200-line diff must produce confidence < 0.7."""
+        from agents.review_agent import format_output
+
+        large_diff = "\n".join(f"+line {i}" for i in range(200))
+        state: ReviewState = {
+            "diff_text": large_diff,
+            "repo_full_name": "owner/repo",
+            "pr_number": 1,
+            "user_id": 1,
+            "conventions": {},
+            "security_comments": [],
+            "quality_comments": [],
+            "test_comments": [],
+            "synthesized_comments": [],
+            "suggested_fixes": [],
+            "model_used": "",
+            "confidence": 0.0,
+            "iteration": 0,
+        }
+
+        result = await format_output(state)
+
+        assert result["confidence"] == 0.0
+        assert result["confidence"] < 0.7
+
+    @pytest.mark.asyncio
+    async def test_format_output_small_diff_no_comments(self):
+        """Small diff (≤10 lines) with 0 comments is acceptable — confidence stays 1.0."""
+        from agents.review_agent import format_output
+
+        state: ReviewState = {
+            "diff_text": "+one line change",
+            "repo_full_name": "owner/repo",
+            "pr_number": 1,
+            "user_id": 1,
+            "conventions": {},
+            "security_comments": [],
+            "quality_comments": [],
+            "test_comments": [],
+            "synthesized_comments": [],
+            "suggested_fixes": [],
+            "model_used": "",
+            "confidence": 0.0,
+            "iteration": 0,
+        }
+
+        result = await format_output(state)
+
+        assert result["confidence"] == 1.0
+
+    @pytest.mark.asyncio
+    async def test_format_output_enough_comments_large_diff(self):
+        """Enough comments on a large diff must reach confidence >= 0.7."""
+        from agents.review_agent import format_output
+
+        large_diff = "\n".join(f"+line {i}" for i in range(200))
+        # 200 lines → expected_min = 4; 4 comments → confidence = 1.0
+        comments = [
+            {
+                "file_path": f"f{i}.py",
+                "line_number": i,
+                "category": "security",
+                "severity": "warning",
+                "body": f"Issue {i}",
+                "suggested_fix": None,
+            }
+            for i in range(4)
+        ]
+        state: ReviewState = {
+            "diff_text": large_diff,
+            "repo_full_name": "owner/repo",
+            "pr_number": 1,
+            "user_id": 1,
+            "conventions": {},
+            "security_comments": [],
+            "quality_comments": [],
+            "test_comments": [],
+            "synthesized_comments": comments,
+            "suggested_fixes": [],
+            "model_used": "",
+            "confidence": 0.0,
+            "iteration": 0,
+        }
+
+        result = await format_output(state)
+
+        assert result["confidence"] >= 0.7
+
+    def test_should_retry_fires_when_confidence_zero(self):
+        """Retry must fire when confidence is 0.0 (0 comments on large diff)."""
+        state: ReviewState = {
+            "confidence": 0.0,
+            "iteration": 0,
+        }
+        assert should_retry(state) is True
+
+    def test_should_retry_stops_at_max_iterations(self):
+        """Retry must not fire past MAX_ITERATIONS even if confidence is low."""
+        state: ReviewState = {
+            "confidence": 0.0,
+            "iteration": MAX_ITERATIONS,
+        }
+        assert should_retry(state) is False

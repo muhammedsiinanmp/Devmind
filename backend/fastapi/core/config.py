@@ -24,6 +24,9 @@ class Settings(BaseSettings):
     llm_failover_enabled: bool = True
     primary_llm_provider: str = "google"
 
+    # Embeddings
+    embedding_model: str = "text-embedding-004"
+
     # Security
     fastapi_internal_secret: str = ""
     django_base_url: str = "http://django:8000"
