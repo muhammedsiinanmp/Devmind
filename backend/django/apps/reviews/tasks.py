@@ -39,6 +39,18 @@ def trigger_review_task(self, review_id: int):
 
     except Exception as e:
         logger.error("review.failed review_id=%d error=%s", review_id, str(e))
+        # Reset to pending so the orchestrator's state guard allows the retry to run.
+        # Only reset when retries remain — on the final attempt leave it as "failed"
+        # so the review doesn't get stuck in "pending" with no active task.
+        if self.request.retries < self.max_retries:
+            try:
+                from apps.reviews.models import Review
+
+                Review.objects.filter(pk=review_id, status="failed").update(
+                    status="pending"
+                )
+            except Exception:
+                pass
         raise self.retry(exc=e)
 
 

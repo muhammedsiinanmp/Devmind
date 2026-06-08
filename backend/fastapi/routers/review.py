@@ -193,10 +193,10 @@ async def analyze_review(
     except AllProvidersDownError:
         review_errors_total.labels(error_type="llm_unavailable").inc()
         raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail={
-                "error": "llm_unavailable",
-                "message": "All LLM providers are temporarily unavailable",
+                "error": "llm_rate_limited",
+                "message": "All LLM providers are rate limited. Retry in 60s.",
             },
         )
     except Exception as e:

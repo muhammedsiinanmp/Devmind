@@ -203,6 +203,14 @@ class ReviewOrchestrator:
                         "both Django .env and FastAPI .env."
                     )
 
+                if response.status_code == 429:
+                    # LLM providers are rate limited — fast retries won't help,
+                    # the rate limit window is ~60s. Raise immediately so Celery's
+                    # retry (default_retry_delay=60) handles the backoff correctly.
+                    raise FastAPIError(
+                        "LLM providers rate limited (429). Celery will retry in 60s."
+                    )
+
                 if response.status_code == 503:
                     logger.warning(
                         "orchestrator.fastapi.503 attempt=%d/%d review_id=%d",

@@ -184,6 +184,9 @@ CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = "UTC"
 CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
 CELERY_RESULT_EXTENDED = True
+# Without this, tasks with no explicit queue go to the built-in "celery" queue,
+# but the worker listens to "default,review,notifications" — not "celery".
+CELERY_TASK_DEFAULT_QUEUE = "default"
 
 # Kafka
 KAFKA_BOOTSTRAP_SERVERS = env("KAFKA_BOOTSTRAP_SERVERS", default="")
@@ -291,6 +294,10 @@ CELERY_TASK_ROUTES = {
     "repositories.install_webhook": {"queue": "default"},
     "repositories.remove_webhook": {"queue": "default"},
     "repositories.trigger_review": {"queue": "review"},
+    "apps.reviews.tasks.trigger_review_task": {"queue": "default"},
+    "apps.reviews.tasks.post_github_comments_task": {"queue": "default"},
+    "apps.reviews.tasks.full_repo_scan_task": {"queue": "default"},
+    "apps.reviews.tasks.cleanup_old_reviews": {"queue": "default"},
     "organizations.send_invite_email_task": {"queue": "default"},
     "organizations.sync_org_members_task": {"queue": "default"},
 }
