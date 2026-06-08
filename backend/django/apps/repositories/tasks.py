@@ -290,7 +290,8 @@ def trigger_review_task(
             pr_title=pr_title,
             head_sha=head_sha,
             base_sha=base_sha or head_sha,
-            diff_url=diff_url or f"{repo.html_url}/pull/{pr_number}",
+            diff_url=diff_url
+            or f"https://api.github.com/repos/{repo.full_name}/pulls/{pr_number}",
             status="pending",
         )
 

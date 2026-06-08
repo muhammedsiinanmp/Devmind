@@ -9,9 +9,6 @@ from dataclasses import dataclass
 from typing import Any
 
 import requests
-from django.conf import settings
-
-from apps.repositories.services import GitHubService
 
 logger = logging.getLogger(__name__)
 
@@ -114,7 +111,35 @@ class GitHubPoster:
             )
             return []
 
-        grouped = self.group_by_file(comments)
+        # Split: inline comments need a valid line number (> 0).
+        # Comments with line_number <= 0 (LLM returned 0 or omitted it) would
+        # cause GitHub to return 422 for the entire batch, silently dropping all
+        # comments. Fold those into the review body summary instead.
+        inline = [c for c in comments if (c.get("line_number") or 0) > 0]
+        body_only = [c for c in comments if (c.get("line_number") or 0) <= 0]
+
+        if body_only:
+            extra_lines = [summary] if summary else []
+            for c in body_only:
+                emoji = self._severity_emoji(c.get("severity", "info"))
+                file_ref = c.get("file_path", "")
+                extra_lines.append(f"\n**{file_ref}** — {emoji} {c.get('body', '')}")
+            summary = "\n".join(extra_lines)
+
+        if not inline:
+            # No inline comments — post a body-only review to deliver the summary.
+            if summary:
+                status = self._post_review(
+                    repo_full_name=repo_full_name,
+                    pr_number=pr_number,
+                    head_sha=head_sha,
+                    comments=[],
+                    summary=summary,
+                )
+                return [status]
+            return []
+
+        grouped = self.group_by_file(inline)
         status_codes = []
 
         batches = self._create_batches(grouped)
@@ -242,6 +267,7 @@ class GitHubPoster:
                 {
                     "path": c.path,
                     "line": c.line,
+                    "side": "RIGHT",
                     "body": c.body,
                 }
                 for c in comments
@@ -250,6 +276,25 @@ class GitHubPoster:
 
         url = f"{GITHUB_API_BASE}/repos/{repo_full_name}/pulls/{pr_number}/reviews"
         response = self._session.post(url, json=payload, timeout=30.0)
+
+        if response.status_code == 422 and payload["comments"]:
+            # Inline comments have invalid line numbers (LLM hallucinated lines
+            # outside the diff). Retry as a body-only review so comments aren't lost.
+            logger.warning(
+                "github_poster.inline_failed_retrying_body_only repo=%s pr=%d",
+                repo_full_name,
+                pr_number,
+            )
+            fallback_lines = [payload["body"]] if payload["body"] else []
+            for c in comments:
+                fallback_lines.append(f"**`{c.path}` line {c.line}** — {c.body}")
+            fallback_payload = {
+                "commit_id": head_sha,
+                "event": "COMMENT",
+                "body": "\n\n".join(fallback_lines),
+                "comments": [],
+            }
+            response = self._session.post(url, json=fallback_payload, timeout=30.0)
 
         if response.status_code not in (200, 201):
             logger.error(
