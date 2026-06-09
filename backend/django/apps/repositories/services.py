@@ -255,4 +255,5 @@ class GitHubService:
         return response.text
 
     def __del__(self) -> None:
-        self._session.close()
+        if hasattr(self, "_session") and self._session:
+            self._session.close()

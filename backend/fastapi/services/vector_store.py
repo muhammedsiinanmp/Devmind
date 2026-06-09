@@ -6,6 +6,7 @@ Provides embedding storage and similarity search using cosine distance.
 
 import hashlib
 import logging
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Optional
 
@@ -26,6 +27,29 @@ class VectorStoreError(Exception):
     pass
 
 
+class _BoundedCache:
+    """LRU cache with a fixed max size. Evicts the least-recently-used entry
+    when full. Uses OrderedDict so the eviction order is O(1)."""
+
+    def __init__(self, maxsize: int = 1000) -> None:
+        self._cache: OrderedDict[str, list[float]] = OrderedDict()
+        self._maxsize = maxsize
+
+    def __contains__(self, key: str) -> bool:
+        return key in self._cache
+
+    def __getitem__(self, key: str) -> list[float]:
+        self._cache.move_to_end(key)
+        return self._cache[key]
+
+    def __setitem__(self, key: str, value: list[float]) -> None:
+        if key in self._cache:
+            self._cache.move_to_end(key)
+        self._cache[key] = value
+        if len(self._cache) > self._maxsize:
+            self._cache.popitem(last=False)
+
+
 @dataclass
 class SimilarChunk:
     """Similar code chunk from search."""
@@ -43,7 +67,7 @@ class VectorStore:
     def __init__(self):
         self.embedding_dims = 768
         self.embedding_model = settings.embedding_model
-        self._cache: dict[str, list[float]] = {}
+        self._cache = _BoundedCache(maxsize=1000)
 
     async def generate_embedding(
         self,
