@@ -77,6 +77,7 @@ class Review(models.Model):
         ordering = ["-created_at"]
         indexes = [
             models.Index(fields=["repository", "pr_number"]),
+            models.Index(fields=["completed_at"]),
         ]
 
     def __str__(self) -> str:
@@ -149,6 +150,10 @@ class ReviewComment(models.Model):
     class Meta:
         db_table = "reviews_reviewcomment"
         ordering = ["file_path", "line_number"]
+        indexes = [
+            models.Index(fields=["review", "severity"]),
+            models.Index(fields=["review", "file_path", "line_number"]),
+        ]
 
     def __str__(self) -> str:
         return f"{self.severity.upper()} {self.category} in {self.file_path}:{self.line_number}"

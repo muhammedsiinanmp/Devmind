@@ -66,3 +66,4 @@ devmind.html
 *.log
 repomix-output.xml
 codebase_prompt.txt
+.claude

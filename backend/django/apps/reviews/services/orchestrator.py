@@ -1,16 +1,28 @@
 import logging
-import time
 from dataclasses import dataclass, field
-from typing import Any
 
 import httpx
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
+from tenacity import (
+    before_sleep_log,
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from apps.reviews.models import Review, ReviewComment, ReviewRun
 
 logger = logging.getLogger(__name__)
+
+
+class _RetryableFastAPIError(Exception):
+    """Transient error (503 / timeout) that tenacity should retry."""
+
+    pass
+
 
 VALID_CATEGORIES = frozenset({"security", "quality", "tests", "style", "performance"})
 VALID_SEVERITIES = frozenset({"info", "warning", "error", "critical"})
@@ -141,14 +153,8 @@ class ReviewOrchestrator:
             raise FastAPIError(f"Failed to fetch diff: {e}")
 
     def _call_fastapi(self, diff: str) -> ReviewResult:
-        """
-        Call FastAPI /review/analyze with retry logic.
-
-        FIX (Bug 3A): guard against empty secret.
-        FIX (Bug 3B): retry up to 3 times on 503 with exponential back-off.
-        FIX (Bug 3C): use self.timeout instead of hard-coded 60.
-        """
-        # FIX 3A: fail fast with a clear message instead of a cryptic 403
+        """Call FastAPI /review/analyze. Transient 503/timeout errors are
+        retried with exponential back-off via tenacity."""
         if not self.fastapi_secret:
             raise FastAPIError(
                 "FASTAPI_INTERNAL_SECRET is empty — the FastAPI service will "
@@ -166,95 +172,65 @@ class ReviewOrchestrator:
             "Content-Type": "application/json",
         }
 
-        # FIX 3B: retry on 503 / timeout
-        max_retries = 3
-        backoff = 5.0
+        try:
+            return self._attempt_fastapi_call(payload, headers)
+        except _RetryableFastAPIError as exc:
+            raise FastAPIError(f"FastAPI unavailable after 3 attempts: {exc}")
 
-        for attempt in range(1, max_retries + 1):
-            try:
-                with httpx.Client(timeout=self.timeout) as client:
-                    response = client.post(
-                        f"{self.fastapi_url}/review/analyze",
-                        json=payload,
-                        headers=headers,
-                    )
-
-                if response.status_code == 200:
-                    data = response.json()
-                    return ReviewResult(
-                        repo_full_name=data.get("repo_full_name", ""),
-                        pr_number=data.get("pr_number", 0),
-                        comments=data.get("comments", []),
-                        risk_score=data.get("risk_score", 0),
-                        model_used=data.get("model_used", ""),
-                        provider=data.get("provider", ""),
-                        latency_ms=data.get("latency_ms", 0),
-                        # FIX 2b: extract token counts from response
-                        prompt_tokens=data.get("prompt_tokens", 0),
-                        completion_tokens=data.get("completion_tokens", 0),
-                        agent_iterations=data.get("agent_iterations", 1),
-                    )
-
-                if response.status_code == 403:
-                    # Secret mismatch — retrying won't help
-                    raise FastAPIError(
-                        "FastAPI rejected the request with 403 Forbidden. "
-                        "Verify that FASTAPI_INTERNAL_SECRET is identical in "
-                        "both Django .env and FastAPI .env."
-                    )
-
-                if response.status_code == 429:
-                    # LLM providers are rate limited — fast retries won't help,
-                    # the rate limit window is ~60s. Raise immediately so Celery's
-                    # retry (default_retry_delay=60) handles the backoff correctly.
-                    raise FastAPIError(
-                        "LLM providers rate limited (429). Celery will retry in 60s."
-                    )
-
-                if response.status_code == 503:
-                    logger.warning(
-                        "orchestrator.fastapi.503 attempt=%d/%d review_id=%d",
-                        attempt,
-                        max_retries,
-                        self.review.pk,
-                    )
-                    if attempt < max_retries:
-                        time.sleep(backoff)
-                        backoff *= 2
-                        continue
-                    raise FastAPIError(
-                        f"All LLM providers unavailable (503 after {max_retries} attempts)."
-                    )
-
-                raise FastAPIError(
-                    f"FastAPI error {response.status_code}: {response.text[:200]}"
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=5, max=60),
+        retry=retry_if_exception_type(_RetryableFastAPIError),
+        before_sleep=before_sleep_log(logger, logging.WARNING),
+        reraise=True,
+    )
+    def _attempt_fastapi_call(self, payload: dict, headers: dict) -> ReviewResult:
+        """Single HTTP attempt — decorated so tenacity retries on transient errors."""
+        try:
+            with httpx.Client(timeout=self.timeout) as client:
+                response = client.post(
+                    f"{self.fastapi_url}/review/analyze",
+                    json=payload,
+                    headers=headers,
                 )
+        except httpx.TimeoutException:
+            raise _RetryableFastAPIError(f"FastAPI timed out after {self.timeout}s")
+        except httpx.HTTPError as exc:
+            raise FastAPIError(f"FastAPI HTTP error: {exc}")
 
-            except httpx.TimeoutException:
-                logger.warning(
-                    "orchestrator.fastapi.timeout attempt=%d/%d review_id=%d timeout=%.0fs",
-                    attempt,
-                    max_retries,
-                    self.review.pk,
-                    self.timeout,
-                )
-                if attempt < max_retries:
-                    time.sleep(backoff)
-                    backoff *= 2
-                    continue
-                raise FastAPIError(
-                    f"FastAPI timed out after {self.timeout}s ({max_retries} attempts)."
-                )
+        if response.status_code == 200:
+            data = response.json()
+            return ReviewResult(
+                repo_full_name=data.get("repo_full_name", ""),
+                pr_number=data.get("pr_number", 0),
+                comments=data.get("comments", []),
+                risk_score=data.get("risk_score", 0),
+                model_used=data.get("model_used", ""),
+                provider=data.get("provider", ""),
+                latency_ms=data.get("latency_ms", 0),
+                prompt_tokens=data.get("prompt_tokens", 0),
+                completion_tokens=data.get("completion_tokens", 0),
+                agent_iterations=data.get("agent_iterations", 1),
+            )
 
-            except httpx.HTTPError as exc:
-                logger.error(
-                    "orchestrator.fastapi.http_error review_id=%d error=%s",
-                    self.review.pk,
-                    str(exc),
-                )
-                raise FastAPIError(f"FastAPI HTTP error: {exc}")
+        if response.status_code == 403:
+            raise FastAPIError(
+                "FastAPI rejected the request with 403 Forbidden. "
+                "Verify that FASTAPI_INTERNAL_SECRET is identical in "
+                "both Django .env and FastAPI .env."
+            )
 
-        raise FastAPIError("FastAPI call failed after all retries.")
+        if response.status_code == 429:
+            raise FastAPIError(
+                "LLM providers rate limited (429). Celery will retry in 60s."
+            )
+
+        if response.status_code == 503:
+            raise _RetryableFastAPIError(f"FastAPI 503 for review_id={self.review.pk}")
+
+        raise FastAPIError(
+            f"FastAPI error {response.status_code}: {response.text[:200]}"
+        )
 
     @transaction.atomic
     def _save_results(self, result: ReviewResult) -> None:

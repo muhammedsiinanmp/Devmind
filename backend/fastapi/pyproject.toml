@@ -20,6 +20,7 @@ dependencies = [
     "tiktoken>=0.7,<1.0",
     "prometheus-client>=0.20,<1.0",
     "prometheus-fastapi-instrumentator>=6.1,<7.0",
+    "redis[asyncio]>=5.0,<6.0",
 ]
 
 [dependency-groups]
@@ -30,6 +31,7 @@ dev = [
     "anyio[trio]>=4.4,<5.0",
     "black>=24.4,<25.0",
     "mypy>=1.10,<2.0",
+    "fakeredis>=2.23,<3.0",
 ]
 
 [build-system]
