@@ -33,6 +33,7 @@ class ReviewRunSerializer(serializers.ModelSerializer):
             "prompt_tokens",
             "completion_tokens",
             "latency_ms",
+            "diff_text",
             "created_at",
         ]
         read_only_fields = fields
