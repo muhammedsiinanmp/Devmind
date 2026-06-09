@@ -101,7 +101,7 @@ class ReviewOrchestrator:
         try:
             diff = self._fetch_diff()
             result = self._call_fastapi(diff)
-            self._save_results(result)
+            self._save_results(result, diff)
 
             self.review.status = "completed"
             self.review.risk_score = result.risk_score
@@ -233,7 +233,7 @@ class ReviewOrchestrator:
         )
 
     @transaction.atomic
-    def _save_results(self, result: ReviewResult) -> None:
+    def _save_results(self, result: ReviewResult, diff: str = "") -> None:
         """
         Save ReviewRun and ReviewComment records.
 
@@ -241,15 +241,16 @@ class ReviewOrchestrator:
                       mapped to safe defaults instead of storing invalid data.
         FIX (Bug 2b): populate prompt_tokens, completion_tokens,
                       agent_iterations on ReviewRun.
+        TICKET-11: store diff so the frontend never needs to re-fetch it.
         """
         ReviewRun.objects.create(
             review=self.review,
-            # FIX 2b: these were always 0 before
             agent_iterations=result.agent_iterations,
             model_used=result.model_used,
             prompt_tokens=result.prompt_tokens,
             completion_tokens=result.completion_tokens,
             latency_ms=result.latency_ms,
+            diff_text=diff,
         )
 
         for comment_data in result.comments:

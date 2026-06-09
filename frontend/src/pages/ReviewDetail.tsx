@@ -33,6 +33,7 @@ interface ReviewDetail {
   created_at: string;
   completed_at: string | null;
   comments: ReviewComment[];
+  run?: { diff_text?: string };
 }
 
 function normalizePath(path: string): string {
@@ -159,34 +160,42 @@ export default function ReviewDetail() {
     try {
       let diffText = "";
 
-      if (reviewData.diff_url) {
-        try {
-          const direct = await fetch(reviewData.diff_url);
-          if (direct.ok) {
-            diffText = await direct.text();
-          }
-        } catch {
-          // ignore direct fetch failures and fallback to GitHub API with token
-        }
+      // Prefer diff stored at review time — zero extra API calls
+      if (reviewData.run?.diff_text && reviewData.run.diff_text.includes("diff --git")) {
+        diffText = reviewData.run.diff_text;
       }
 
-      if (!diffText || !diffText.includes("diff --git")) {
-        const tokenData = await authApi.getGithubToken();
-        const ghRes = await fetch(
-          `https://api.github.com/repos/${reviewData.repository_name}/pulls/${reviewData.pr_number}`,
-          {
-            headers: {
-              Accept: "application/vnd.github.v3.diff",
-              Authorization: `Bearer ${tokenData.access_token}`,
-              "X-GitHub-Api-Version": "2022-11-28",
-            },
+      // Fallback: fetch from GitHub if the stored diff is missing (older reviews)
+      if (!diffText) {
+        if (reviewData.diff_url) {
+          try {
+            const direct = await fetch(reviewData.diff_url);
+            if (direct.ok) {
+              diffText = await direct.text();
+            }
+          } catch {
+            // ignore and fall through to authenticated GitHub API call
           }
-        );
-
-        if (!ghRes.ok) {
-          throw new Error(`GitHub API returned ${ghRes.status}`);
         }
-        diffText = await ghRes.text();
+
+        if (!diffText || !diffText.includes("diff --git")) {
+          const tokenData = await authApi.getGithubToken();
+          const ghRes = await fetch(
+            `https://api.github.com/repos/${reviewData.repository_name}/pulls/${reviewData.pr_number}`,
+            {
+              headers: {
+                Accept: "application/vnd.github.v3.diff",
+                Authorization: `Bearer ${tokenData.access_token}`,
+                "X-GitHub-Api-Version": "2022-11-28",
+              },
+            }
+          );
+
+          if (!ghRes.ok) {
+            throw new Error(`GitHub API returned ${ghRes.status}`);
+          }
+          diffText = await ghRes.text();
+        }
       }
 
       const parsed = parseUnifiedDiff(diffText);

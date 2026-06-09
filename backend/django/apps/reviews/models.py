@@ -190,6 +190,11 @@ class ReviewRun(models.Model):
         default=0,
         help_text="LLM response time in milliseconds.",
     )
+    diff_text = models.TextField(
+        blank=True,
+        default="",
+        help_text="Raw unified diff stored at review time to avoid re-fetching from GitHub.",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
