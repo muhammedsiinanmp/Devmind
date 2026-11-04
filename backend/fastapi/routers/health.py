@@ -1,9 +1,13 @@
+import logging
+
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from core.database import AsyncSessionLocal
 from services.llm_client import MODEL_CHAIN, check_provider_health
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["health"])
 
@@ -26,8 +30,10 @@ async def health_check():
                 if pgvector_version
                 else "error: extension not installed"
             )
-    except Exception as exc:
-        checks["database"] = f"error: {exc}"
+    except Exception:
+        # Log details server-side only; the endpoint is unauthenticated.
+        logger.exception("health_check.database_error")
+        checks["database"] = "error"
         checks["pgvector"] = "unknown"
 
     # LLM providers — informational only, failover chain handles degradation
