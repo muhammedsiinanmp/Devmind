@@ -6,7 +6,8 @@ import json
 from typing import Any
 
 import pytest
-from django.test import RequestFactory
+from django.test import Client, RequestFactory
+from structlog.testing import capture_logs
 
 from apps.repositories.exceptions import WebhookVerificationError
 from apps.repositories.tests.factories import RepositoryFactory
@@ -113,6 +114,41 @@ class TestVerifyWebhookSignature:
         )
         with pytest.raises(WebhookVerificationError):
             verify_webhook_signature(request)
+
+    def test_unset_secret_rejects_request_signed_with_empty_key(
+        self, rf: RequestFactory, pr_opened_payload: dict[str, Any], settings: Any
+    ) -> None:
+        """With no secret configured, anyone could sign with an empty key."""
+        settings.GITHUB_WEBHOOK_SECRET = ""
+        request = _make_signed_request(rf, pr_opened_payload, secret="")
+        with capture_logs() as logs:
+            with pytest.raises(WebhookVerificationError):
+                verify_webhook_signature(request)
+        assert any(e["event"] == "webhook.secret.not_configured" for e in logs)
+
+
+@pytest.mark.django_db
+class TestGitHubWebhookEndpoint:
+    def test_unset_secret_returns_403_and_enqueues_nothing(
+        self, pr_opened_payload: dict[str, Any], settings: Any, mocker: Any
+    ) -> None:
+        settings.GITHUB_WEBHOOK_SECRET = ""
+        RepositoryFactory(github_id=123456789, full_name="acme/api")
+        mock_task = mocker.patch("apps.repositories.webhooks.trigger_review_task")
+        body = json.dumps(pr_opened_payload).encode()
+        signature = "sha256=" + hmac.new(b"", body, hashlib.sha256).hexdigest()
+
+        response = Client().post(
+            "/api/v1/webhooks/github/",
+            data=body,
+            content_type="application/json",
+            HTTP_X_HUB_SIGNATURE_256=signature,
+            HTTP_X_GITHUB_EVENT="pull_request",
+        )
+
+        assert response.status_code == 403
+        mock_task.delay.assert_not_called()
+        mock_task.apply_async.assert_not_called()
 
 
 @pytest.mark.django_db

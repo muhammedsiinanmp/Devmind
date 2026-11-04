@@ -4,7 +4,6 @@ from apps.reviews.views import (
     ReviewDetailView,
     ReviewListView,
     ReviewRetriggerView,
-    RepoScanTriggerView,
     RepoScanDetailView,
 )
 

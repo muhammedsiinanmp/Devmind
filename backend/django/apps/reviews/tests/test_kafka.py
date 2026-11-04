@@ -2,8 +2,7 @@
 Tests for Kafka producer.
 """
 
-import pytest
-from unittest.mock import Mock, patch, MagicMock
+from unittest.mock import patch, MagicMock
 from django.test import override_settings
 
 from devmind.kafka import (

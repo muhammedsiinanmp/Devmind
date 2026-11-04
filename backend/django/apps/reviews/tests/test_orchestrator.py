@@ -4,12 +4,10 @@ Tests for Review Orchestrator.
 
 import pytest
 from unittest.mock import Mock, patch, MagicMock
-from django.test import TestCase, override_settings
-from django.db import transaction
+from django.test import override_settings
 
-from apps.reviews.models import Review, ReviewComment, ReviewRun
+from apps.reviews.models import Review
 from apps.reviews.tests.factories import ReviewFactory
-from apps.repositories.tests.factories import UserFactory
 from apps.reviews.services.orchestrator import (
     ReviewOrchestrator,
     ReviewAlreadyProcessingError,
@@ -51,9 +49,10 @@ class TestStatusTransitions:
         """Test pending → processing status transition."""
         review = ReviewFactory(status="pending")
 
-        with patch.object(
-            ReviewOrchestrator, "_call_fastapi"
-        ) as mock_call, patch.object(ReviewOrchestrator, "_fetch_diff") as mock_diff:
+        with (
+            patch.object(ReviewOrchestrator, "_call_fastapi") as mock_call,
+            patch.object(ReviewOrchestrator, "_fetch_diff") as mock_diff,
+        ):
             mock_diff.return_value = "dummy diff"
             mock_call.return_value = ReviewResult(
                 repo_full_name="owner/repo",
@@ -219,9 +218,10 @@ class TestOrchestratorIntegration:
         """Test complete pipeline: pending → processing → completed"""
         review = ReviewFactory(status="pending")
 
-        with patch.object(
-            ReviewOrchestrator, "_call_fastapi"
-        ) as mock_call, patch.object(ReviewOrchestrator, "_fetch_diff") as mock_diff:
+        with (
+            patch.object(ReviewOrchestrator, "_call_fastapi") as mock_call,
+            patch.object(ReviewOrchestrator, "_fetch_diff") as mock_diff,
+        ):
             mock_diff.return_value = "dummy diff"
             mock_call.return_value = ReviewResult(
                 repo_full_name="owner/repo",

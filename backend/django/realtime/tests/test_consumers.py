@@ -1,6 +1,3 @@
-import json
-from unittest.mock import AsyncMock, patch
-
 import pytest
 from channels.routing import URLRouter
 from channels.testing import WebsocketCommunicator

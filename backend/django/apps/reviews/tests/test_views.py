@@ -9,11 +9,9 @@ Tests match acceptance criteria from P2-02:
 """
 
 import pytest
-from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APIClient
 
-from apps.reviews.models import Review
 from apps.reviews.tests.factories import ReviewCommentFactory, ReviewFactory
 
 

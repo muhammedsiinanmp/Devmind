@@ -12,6 +12,12 @@ interface ReviewStatusProps {
 export default function ReviewStatus({ reviewId, initialStatus, onStatusChange }: ReviewStatusProps) {
   const [status, setStatus] = useState<ReviewStatusType>(initialStatus || "pending");
   const wsRef = useRef<WebSocket | null>(null);
+  // Keep the latest callback without reconnecting the socket when it changes
+  const onStatusChangeRef = useRef(onStatusChange);
+
+  useEffect(() => {
+    onStatusChangeRef.current = onStatusChange;
+  }, [onStatusChange]);
 
   useEffect(() => {
     if (!reviewId || status === "completed" || status === "failed") return;
@@ -29,7 +35,7 @@ export default function ReviewStatus({ reviewId, initialStatus, onStatusChange }
           const data = JSON.parse(event.data);
           if (data.status && data.status !== status) {
             setStatus(data.status);
-            onStatusChange?.(data.status);
+            onStatusChangeRef.current?.(data.status);
           }
         } catch {
           // ignore parse errors

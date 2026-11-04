@@ -13,7 +13,7 @@ from langgraph.graph import END, StateGraph
 from pydantic import BaseModel, field_validator
 
 from agents.states import ReviewState, ReviewComment
-from services.code_parser import DiffChunk, parse_diff
+from services.code_parser import parse_diff
 from services.llm_client import llm_client
 from services.prompt_builder import (
     PromptContext,

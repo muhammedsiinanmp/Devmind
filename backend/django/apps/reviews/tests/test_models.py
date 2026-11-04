@@ -11,7 +11,7 @@ Tests match acceptance criteria from P2-01:
 import pytest
 from django.db import connection
 
-from apps.reviews.models import Review, ReviewComment, ReviewRun, RepoScan
+from apps.reviews.models import Review, ReviewComment, RepoScan
 from apps.reviews.tests.factories import (
     RepoScanFactory,
     ReviewCommentFactory,

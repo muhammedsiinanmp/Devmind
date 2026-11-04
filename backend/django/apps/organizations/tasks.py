@@ -43,7 +43,6 @@ def send_invite_email_task(
 
 @shared_task(bind=True)
 def sync_org_members_task(self, org_pk: int) -> dict:
-    from django.conf import settings
 
     from apps.accounts.models import CustomUser
     from apps.organizations.models import Organization, TeamMembership

@@ -58,7 +58,13 @@ def verify_webhook_signature(request: HttpRequest) -> None:
         )
         raise WebhookVerificationError("Malformed signature header format.")
 
-    secret: bytes = settings.GITHUB_WEBHOOK_SECRET.encode("utf-8")
+    configured_secret: str = settings.GITHUB_WEBHOOK_SECRET or ""
+    if not configured_secret:
+        # An empty HMAC key would let anyone forge a valid signature.
+        log.error("webhook.secret.not_configured", path=request.path)
+        raise WebhookVerificationError("Webhook secret is not configured.")
+
+    secret: bytes = configured_secret.encode("utf-8")
     body: bytes = request.body
 
     expected_signature: str = (

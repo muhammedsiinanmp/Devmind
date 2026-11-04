@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { settingsApi, LLMProvider } from "../api/settings";
+import { settingsApi, type LLMProvider } from "../api/settings";
 import { Key, Trash2, Check, Plus, Loader2, X, AlertTriangle, Zap, ChevronDown } from "lucide-react";
 
 export default function Settings() {
@@ -174,6 +174,19 @@ export default function Settings() {
   );
 }
 
+type ApiErrorData = {
+  base_url?: string[];
+  provider?: string[];
+  message?: string;
+};
+
+// Prefer field errors (e.g. a rejected base_url) over the generic fallback.
+function apiErrorMessage(err: unknown, fallback: string): string {
+  const data = (err as { response?: { data?: ApiErrorData } })?.response?.data;
+  if (data?.base_url?.[0]) return `Base URL: ${data.base_url[0]}`;
+  return data?.message || data?.provider?.[0] || fallback;
+}
+
 function AddProviderForm({ onCancel, onSuccess }: { onCancel: () => void; onSuccess: () => void }) {
   const [formData, setFormData] = useState({
     name: "", provider: "openai", api_key: "", model_name: "gpt-4o", base_url: "", is_active: true,
@@ -189,8 +202,7 @@ function AddProviderForm({ onCancel, onSuccess }: { onCancel: () => void; onSucc
       await settingsApi.addProvider(formData);
       onSuccess();
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { provider?: string[] } } })?.response?.data?.provider?.[0] || "Failed to add provider";
-      alert(msg);
+      alert(apiErrorMessage(err, "Failed to add provider"));
     } finally {
       setSaving(false);
     }
@@ -208,8 +220,7 @@ function AddProviderForm({ onCancel, onSuccess }: { onCancel: () => void; onSucc
       });
       setTestResult({ ok: true, message: result.message || "API key is valid!" });
     } catch (err: unknown) {
-      const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message || "Invalid API key";
-      setTestResult({ ok: false, message: msg });
+      setTestResult({ ok: false, message: apiErrorMessage(err, "Invalid API key") });
     } finally {
       setTestingKey(false);
     }

@@ -1,9 +1,7 @@
 import json
 import logging
 
-from channels.db import database_sync_to_async
 from channels.generic.websocket import AsyncWebsocketConsumer
-from django.conf import settings
 
 from .events import ReviewEventType, get_review_group
 

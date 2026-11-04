@@ -259,3 +259,18 @@ class TestInternalLLMConfigsEndpoint:
             HTTP_X_INTERNAL_SECRET="wrong",
         )
         assert resp.status_code == 403
+
+    @override_settings(FASTAPI_INTERNAL_SECRET="test-internal-secret")
+    def test_internal_endpoint_rejects_missing_secret(self, authed_client):
+        client, user = authed_client
+        resp = client.get(f"/api/v1/auth/internal/llm-configs/?user_id={user.id}")
+        assert resp.status_code == 403
+
+    @override_settings(FASTAPI_INTERNAL_SECRET="")
+    def test_internal_endpoint_rejects_when_secret_unset(self, authed_client):
+        client, user = authed_client
+        resp = client.get(
+            f"/api/v1/auth/internal/llm-configs/?user_id={user.id}",
+            HTTP_X_INTERNAL_SECRET="",
+        )
+        assert resp.status_code == 403

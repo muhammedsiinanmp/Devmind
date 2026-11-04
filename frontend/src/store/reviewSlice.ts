@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { Review, ReviewDetail, reviewsApi } from "../api/reviews";
+import { type Review, type ReviewDetail, reviewsApi } from "../api/reviews";
 
 interface ReviewState {
   reviews: Review[];
@@ -11,7 +11,6 @@ interface ReviewState {
 
   fetchReviews: (page?: number) => Promise<void>;
   fetchReview: (id: number) => Promise<void>;
-  createReview: (data: { repository: number; pr_number: number }) => Promise<Review>;
   setPage: (page: number) => void;
   clearError: () => void;
 }
@@ -52,24 +51,6 @@ export const useReviewStore = create<ReviewState>((set, get) => ({
         isLoading: false,
         error: error instanceof Error ? error.message : "Failed to fetch review",
       });
-    }
-  },
-
-  createReview: async (data) => {
-    set({ isLoading: true, error: null });
-    try {
-      const review = await reviewsApi.create(data);
-      set((state) => ({
-        reviews: [review, ...state.reviews],
-        isLoading: false,
-      }));
-      return review;
-    } catch (error) {
-      set({
-        isLoading: false,
-        error: error instanceof Error ? error.message : "Failed to create review",
-      });
-      throw error;
     }
   },
 

@@ -4,14 +4,11 @@ Tests for GitHub Comment Poster.
 
 import pytest
 from unittest.mock import Mock, patch, MagicMock
-from apps.reviews.models import Review, ReviewComment
 from apps.reviews.tests.factories import ReviewFactory, ReviewCommentFactory
-from apps.repositories.tests.factories import UserFactory, GithubTokenFactory
 from apps.reviews.services.github_poster import (
     GitHubPoster,
     group_by_file,
     format_suggestion_block,
-    MAX_COMMENTS_PER_REVIEW,
 )
 
 

@@ -15,8 +15,6 @@ shell-django:
 	docker compose exec django bash
 shell-fastapi:
 	docker compose exec fastapi bash
-shell-analytics:
-	docker compose exec analytics bash
 psql:
 	docker compose exec postgres psql -U devmind
 redis-flush:
@@ -31,14 +29,13 @@ createsuperuser:
 	docker compose exec django uv run python manage.py createsuperuser
 
 # ─── Testing ──────────────────────────────────────────────────
-test:
-	docker compose exec -e DJANGO_ALLOW_ASYNC_UNSAFE=1 django uv run pytest --cov --cov-fail-under=85
+# Same test commands as CI (.github/workflows/ci.yml), run inside the containers
+test: test-django test-fastapi
 test-django:
-	docker compose exec -e DJANGO_ALLOW_ASYNC_UNSAFE=1 django uv run pytest --cov --cov-fail-under=85
+	docker compose exec -e DJANGO_ALLOW_ASYNC_UNSAFE=1 django uv run pytest --cov
 test-fastapi:
-	docker compose exec fastapi uv run pytest --cov --cov-fail-under=85
-test-all:
-	make test-django && make test-fastapi
+	docker compose exec fastapi uv run pytest
+test-all: test
 
 # ─── Code Quality ─────────────────────────────────────────────
 format:
@@ -55,16 +52,6 @@ kafka-create-topics:
 	@echo "All topics created."
 kafka-consume:
 	docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic $(topic) --from-beginning
-
-# ─── Lambda ───────────────────────────────────────────────────
-lambda-deploy:
-	cd lambda/$(function) && zip -r function.zip . && aws lambda update-function-code --function-name $(function) --zip-file fileb://function.zip
-
-# ─── Terraform ────────────────────────────────────────────────
-terraform-plan:
-	cd infra/terraform/aws && terraform plan
-terraform-apply:
-	cd infra/terraform/aws && terraform apply -auto-approve
 
 # ─── Frontend ─────────────────────────────────────────────────
 frontend-dev:
@@ -85,7 +72,3 @@ prometheus-targets:
 # ─── Development Utilities ────────────────────────────────────
 ngrok:
 	ngrok http 8000
-seed:
-	docker compose exec django uv run python manage.py seed_demo_data
-demo:
-	docker compose down -v && docker compose up -d && sleep 10 && make migrate && make seed

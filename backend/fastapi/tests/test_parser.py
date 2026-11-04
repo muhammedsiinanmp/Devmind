@@ -2,8 +2,6 @@
 Tests for code parser service.
 """
 
-import pytest
-
 from services.code_parser import (
     DiffChunk,
     detect_language,

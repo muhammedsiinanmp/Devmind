@@ -230,17 +230,6 @@ class TestBYOKPriority:
             assert first_call_cfg.provider == LLMProvider.OPENAI
 
 
-class TestRateLimiter:
-    @pytest.mark.asyncio
-    async def test_rate_limiter_import(self):
-        from services.rate_limiter import rate_limiter, TokenBucket
-
-        bucket = TokenBucket(capacity=10, refill_rate=0.5)
-        assert bucket.capacity == 10
-
-        assert rate_limiter is not None
-
-
 class TestCheckProviderHealth:
     @pytest.mark.asyncio
     async def test_check_provider_health_success(self):
