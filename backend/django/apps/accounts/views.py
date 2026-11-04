@@ -1,3 +1,5 @@
+import logging
+
 from django.conf import settings
 from django.db.models import F
 import httpx
@@ -25,6 +27,9 @@ from apps.accounts.serializers import (
     UserLLMConfigCreateSerializer,
     UserLLMConfigTestSerializer,
 )
+from apps.accounts.url_safety import UnsafeURLError, validate_public_https_url
+
+logger = logging.getLogger(__name__)
 
 
 def _provider_test_request(
@@ -78,6 +83,13 @@ def _validate_provider_key(
             return False, {"error": "base_url required for custom provider"}
         return False, {"error": f"Unsupported provider: {provider}"}
 
+    if base_url:
+        # Re-check right before the outbound call: the URL is user-controlled.
+        try:
+            validate_public_https_url(test_url)
+        except UnsafeURLError as exc:
+            return False, {"error": "invalid_base_url", "message": str(exc)}
+
     try:
         with httpx.Client(timeout=10.0) as client:
             response = client.get(test_url, headers=headers)
@@ -95,10 +107,17 @@ def _validate_provider_key(
         }
     except httpx.TimeoutException:
         return False, {"error": "timeout", "message": "Request timed out"}
-    except httpx.HTTPError as exc:
-        return False, {"error": "http_error", "message": str(exc)}
-    except Exception as exc:
-        return False, {"error": "unknown", "message": str(exc)}
+    except httpx.HTTPError:
+        logger.warning(
+            "llm_key_validation.http_error provider=%s", provider, exc_info=True
+        )
+        return False, {
+            "error": "http_error",
+            "message": "Could not reach the provider",
+        }
+    except Exception:
+        logger.exception("llm_key_validation.unexpected_error provider=%s", provider)
+        return False, {"error": "unknown", "message": "Key validation failed"}
 
 
 class GitHubOAuthStartView(APIView):

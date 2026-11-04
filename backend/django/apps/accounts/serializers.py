@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING, Any
 from rest_framework import serializers
 
 from apps.accounts.models import CustomUser, UserLLMConfig
+from apps.accounts.url_safety import UnsafeURLError, validate_public_https_url
 
 if TYPE_CHECKING:
     _BaseModelSerializer = serializers.ModelSerializer[CustomUser]
@@ -37,7 +38,20 @@ class TokenPairSerializer(_BaseSerializer):
     refresh = serializers.CharField(help_text="JWT refresh token")
 
 
-class UserLLMConfigSerializer(_BaseModelSerializer):
+class _SafeBaseUrlMixin:
+    """Reject base_url values the server must not call (SSRF guard)."""
+
+    def validate_base_url(self, value: str) -> str:
+        if not value:
+            return value
+        try:
+            validate_public_https_url(value)
+        except UnsafeURLError as exc:
+            raise serializers.ValidationError(str(exc)) from exc
+        return value
+
+
+class UserLLMConfigSerializer(_SafeBaseUrlMixin, _BaseModelSerializer):
     """Serializer for user's LLM API keys (BYOK)."""
 
     masked_key = serializers.SerializerMethodField()
@@ -66,7 +80,7 @@ class UserLLMConfigSerializer(_BaseModelSerializer):
         return super().create(validated_data)
 
 
-class UserLLMConfigCreateSerializer(_BaseModelSerializer):
+class UserLLMConfigCreateSerializer(_SafeBaseUrlMixin, _BaseModelSerializer):
     """Serializer for creating a new LLM config."""
 
     api_key = serializers.CharField(write_only=True, required=True)
@@ -87,7 +101,7 @@ class UserLLMConfigCreateSerializer(_BaseModelSerializer):
         return UserLLMConfig.objects.create(**validated_data)
 
 
-class UserLLMConfigTestSerializer(_BaseSerializer):
+class UserLLMConfigTestSerializer(_SafeBaseUrlMixin, _BaseSerializer):
     """Serializer for testing an LLM config without saving."""
 
     provider = serializers.CharField()
