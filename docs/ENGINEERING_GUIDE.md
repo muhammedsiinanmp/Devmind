@@ -402,7 +402,7 @@ These were measured locally on this branch. Coverage method: `pytest --cov`, the
 | Suite | Result | Line coverage |
 |---|---|---|
 | Django | 244 passed | 83% |
-| FastAPI | 176 passed | 81% |
+| FastAPI | 176 passed | 80% |
 | Frontend | `tsc`, `build` pass; `lint` 0 errors, 3 warnings | n/a |
 
 ### CI

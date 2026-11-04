@@ -107,7 +107,7 @@ Measured locally on this branch:
 | Suite | Tests | Line coverage |
 |---|---|---|
 | Django | 244 passed | 83% |
-| FastAPI | 176 passed | 81% |
+| FastAPI | 176 passed | 80% |
 
 Coverage method: `pytest --cov`, then `coverage report --omit='*/tests/*,*/migrations/*,*conftest.py'`, so test files, migrations and conftest are excluded. Including the test files would give a higher figure.
 
