@@ -264,7 +264,6 @@ CODE_EXTENSIONS = {
     ".scala": "scala",
     ".vue": "vue",
     ".svelte": "svelte",
-    ".jsx": "javascript",
     ".sql": "sql",
     ".sh": "bash",
     ".yaml": "yaml",
