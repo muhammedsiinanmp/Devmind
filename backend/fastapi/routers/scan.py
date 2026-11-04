@@ -8,10 +8,11 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 
 from core.config import get_settings
+from core.security import verify_internal_token
 from services.github_client import (
     GitHubClient,
     GitHubClientError,
@@ -21,7 +22,12 @@ from services.github_client import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/scan", tags=["scan"])
+# Internal-only: called by the Django backend, never by browsers.
+router = APIRouter(
+    prefix="/scan",
+    tags=["scan"],
+    dependencies=[Depends(verify_internal_token)],
+)
 
 settings = get_settings()
 

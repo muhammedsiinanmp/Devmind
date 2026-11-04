@@ -4,18 +4,24 @@ Embeddings router for vector store operations.
 Endpoints for storing and searching code embeddings.
 """
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from typing import Optional
 
 from core.database import AsyncSessionLocal
+from core.security import verify_internal_token
 from services.vector_store import (
     vector_store,
     VectorStoreError,
     SimilarChunk,
 )
 
-router = APIRouter(prefix="/embeddings", tags=["embeddings"])
+# Internal-only: called by the Django backend, never by browsers.
+router = APIRouter(
+    prefix="/embeddings",
+    tags=["embeddings"],
+    dependencies=[Depends(verify_internal_token)],
+)
 
 
 class StoreEmbeddingRequest(BaseModel):

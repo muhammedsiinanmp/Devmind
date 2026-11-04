@@ -6,6 +6,15 @@ import pytest
 from unittest.mock import patch, AsyncMock
 from fastapi.testclient import TestClient
 
+from core.config import get_settings
+
+
+def _internal_client(app):
+    """TestClient that sends the internal secret the scan router requires."""
+    return TestClient(
+        app, headers={"X-Internal-Secret": get_settings().fastapi_internal_secret}
+    )
+
 
 class TestScanEndpoints:
     """Test scan API endpoints."""
@@ -14,7 +23,7 @@ class TestScanEndpoints:
         """Test POST /scan/full returns 202 with scan_id."""
         from main import app
 
-        client = TestClient(app)
+        client = _internal_client(app)
 
         response = client.post(
             "/scan/full",
@@ -34,7 +43,7 @@ class TestScanEndpoints:
         """Test GET /scan/status/{scan_id} returns 404 for unknown scan."""
         from main import app
 
-        client = TestClient(app)
+        client = _internal_client(app)
 
         response = client.get("/scan/status/99999")
 
@@ -44,7 +53,7 @@ class TestScanEndpoints:
         """Test GET /scan/status/{scan_id} returns progress."""
         from main import app
 
-        client = TestClient(app)
+        client = _internal_client(app)
 
         start_response = client.post(
             "/scan/full",
@@ -67,7 +76,7 @@ class TestScanEndpoints:
         """Test GET /scan/report returns 400 when scan not completed."""
         from main import app
 
-        client = TestClient(app)
+        client = _internal_client(app)
 
         start_response = client.post(
             "/scan/full",
