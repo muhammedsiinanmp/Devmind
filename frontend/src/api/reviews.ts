@@ -44,14 +44,4 @@ export const reviewsApi = {
     const response = await apiClient.get<ReviewDetail>(`/reviews/${id}/`);
     return response.data;
   },
-
-  create: async (data: { repository: number; pr_number: number }): Promise<Review> => {
-    const response = await apiClient.post<Review>("/reviews/", data);
-    return response.data;
-  },
-
-  getComments: async (reviewId: number): Promise<ReviewComment[]> => {
-    const response = await apiClient.get<ReviewComment[]>(`/reviews/${reviewId}/comments/`);
-    return response.data;
-  },
 };
