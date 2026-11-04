@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import DiffViewerBase from "react-diff-viewer-continued";
 import CommentOverlay, { type CommentData } from "./CommentOverlay";
 import { Code2, MessageSquare } from "lucide-react";
@@ -24,19 +24,15 @@ function normalizePath(path: string): string {
 }
 
 export default function DiffViewer({ files, comments, diffUrl, isLoading }: DiffViewerProps) {
-  const [selectedFile, setSelectedFile] = useState<string>("");
+  const [pickedFile, setSelectedFile] = useState<string>("");
 
-  useEffect(() => {
-    if (files.length === 0) {
-      setSelectedFile("");
-      return;
-    }
-
+  // Derive the active file during render instead of syncing state in an
+  // effect: keep the user's pick while it exists, otherwise use the first file.
+  const selectedFile = useMemo(() => {
     const normalized = files.map((file) => normalizePath(file.file_path));
-    if (!selectedFile || !normalized.includes(selectedFile)) {
-      setSelectedFile(normalized[0]);
-    }
-  }, [files, selectedFile]);
+    if (pickedFile && normalized.includes(pickedFile)) return pickedFile;
+    return normalized[0] ?? "";
+  }, [files, pickedFile]);
 
   const commentsByFile = useMemo(() => {
     const map: Record<string, CommentData[]> = {};
