@@ -51,3 +51,11 @@ addopts = "-v --cov=. --cov-report=term-missing --cov-fail-under=90"
 [tool.black]
 line-length = 88
 target-version = ["py312"]
+
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+
+[tool.ruff.lint]
+# Correctness checks only (pyflakes + syntax errors); black handles formatting.
+select = ["F", "E9"]
