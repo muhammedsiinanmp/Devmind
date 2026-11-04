@@ -1,5 +1,5 @@
 from django.contrib import admin
-from django.utils.safestring import mark_safe
+from django.utils.html import format_html
 
 from apps.repositories.models import Repository
 from apps.repositories.tasks import install_webhook_task, remove_webhook_task
@@ -50,11 +50,9 @@ class RepositoryAdmin(admin.ModelAdmin):  # type: ignore[type-arg]
 
     def webhook_status(self, obj: Repository) -> str:
         if obj and obj.webhook_id:
-            return mark_safe(
-                '<span style="color: green;">✓ Installed ('
-                + str(obj.webhook_id)
-                + ")</span>"
+            return format_html(
+                '<span style="color: green;">✓ Installed ({})</span>', obj.webhook_id
             )
-        return mark_safe('<span style="color: orange;">✗ Not installed</span>')
+        return format_html('<span style="color: orange;">✗ Not installed</span>')
 
     webhook_status.short_description = "Webhook"  # type: ignore[attr-defined]
