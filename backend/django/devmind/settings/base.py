@@ -198,7 +198,8 @@ GITHUB_WEBHOOK_SECRET = env("GITHUB_WEBHOOK_SECRET", default="")
 SUPABASE_URL = env("SUPABASE_URL", default="")
 SUPABASE_SERVICE_KEY = env("SUPABASE_SERVICE_KEY", default="")
 
-# Frontend URL (used for OAuth redirect_uri)
+# Frontend URL. Currently unused: the OAuth redirect is the callback URL
+# configured on the GitHub OAuth App, and no redirect_uri is sent.
 FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:5173")
 
 # FastAPI Internal
