@@ -86,7 +86,7 @@ fetch_conventions -> [analyze_security | analyze_quality | analyze_tests] -> syn
 
 - A user's own active provider configs are tried first, in priority order.
 - After that come the server's providers: Google `gemini-2.0-flash`, then Groq `llama-3.3-70b-versatile`, then GitHub Models `gpt-4o-mini`. Any provider without a configured key is skipped.
-- A rate-limit response (429), a 5xx error or a timeout moves the request to the next provider.
+- Any non-200 response (including 429 and 5xx) or a timeout moves the request to the next provider.
 - Per-provider requests-per-minute limits are enforced with a Redis counter (`services/rate_limiter.py`), so all FastAPI workers share one budget. If Redis is down, requests go through instead of being blocked.
 
 **Security hardening**:
@@ -94,7 +94,9 @@ fetch_conventions -> [analyze_security | analyze_quality | analyze_tests] -> syn
 - **Webhooks:** the HMAC signature is checked before any payload parsing, and webhooks are rejected outright when no secret is configured.
 - **Service-to-service calls:** FastAPI's `/review/analyze`, `/embeddings/*` and `/scan/*` routes, and Django's internal BYOK endpoint, all require an `X-Internal-Secret` header (compared in constant time).
 - **Stored secrets:** GitHub OAuth tokens and BYOK API keys are encrypted at rest with Fernet (`apps/accounts/encryption.py`). The key is derived from `SECRET_KEY` with HKDF.
-- **SSRF protection:** a user-supplied BYOK `base_url` must use https and resolve only to public IP addresses (`apps/accounts/url_safety.py`). This blocks requests to internal services and cloud metadata endpoints.
+- **SSRF protection:** a user-supplied BYOK `base_url` must use https and resolve only to public IP addresses (`apps/accounts/url_safety.py`). This blocks requests to internal services and cloud metadata endpoints, with two caveats:
+  - DNS rebinding between the check and the request isn't prevented.
+  - FastAPI uses the stored `base_url` without re-validating it, so rows saved before this check existed are unguarded.
 - **OAuth:** the OAuth `state` value is random, stored in Redis for 10 minutes and accepted only once.
 
 **Testing and CI**: [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on pushes to `main` and `dev` and on pull requests:
@@ -105,12 +107,14 @@ fetch_conventions -> [analyze_security | analyze_quality | analyze_tests] -> syn
 | FastAPI (pytest) | ruff, black, pytest (no external services) |
 | Frontend (typecheck, build, lint) | `tsc`, `vite build`, `eslint` |
 
-Measured locally on this branch, with tests, migrations and conftest files excluded from coverage:
+Measured locally on this branch:
 
 | Suite | Tests | Line coverage |
 |---|---|---|
-| Django | 252 passed | 83% |
+| Django | 258 passed | 83% |
 | FastAPI | 183 passed | 81% |
+
+Coverage method: `pytest --cov`, then `coverage report --omit='*/tests/*,*/migrations/*,*conftest.py'`, so test files, migrations and conftest are excluded. Including the test files would give a higher figure.
 
 CI doesn't enforce a coverage threshold. The frontend has no automated tests.
 
@@ -137,7 +141,7 @@ cp .env.example .env
 #    Set DJANGO_SECRET_KEY, JWT_SECRET_KEY, FASTAPI_INTERNAL_SECRET,
 #    GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GITHUB_WEBHOOK_SECRET
 #    and at least one of GOOGLE_AI_API_KEY / GROQ_API_KEY / GITHUB_TOKEN.
-#    Empty the SENTRY_DSN_* placeholders unless you use Sentry.
+#    Sentry is off by default; set SENTRY_DSN_DJANGO / SENTRY_DSN_FASTAPI to enable it.
 
 # 2. Start the backend stack (Postgres, Redis, Kafka, Django, FastAPI,
 #    Celery worker + beat, Flower, Nginx, Prometheus, Grafana)

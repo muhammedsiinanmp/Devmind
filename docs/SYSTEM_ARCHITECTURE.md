@@ -549,7 +549,8 @@ GitHub  -> Django webhook         HMAC-SHA256; rejected when no secret is config
 Celery  -> FastAPI work routes    X-Internal-Secret, constant-time compare
 FastAPI -> Django BYOK endpoint   X-Internal-Secret, constant-time compare
 User-supplied BYOK base_url      https + public-address check in Django on save and before
-                                  the key test; FastAPI later calls the stored URL
+                                  the key test; FastAPI calls the stored URL without
+                                  re-validating it (rows saved before the check are unguarded)
 ```
 
 ### Encryption at rest

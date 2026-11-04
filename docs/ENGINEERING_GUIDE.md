@@ -89,7 +89,7 @@ There's no server-side OpenAI provider. OpenAI keys can be added per user throug
 | Variable | Description |
 |---|---|
 | `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` | If both are set, the orchestrator pushes review status changes to Supabase. Leave empty to turn it off. |
-| `SENTRY_DSN_DJANGO`, `SENTRY_DSN_FASTAPI` | Sentry turns on when non-empty. `.env.example` ships placeholder DSNs, so empty them if you don't use Sentry. |
+| `SENTRY_DSN_DJANGO`, `SENTRY_DSN_FASTAPI` | Empty in `.env.example`, so Sentry is off by default. Set a DSN to enable it for that service. |
 | `SENTRY_ENVIRONMENT` | Sentry environment tag. When it's `production`, FastAPI turns off `/docs`. |
 | `GRAFANA_ADMIN_PASSWORD` | Grafana admin password, used by compose interpolation; `devmind` if unset |
 
@@ -106,7 +106,7 @@ git clone https://github.com/muhammedsiinanmp/Devmind.git
 cd Devmind
 cp .env.example .env
 # Fill in the "Required" variables above and at least one LLM key.
-# Empty SENTRY_DSN_DJANGO / SENTRY_DSN_FASTAPI unless you use Sentry.
+# Sentry is off by default; set SENTRY_DSN_DJANGO / SENTRY_DSN_FASTAPI to enable it.
 ```
 
 ### Step 2: Start the backend stack
@@ -368,7 +368,7 @@ Test modules:
 
 | Area | Files |
 |---|---|
-| Accounts | `apps/accounts/tests/test_views.py`, `test_oauth.py`, `test_byok.py`, `test_base_url_ssrf.py`, `test_models.py` |
+| Accounts | `apps/accounts/tests/test_views.py`, `test_oauth.py`, `test_byok.py`, `test_base_url_ssrf.py`, `test_url_safety.py`, `test_models.py` |
 | Repositories | `apps/repositories/tests/test_webhooks.py`, `test_views.py`, `test_tasks.py`, `test_services.py`, `test_models.py`, `test_managers.py`, `test_admin.py` |
 | Reviews | `apps/reviews/tests/test_orchestrator.py`, `test_views.py`, `test_github_poster.py`, `test_kafka.py`, `test_models.py` |
 | Organizations | `apps/organizations/tests/test_views.py` |
@@ -404,11 +404,11 @@ pnpm lint
 
 ### Measured results
 
-These were measured locally on this branch. Coverage excludes `tests/`, `migrations/` and `conftest.py`.
+These were measured locally on this branch. Coverage method: `pytest --cov`, then `coverage report --omit='*/tests/*,*/migrations/*,*conftest.py'`, so test files, migrations and conftest are excluded. Including the test files would give a higher figure.
 
 | Suite | Result | Line coverage |
 |---|---|---|
-| Django | 252 passed | 83% |
+| Django | 258 passed | 83% |
 | FastAPI | 183 passed | 81% |
 | Frontend | `tsc`, `build` pass; `lint` 0 errors, 3 warnings | n/a |
 
