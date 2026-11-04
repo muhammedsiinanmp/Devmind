@@ -45,8 +45,6 @@ LOCAL_APPS = [
     "apps.accounts",
     "apps.repositories",
     "apps.reviews",
-    "apps.notifications",
-    "apps.analytics",
     "apps.core",
     "apps.organizations",
 ]
