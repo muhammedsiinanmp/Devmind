@@ -1,9 +1,15 @@
-from pydantic_settings import BaseSettings, SettingsConfigDict
+import os
 from functools import lru_cache
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Path of the dotenv file to read. Set DEVMIND_ENV_FILE="" to disable it
+# (the test suite does this so it never picks up real keys or Sentry DSNs).
+ENV_FILE = os.environ.get("DEVMIND_ENV_FILE", "../../.env") or None
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file="../../.env", extra="ignore")
+    model_config = SettingsConfigDict(env_file=ENV_FILE, extra="ignore")
 
     # Database
     fastapi_database_url: str = (
