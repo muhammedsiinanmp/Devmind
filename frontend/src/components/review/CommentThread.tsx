@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { CommentData } from "./CommentOverlay";
+import type { CommentData } from "./CommentOverlay";
 import { MessageSquare, FileCode, ChevronRight, XCircle, AlertTriangle, AlertCircle, Info } from "lucide-react";
 
 interface CommentThreadProps {

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { settingsApi, LLMProvider } from "../api/settings";
+import { settingsApi, type LLMProvider } from "../api/settings";
 import { Key, Trash2, Check, Plus, Loader2, X, AlertTriangle, Zap, ChevronDown } from "lucide-react";
 
 export default function Settings() {
