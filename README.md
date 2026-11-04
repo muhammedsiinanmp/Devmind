@@ -31,21 +31,18 @@ flowchart LR
 
     subgraph Workers["Celery"]
         CW[celery_worker]
-        CB[celery_beat]
     end
 
     FA[FastAPI :8001<br/>LangGraph review agent]
 
     PG[(PostgreSQL 16<br/>+ pgvector)]
     RD[(Redis)]
-    KF[Kafka]
     PR[Prometheus] --> GR[Grafana]
 
     FE -->|/api proxy| API
     GH -->|webhook| NGX --> API
     API -->|enqueue| RD
     RD --> CW
-    CB -->|scheduled tasks| RD
     CW -->|fetch diff, post comments| GH
     CW -->|POST /review/analyze<br/>X-Internal-Secret| FA
     FA -->|BYOK key lookup<br/>X-Internal-Secret| API
@@ -54,8 +51,6 @@ flowchart LR
     FA -->|rate-limit counters| RD
     API --- PG
     CW --- PG
-    CW -.->|review.completed| KF
-    API -.->|pr.opened| KF
     CW -.->|status updates| SB
     PR -->|scrape /metrics, /fastapi-metrics| NGX
 ```
@@ -111,8 +106,8 @@ Measured locally on this branch:
 
 | Suite | Tests | Line coverage |
 |---|---|---|
-| Django | 258 passed | 83% |
-| FastAPI | 183 passed | 81% |
+| Django | 244 passed | 83% |
+| FastAPI | 176 passed | 81% |
 
 Coverage method: `pytest --cov`, then `coverage report --omit='*/tests/*,*/migrations/*,*conftest.py'`, so test files, migrations and conftest are excluded. Including the test files would give a higher figure.
 
@@ -123,12 +118,11 @@ CI doesn't enforce a coverage threshold. The frontend has no automated tests.
 | Layer | Technology |
 |---|---|
 | API, auth, orchestration | Django 5, Django REST Framework, SimpleJWT (rotating refresh tokens with blacklist), drf-spectacular |
-| Background work | Celery 5 with Redis broker, django-celery-beat |
+| Background work | Celery 5 with Redis broker and result backend |
 | AI service | FastAPI 0.111, LangGraph, SQLAlchemy (async) + asyncpg, tiktoken |
 | Retrieval | PostgreSQL 16 + pgvector (`Vector(768)`), Google `text-embedding-004` embeddings |
-| Events | Kafka 3.7 (KRaft) via confluent-kafka, fire-and-forget |
 | Frontend | React 19, TypeScript 6, Vite 8, Tailwind CSS 4, Zustand, React Router 7, axios |
-| Observability | django-prometheus, prometheus-fastapi-instrumentator, Prometheus, Grafana, Flower, optional Sentry |
+| Observability | django-prometheus and prometheus-fastapi-instrumentator (HTTP request metrics) plus three FastAPI review metrics, Prometheus, a provisioned Grafana dashboard, Flower, optional Sentry |
 | Tooling | Python 3.12, uv, pnpm, Docker Compose, GitHub Actions |
 
 ## Quick start (local development)
@@ -143,13 +137,12 @@ cp .env.example .env
 #    and at least one of GOOGLE_AI_API_KEY / GROQ_API_KEY / GITHUB_TOKEN.
 #    Sentry is off by default; set SENTRY_DSN_DJANGO / SENTRY_DSN_FASTAPI to enable it.
 
-# 2. Start the backend stack (Postgres, Redis, Kafka, Django, FastAPI,
-#    Celery worker + beat, Flower, Nginx, Prometheus, Grafana)
+# 2. Start the backend stack (Postgres, Redis, Django, FastAPI,
+#    Celery worker, Flower, Nginx, Prometheus, Grafana)
 docker compose up -d --build
 
-# 3. Apply migrations, then restart beat (it exits if its tables don't exist yet)
+# 3. Apply migrations
 docker compose exec django uv run python manage.py migrate
-docker compose restart celery_beat
 
 # 4. Enable the pgvector extension (no migration does this yet)
 docker compose exec postgres psql -U devmind -c "CREATE EXTENSION IF NOT EXISTS vector;"
@@ -214,7 +207,6 @@ All services read the root `.env` (template: [.env.example](.env.example)). Thes
 | `DEVMIND_PUBLIC_URL` | Django | Base URL that installed GitHub webhooks point to |
 | `GOOGLE_AI_API_KEY`, `GROQ_API_KEY`, `GITHUB_TOKEN` | FastAPI | Server LLM providers. The Google key is also used for embeddings. |
 | `DJANGO_BASE_URL` | FastAPI | Where FastAPI fetches BYOK configs from |
-| `KAFKA_BOOTSTRAP_SERVERS` | Django | Leave empty to turn off Kafka events |
 | `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` | Django | Optional review status push. Leave empty to turn it off. |
 
 [docs/ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md) lists every variable.
@@ -237,12 +229,12 @@ All routes are under `/api/v1/` and need `Authorization: Bearer <access token>` 
 
 ```
 backend/
-  django/            Django project (devmind/ settings, urls, celery, kafka)
+  django/            Django project (devmind/ settings, urls, celery)
     apps/accounts/   GitHub OAuth, users, encrypted tokens, BYOK LLM configs
     apps/repositories/  repo sync, webhook install + receiver
     apps/reviews/    Review models, orchestrator, GitHub comment poster, scans
     apps/organizations/ organizations, members, invites
-    apps/core/       Prometheus metric definitions, logging
+    apps/core/       structlog configuration
     realtime/        Channels consumers and JWT query-string auth
     tests/           end-to-end pipeline test
   fastapi/           AI service
@@ -263,7 +255,6 @@ These are current gaps in the code, listed so nobody has to find them by surpris
 - **No pgvector setup.** Nothing creates the `vector` extension or the `code_embeddings` / `review_embeddings` tables. On a fresh database, FastAPI `/health` returns 503 until the extension is enabled. Until the tables exist, embedding storage and similarity search fail (logged), and reviews run without retrieved context.
 - **`GET /api/v1/auth/github/token/` sends the user's decrypted GitHub token to the browser.** The frontend also keeps JWTs in `localStorage`.
 - **Repository scans never complete in Django.** Django starts a scan on FastAPI but never reads the result back, so `RepoScan` rows stay in `scanning`. FastAPI holds scan progress in process memory.
-- **Most dashboards are empty.** The custom `devmind_*` Prometheus metrics in `apps/core/metrics.py` are defined but never recorded, so the provisioned Grafana dashboard has no data. FastAPI records a few of its own metrics in `routers/review.py`.
 - **Token counts are always zero.** FastAPI doesn't return token counts, so `ReviewRun.prompt_tokens` and `completion_tokens` stay at 0.
 - **Anthropic keys aren't used for reviews.** They can be saved and validated, but the FastAPI client sends only OpenAI-compatible `/chat/completions` requests, so it skips them.
 - **The frontend has no tests.**

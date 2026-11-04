@@ -10,12 +10,10 @@ The React single-page app for DevMind. You use it to sign in with GitHub, sync r
 | Build / dev server | Vite 8 (`@vitejs/plugin-react`) |
 | Styling | Tailwind CSS 4 (via `@tailwindcss/postcss`), `lucide-react` icons |
 | Routing | React Router 7 |
-| State | Zustand (`src/store/`) |
+| State | Zustand (auth store in `src/store/index.ts`) |
 | HTTP | axios (`src/api/client.ts`) |
 | Diff rendering | `react-diff-viewer-continued` |
 | Lint | ESLint 9 with `typescript-eslint`, `react-hooks`, `react-refresh` |
-
-`package.json` also lists `@tanstack/react-query`, `@supabase/supabase-js`, `@radix-ui/*` and `msw`, but nothing in `src/` imports them yet.
 
 ## Scripts
 
@@ -41,7 +39,7 @@ CI (`.github/workflows/ci.yml`) runs `pnpm exec tsc -p tsconfig.app.json --noEmi
 
 ## Environment variables
 
-The app reads no environment variables: nothing in `src/` uses `import.meta.env`. `src/vite-env.d.ts` declares `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` types, but no code uses them.
+The app reads no environment variables: nothing in `src/` uses `import.meta.env`.
 
 ## Pages
 

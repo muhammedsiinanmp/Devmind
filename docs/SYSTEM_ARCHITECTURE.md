@@ -39,11 +39,9 @@ Services defined in `docker-compose.yml`:
 | `django` | `backend/django` (dev target, `runserver`) | 8000 | REST API, OAuth, webhook receiver |
 | `fastapi` | `backend/fastapi` (dev target, `uvicorn --reload`) | 8001 | AI service |
 | `celery_worker` | same image as Django | - | Consumes queues `default`, `review`, `notifications` |
-| `celery_beat` | same image as Django | - | Beat with `django_celery_beat` DatabaseScheduler |
-| `flower` | `mher/flower:2.0` | 5555 | Celery monitor UI |
+| `flower` | `mher/flower:2.0` | 5555 | Celery monitor UI, on the same `CELERY_BROKER_URL` as the worker |
 | `postgres` | `pgvector/pgvector:pg16` | 5432 | Primary datastore; pgvector extension available |
 | `redis` | `redis:7-alpine` | 6379 | Cache, channel layer, Celery broker/results, LLM rate limiter |
-| `kafka` | `apache/kafka:3.7.0` (KRaft) | 9092, 9093 | Event topics `devmind.pr.opened`, `devmind.review.completed` |
 | `prometheus` | `prom/prometheus:latest` | 9090 | Scrapes Django and FastAPI via Nginx; 15-day retention |
 | `grafana` | `grafana/grafana:latest` | 3000 | Provisioned Prometheus datasource and `devmind-overview` dashboard |
 
@@ -59,7 +57,7 @@ Defaults from `.env.example` and `devmind/settings/base.py`:
 | 1 (`CELERY_BROKER_URL`) | Celery | Task broker |
 | 2 (`CELERY_RESULT_BACKEND`) | Celery | Result backend |
 
-Compose starts Flower with `--broker=redis://redis:6379/0`, which isn't the broker database the workers use by default (db 1).
+Flower reads `CELERY_BROKER_URL` too, so it watches the same broker database as the worker.
 
 ---
 
@@ -82,7 +80,7 @@ Docker network (internal calls)
     FastAPI       -> Django   :8000/api/v1/auth/internal/llm-configs/ (X-Internal-Secret)
     FastAPI       -> Postgres :5432  (asyncpg, pgvector)
     FastAPI       -> Redis    :6379/0 (rate limiter)
-    Django/Celery -> Postgres :5432, Redis, Kafka :9092
+    Django/Celery -> Postgres :5432, Redis
     Celery worker -> GitHub API (diff fetch, comment posting, repo sync, webhook install)
 ```
 
@@ -102,12 +100,10 @@ sequenceDiagram
     participant CW as Celery worker
     participant FA as FastAPI
     participant PG as PostgreSQL
-    participant KF as Kafka
 
     GH->>DJ: POST /api/v1/webhooks/github/ (X-Hub-Signature-256)
     DJ->>DJ: verify HMAC-SHA256 (403 if missing, wrong, or no secret configured)
     DJ->>RD: enqueue repositories.trigger_review (queue "review")
-    DJ->>KF: produce devmind.pr.opened (fire-and-forget)
     DJ-->>GH: 200 {"status": "accepted"}
 
     CW->>PG: Review exists for (repo, pr_number, head_sha)?
@@ -126,7 +122,6 @@ sequenceDiagram
     CW->>PG: INSERT ReviewRun (+ diff_text) and ReviewComment rows
     CW->>PG: Review.status = completed, risk_score, summary, completed_at
     CW->>RD: enqueue post_github_comments_task
-    CW->>KF: produce devmind.review.completed (fire-and-forget)
 
     CW->>GH: POST /repos/{owner}/{repo}/pulls/{pr}/reviews (event COMMENT)
 ```
@@ -487,7 +482,6 @@ stateDiagram-v2
 | Redis unavailable (FastAPI) | Rate limiter logs and lets the request through |
 | Channels push fails | Caught and logged |
 | Supabase unavailable | Caught and logged; review continues |
-| Kafka unavailable or `KAFKA_BOOTSTRAP_SERVERS` empty | Producer not created or produce fails; logged; review completes |
 | An LLM provider fails | Next provider in the chain; all failed means FastAPI returns 429 and the review fails |
 | Embedding/search fails | Logged; review runs without retrieved context |
 
@@ -501,7 +495,7 @@ Routes from `CELERY_TASK_ROUTES` in `base.py`:
 | `default` | `apps.reviews.tasks.trigger_review_task`, `post_github_comments_task`, `full_repo_scan_task`, `cleanup_old_reviews`, `repositories.initial_sync`, `install_webhook`, `remove_webhook`, organization tasks; also the default for unrouted tasks |
 | `notifications` | Consumed by the worker; no task is currently routed to it |
 
-Beat uses the database scheduler. No periodic tasks are defined in code, so `cleanup_old_reviews` runs only if someone schedules it (for example, in the Django admin).
+There is no Celery beat service, so `cleanup_old_reviews` runs only if someone calls it.
 
 ---
 
@@ -516,11 +510,13 @@ Beat uses the database scheduler. No periodic tasks are defined in code, so `cle
 
 `prometheus/prometheus.yml` scrapes both through `nginx:80` every 15 seconds.
 
-Custom metrics:
+Recorded metrics:
 
-- **Django** (`apps/core/metrics.py`) defines `devmind_*` counters, histograms and gauges, but no code records them.
-- **FastAPI** (`core/metrics.py`): `routers/review.py` records `agent_iterations_total`, `rag_pipeline_duration_ms` and `review_errors_total`. The other FastAPI metrics aren't recorded.
-- **Grafana:** the provisioned dashboard (`grafana/provisioning/dashboards/devmind-overview.json`) queries only `devmind_*` series, so its panels are empty.
+- **Django:** only the HTTP metrics from django-prometheus (for example `django_http_requests_total_by_view_transport_method_total` and `django_http_requests_latency_seconds_by_view_method`). Django defines no custom metrics.
+- **FastAPI HTTP:** `http_requests_total` and `http_request_duration_seconds` from the instrumentator.
+- **FastAPI custom** (`core/metrics.py`, recorded in `routers/review.py`): `agent_iterations_total` (one per `POST /review/analyze`), `rag_pipeline_duration_ms` (successful reviews only) and `review_errors_total` by `error_type`.
+
+**Grafana:** the provisioned "DevMind Overview" dashboard (`grafana/provisioning/dashboards/devmind-overview.json`) charts Django and FastAPI request rate and p50/p95/p99 latency, plus the three FastAPI review metrics. There are no Celery or LLM-token metrics.
 
 ### Logging
 
@@ -596,7 +592,7 @@ When a user creates a config, `_validate_provider_key` sends `GET <base>/models`
 
 **Why:** A review involves several LLM calls and can take much longer than a webhook delivery should wait. Queuing lets the webhook return immediately and keeps slow reviews from tying up web workers.
 
-**Tradeoffs:** another moving part (broker, workers, beat), and results reach the UI only when it fetches them.
+**Tradeoffs:** another moving part (broker and workers), and results reach the UI only when it fetches them.
 
 ### LangGraph for the review agent
 
@@ -621,14 +617,6 @@ When a user creates a config, `_validate_provider_key` sends `GET <base>/models`
 **Why:** Each uvicorn worker has its own memory, so in-process counters would let every worker use the full provider limit.
 
 **Tradeoffs:** If Redis fails, rate limiting turns off. Over-limit calls sleep until the next minute instead of trying another provider.
-
-### Kafka for domain events
-
-**What:** Django produces `devmind.pr.opened` and `devmind.review.completed`.
-
-**Why:** Other services can consume these events later without changes to the review pipeline.
-
-**Tradeoffs:** Kafka is heavy to run for two topics with no consumers in this repo yet. Producing is fire-and-forget, so events can be lost when Kafka is down.
 
 ### Storing the diff in `ReviewRun.diff_text`
 
