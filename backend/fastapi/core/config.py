@@ -16,13 +16,6 @@ class Settings(BaseSettings):
         "postgresql+asyncpg://devmind:devmind_secret@postgres:5432/devmind"
     )
 
-    # OpenAI
-    openai_api_key: str = ""
-    openai_model: str = "gpt-4o"
-    openai_embedding_model: str = "text-embedding-3-small"
-    openai_max_tokens: int = 4096
-    openai_temperature: float = 0.2
-
     # LLM Client (Google, Groq, GitHub)
     google_ai_api_key: str = ""
     groq_api_key: str = ""

@@ -201,10 +201,6 @@ FASTAPI_BASE_URL = env("FASTAPI_BASE_URL", default="http://fastapi:8001")
 FASTAPI_INTERNAL_SECRET = env("FASTAPI_INTERNAL_SECRET", default="")
 FASTAPI_TIMEOUT_SECONDS = env.int("FASTAPI_TIMEOUT_SECONDS", default=60)
 
-# OpenAI
-OPENAI_API_KEY = env("OPENAI_API_KEY", default="")
-OPENAI_MODEL = env("OPENAI_MODEL", default="gpt-4o")
-
 # Sentry
 SENTRY_DSN = env("SENTRY_DSN_DJANGO", default="")
 if SENTRY_DSN:
