@@ -1,73 +1,62 @@
-# React + TypeScript + Vite
+# DevMind frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+The React single-page app for DevMind. You use it to sign in with GitHub, sync repositories and turn reviews on or off, browse AI reviews with a diff viewer, view scan reports and manage your own LLM provider keys (BYOK).
 
-Currently, two official plugins are available:
+## Stack
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+| Concern | Library |
+|---|---|
+| UI | React 19, TypeScript 6 |
+| Build / dev server | Vite 8 (`@vitejs/plugin-react`) |
+| Styling | Tailwind CSS 4 (via `@tailwindcss/postcss`), `lucide-react` icons |
+| Routing | React Router 7 |
+| State | Zustand (`src/store/`) |
+| HTTP | axios (`src/api/client.ts`) |
+| Diff rendering | `react-diff-viewer-continued` |
+| Lint | ESLint 9 with `typescript-eslint`, `react-hooks`, `react-refresh` |
 
-## React Compiler
+`package.json` also lists `@tanstack/react-query`, `@supabase/supabase-js`, `@radix-ui/*` and `msw`, but nothing in `src/` imports them yet.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Scripts
 
-## Expanding the ESLint configuration
+Requires Node.js 20 and pnpm 9, the versions used in CI.
 
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+pnpm install --frozen-lockfile
+pnpm dev        # Vite dev server on http://localhost:5173 (binds 0.0.0.0)
+pnpm build      # tsc -b && vite build -> dist/
+pnpm lint       # eslint .
+pnpm preview    # serve the production build locally
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+CI (`.github/workflows/ci.yml`) runs `pnpm exec tsc -p tsconfig.app.json --noEmit`, `pnpm build` and `pnpm lint`. There are no automated frontend tests.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## How it talks to the backend
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-```
+- **Django only.** All requests go to Django under `/api/v1` (axios `baseURL: '/api/v1'`). The frontend never calls the FastAPI service.
+- **Dev proxy.** In development, `vite.config.ts` proxies `/api` to `http://localhost:8000` (the Django container from the root `docker-compose.yml`) and `/ws` to `ws://localhost:8000`. Start the backend stack first; see the [root README](../README.md).
+- **Sign-in.** `Login` calls `GET /api/v1/auth/github/start/` and redirects to the returned GitHub URL. GitHub sends the user back to `/auth/callback`, which calls `GET /api/v1/auth/github/callback/?code=&state=` and stores the returned `access` / `refresh` JWTs in `localStorage`. The GitHub OAuth App's callback URL must be `http://localhost:5173/auth/callback`.
+- **Auth headers.** An axios request interceptor adds `Authorization: Bearer <access>`. On a 401 it calls `POST /api/v1/auth/token/refresh/` once, queues other requests until the refresh finishes, and sends the user to `/login` if the refresh fails.
+- **Live status.** `ReviewStatus` tries a WebSocket at `/ws/reviews/<id>/?token=<access>`. The backend doesn't serve WebSockets at present, so the component falls back to showing the status from the API.
+
+## Environment variables
+
+The app reads no environment variables: nothing in `src/` uses `import.meta.env`. `src/vite-env.d.ts` declares `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` types, but no code uses them.
+
+## Pages
+
+Routes come from `src/App.tsx`. Every route except `/login` and `/auth/callback` requires sign-in.
+
+| Route | Page |
+|---|---|
+| `/login`, `/auth/callback` | GitHub sign-in |
+| `/`, `/dashboard` | Review list |
+| `/reviews/:id` | Review detail with diff and inline comments |
+| `/repositories` | Connected repositories, GitHub sync, per-repo review toggle |
+| `/scans/:id` | Scan status/report, with a re-scan button |
+| `/settings` | BYOK LLM provider management |
+| `/analytics` | Placeholder ("Coming Soon") |
+
+## Docker
+
+`Dockerfile` has a `dev` target (`pnpm dev --host`) and a `production-serve` target that builds the app and serves `dist/` with `nginx:alpine`. The root `docker-compose.yml` doesn't use it.
