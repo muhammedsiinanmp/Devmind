@@ -1,3 +1,4 @@
+import hmac
 import logging
 
 from django.conf import settings
@@ -446,7 +447,9 @@ class InternalLLMConfigListView(APIView):
     def get(self, request: Request) -> Response:
         internal_secret = request.headers.get("X-Internal-Secret", "")
         expected = getattr(settings, "FASTAPI_INTERNAL_SECRET", "")
-        if not expected or internal_secret != expected:
+        if not expected or not hmac.compare_digest(
+            internal_secret.encode(), expected.encode()
+        ):
             return Response({"error": "forbidden"}, status=status.HTTP_403_FORBIDDEN)
 
         user_id = request.query_params.get("user_id")
