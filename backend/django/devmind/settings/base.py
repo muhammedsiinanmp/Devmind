@@ -186,9 +186,6 @@ CELERY_RESULT_EXTENDED = True
 # but the worker listens to "default,review,notifications" — not "celery".
 CELERY_TASK_DEFAULT_QUEUE = "default"
 
-# Kafka
-KAFKA_BOOTSTRAP_SERVERS = env("KAFKA_BOOTSTRAP_SERVERS", default="")
-
 # GitHub
 GITHUB_CLIENT_ID = env("GITHUB_CLIENT_ID", default="")
 GITHUB_CLIENT_SECRET = env("GITHUB_CLIENT_SECRET", default="")

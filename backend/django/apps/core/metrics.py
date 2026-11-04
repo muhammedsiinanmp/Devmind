@@ -67,18 +67,6 @@ github_comments_posted_total = Counter(
     ["status"],
 )
 
-kafka_messages_produced_total = Counter(
-    "devmind_kafka_messages_produced_total",
-    "Total Kafka messages produced",
-    ["topic", "status"],
-)
-
-kafka_messages_consumed_total = Counter(
-    "devmind_kafka_messages_consumed_total",
-    "Total Kafka messages consumed",
-    ["topic", "status"],
-)
-
 error_count_total = Counter(
     "devmind_error_count_total",
     "Total number of errors",

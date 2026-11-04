@@ -117,7 +117,6 @@ class ReviewOrchestrator:
             )
             self._push_status_to_supabase("completed")
             self._trigger_github_post()
-            self._produce_kafka_event()
 
             return result
 
@@ -303,34 +302,6 @@ class ReviewOrchestrator:
         except Exception as e:
             logger.error(
                 "orchestrator.github_post_failed review_id=%d error=%s",
-                self.review.pk,
-                str(e),
-            )
-
-    def _produce_kafka_event(self) -> None:
-        """Produce review.completed event to Kafka (fire-and-forget)."""
-        try:
-            from devmind.kafka import produce, TOPIC_REVIEW_COMPLETED
-
-            payload = {
-                "review_id": self.review.pk,
-                "repository_full_name": self.review.repository.full_name,
-                "pr_number": self.review.pr_number,
-                "pr_title": self.review.pr_title,
-                "head_sha": self.review.head_sha,
-                "status": self.review.status,
-                "risk_score": self.review.risk_score,
-                "summary": self.review.summary,
-                "completed_at": (
-                    self.review.completed_at.isoformat()
-                    if self.review.completed_at
-                    else None
-                ),
-            }
-            produce(TOPIC_REVIEW_COMPLETED, payload)
-        except Exception as e:
-            logger.error(
-                "orchestrator.kafka_event_failed review_id=%d error=%s",
                 self.review.pk,
                 str(e),
             )
