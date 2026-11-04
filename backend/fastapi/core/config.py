@@ -46,10 +46,6 @@ class Settings(BaseSettings):
     review_rate_limit_per_hour: int = 20
     redis_url: str = "redis://redis:6379/0"
 
-    # Supabase (for BYOK reviews storage)
-    supabase_url: str = ""
-    supabase_service_key: str = ""
-
 
 @lru_cache
 def get_settings() -> Settings:
