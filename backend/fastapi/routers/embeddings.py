@@ -6,14 +6,11 @@ Endpoints for storing and searching code embeddings.
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
-from typing import Optional
 
-from core.database import AsyncSessionLocal
 from core.security import verify_internal_token
 from services.vector_store import (
     vector_store,
     VectorStoreError,
-    SimilarChunk,
 )
 
 # Internal-only: called by the Django backend, never by browsers.

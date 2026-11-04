@@ -2,7 +2,6 @@
 Pydantic models for review API.
 """
 
-from typing import Any
 from pydantic import BaseModel, Field
 
 

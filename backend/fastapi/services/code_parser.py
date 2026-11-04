@@ -5,7 +5,7 @@ Parses unified diff format and extracts language, changes, and context.
 """
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional
 
 

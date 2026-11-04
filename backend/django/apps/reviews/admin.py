@@ -1,5 +1,4 @@
 from django.contrib import admin
-from django.db.models import QuerySet
 from django.utils.html import format_html
 
 from apps.reviews.models import RepoScan, Review, ReviewComment, ReviewRun

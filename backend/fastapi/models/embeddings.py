@@ -5,7 +5,7 @@ SQLAlchemy models for code embeddings with pgvector.
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import BigInteger, DateTime, Index, Integer, String, Text
+from sqlalchemy import BigInteger, DateTime, Index, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 

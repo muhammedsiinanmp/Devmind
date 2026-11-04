@@ -1,5 +1,3 @@
-from typing import Any
-
 from rest_framework import serializers
 
 from apps.accounts.serializers import UserSerializer

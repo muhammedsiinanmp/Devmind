@@ -2,10 +2,7 @@
 Tests for code parser - additional edge cases.
 """
 
-import pytest
-
 from services.code_parser import (
-    DiffChunk,
     detect_language,
     chunk_into_functions,
     parse_diff,

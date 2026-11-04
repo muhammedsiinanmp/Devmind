@@ -2,9 +2,6 @@
 Tests for prompt builder service.
 """
 
-import pytest
-from unittest.mock import patch
-
 from services.prompt_builder import (
     PromptContext,
     REVIEW_SYSTEM_PROMPT,

@@ -7,7 +7,6 @@ Wires: parse diff → embed → similarity search → build prompt → review ag
 import time
 import asyncio
 import logging
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 

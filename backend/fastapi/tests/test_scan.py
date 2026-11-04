@@ -2,8 +2,6 @@
 Tests for scan endpoints.
 """
 
-import pytest
-from unittest.mock import patch, AsyncMock
 from fastapi.testclient import TestClient
 
 from core.config import get_settings
@@ -165,7 +163,7 @@ class TestScanQualityPatterns:
 
         content = "\n".join(
             [
-                f"def long_function():\n    pass" if i == 0 else f"    x = {i}"
+                "def long_function():\n    pass" if i == 0 else f"    x = {i}"
                 for i in range(55)
             ]
         )

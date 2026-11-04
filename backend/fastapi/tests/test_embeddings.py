@@ -107,7 +107,6 @@ class TestEmbeddingsEndpoints:
 
     @pytest.mark.asyncio
     async def test_search_get_vector_store_error(self):
-        from routers.embeddings import SearchRequest
         from services.vector_store import VectorStoreError
 
         mock_session = AsyncMock()
