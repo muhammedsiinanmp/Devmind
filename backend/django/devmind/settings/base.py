@@ -33,8 +33,6 @@ THIRD_PARTY_APPS = [
     "rest_framework_simplejwt",
     "rest_framework_simplejwt.token_blacklist",
     "corsheaders",
-    "django_celery_beat",
-    "django_celery_results",
     "channels",
     "django_filters",
     "django_prometheus",
@@ -180,7 +178,6 @@ CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = "UTC"
-CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
 CELERY_RESULT_EXTENDED = True
 # Without this, tasks with no explicit queue go to the built-in "celery" queue,
 # but the worker listens to "default,review,notifications" — not "celery".

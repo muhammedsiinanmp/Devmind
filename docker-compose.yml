@@ -73,19 +73,6 @@ services:
       - redis
       - postgres
 
-  celery_beat:
-    build:
-      context: ./backend/django
-      target: dev
-    command: uv run celery -A devmind beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
-    volumes:
-      - ./backend/django:/app
-      - /app/.venv
-    env_file: .env
-    depends_on:
-      - redis
-      - postgres
-
   flower:
     image: mher/flower:2.0
     command: celery --broker=redis://redis:6379/0 flower --port=5555
