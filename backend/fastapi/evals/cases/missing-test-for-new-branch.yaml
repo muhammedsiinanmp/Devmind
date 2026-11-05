@@ -1,0 +1,28 @@
+# Synthetic eval case written for DevMind. Line numbers are new-file lines.
+id: missing-test-for-new-branch
+description: New early-return branch for zero quantity is not covered by the tests changed in the same diff.
+diff: |
+  diff --git a/cart/pricing.py b/cart/pricing.py
+  --- a/cart/pricing.py
+  +++ b/cart/pricing.py
+  @@ -8,3 +8,5 @@
+   def line_total(price_cents, quantity, discount=0):
+  +    if quantity <= 0:
+  +        raise ValueError("quantity must be positive")
+       total = price_cents * quantity
+       return max(0, total - discount)
+  diff --git a/tests/test_pricing.py b/tests/test_pricing.py
+  --- a/tests/test_pricing.py
+  +++ b/tests/test_pricing.py
+  @@ -3,2 +3,6 @@
+   def test_line_total_applies_discount():
+       assert line_total(500, 2, discount=100) == 900
+  +
+  +
+  +def test_line_total_never_negative():
+  +    assert line_total(100, 1, discount=500) == 0
+expected:
+- file: cart/pricing.py
+  line_range: [9, 10]
+  category: tests
+  min_severity: info

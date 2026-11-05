@@ -1,0 +1,15 @@
+# Synthetic eval case written for DevMind. Line numbers are new-file lines.
+id: clean-type-hints
+description: Adds type hints to an existing function.
+diff: |
+  diff --git a/inventory/stock.py b/inventory/stock.py
+  --- a/inventory/stock.py
+  +++ b/inventory/stock.py
+  @@ -10,5 +10,5 @@
+  -def reserve(stock, sku, qty):
+  +def reserve(stock: dict[str, int], sku: str, qty: int) -> bool:
+       if stock.get(sku, 0) < qty:
+           return False
+       stock[sku] -= qty
+       return True
+expected: []  # clean diff: no findings expected

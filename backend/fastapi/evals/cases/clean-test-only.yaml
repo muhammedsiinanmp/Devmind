@@ -1,0 +1,15 @@
+# Synthetic eval case written for DevMind. Line numbers are new-file lines.
+id: clean-test-only
+description: Adds a regression test; no production code changes.
+diff: |
+  diff --git a/tests/test_window.py b/tests/test_window.py
+  --- a/tests/test_window.py
+  +++ b/tests/test_window.py
+  @@ -6,2 +6,6 @@
+   def test_moving_sum_basic():
+       assert moving_sum([1, 2, 3, 4], 2) == [3, 5, 7]
+  +
+  +
+  +def test_moving_sum_width_equals_length():
+  +    assert moving_sum([1, 2, 3], 3) == [6]
+expected: []  # clean diff: no findings expected

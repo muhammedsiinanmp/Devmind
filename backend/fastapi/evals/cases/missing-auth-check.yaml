@@ -1,0 +1,24 @@
+# Synthetic eval case written for DevMind. Line numbers are new-file lines.
+id: missing-auth-check
+description: New delete endpoint does not check that the caller owns the project.
+diff: |
+  diff --git a/api/projects.py b/api/projects.py
+  --- a/api/projects.py
+  +++ b/api/projects.py
+  @@ -40,5 +40,11 @@
+   @router.get("/projects/{project_id}")
+   def read_project(project_id: int, user=Depends(current_user)):
+       project = store.get(project_id)
+       require_owner(project, user)
+       return project
+  +
+  +@router.delete("/projects/{project_id}")
+  +def delete_project(project_id: int, user=Depends(current_user)):
+  +    project = store.get(project_id)
+  +    store.delete(project)
+  +    return {"deleted": project_id}
+expected:
+- file: api/projects.py
+  line_range: [46, 50]
+  category: security
+  min_severity: error

@@ -1,0 +1,19 @@
+# Synthetic eval case written for DevMind. Line numbers are new-file lines.
+id: xss-innerhtml
+description: User-supplied comment text is written with innerHTML.
+diff: |
+  diff --git a/web/src/comments.js b/web/src/comments.js
+  --- a/web/src/comments.js
+  +++ b/web/src/comments.js
+  @@ -14,5 +14,5 @@
+   export function renderComment(container, comment) {
+     const el = document.createElement("li");
+  -  el.textContent = comment.text;
+  +  el.innerHTML = `<b>${comment.author}</b>: ${comment.text}`;
+     container.appendChild(el);
+   }
+expected:
+- file: web/src/comments.js
+  line_range: [16, 16]
+  category: security
+  min_severity: error

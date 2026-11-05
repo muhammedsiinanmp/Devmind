@@ -1,0 +1,17 @@
+# Synthetic eval case written for DevMind. Line numbers are new-file lines.
+id: jwt-signature-disabled
+description: Token decode skips signature verification.
+diff: |
+  diff --git a/auth/tokens.py b/auth/tokens.py
+  --- a/auth/tokens.py
+  +++ b/auth/tokens.py
+  @@ -11,3 +11,3 @@
+   def user_id_from_token(token):
+  -    claims = jwt.decode(token, SECRET, algorithms=["HS256"])
+  +    claims = jwt.decode(token, options={"verify_signature": False})
+       return claims["sub"]
+expected:
+- file: auth/tokens.py
+  line_range: [12, 12]
+  category: security
+  min_severity: error

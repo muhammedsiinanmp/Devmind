@@ -1,0 +1,14 @@
+# Synthetic eval case written for DevMind. Line numbers are new-file lines.
+id: clean-parameterized-query
+description: Replaces string formatting with a parameterized query.
+diff: |
+  diff --git a/shop/repository.py b/shop/repository.py
+  --- a/shop/repository.py
+  +++ b/shop/repository.py
+  @@ -20,4 +20,4 @@
+   def find_order(conn, order_id):
+       cur = conn.cursor()
+  -    cur.execute("SELECT * FROM orders WHERE id = %d" % order_id)
+  +    cur.execute("SELECT * FROM orders WHERE id = %s", (order_id,))
+       return cur.fetchone()
+expected: []  # clean diff: no findings expected

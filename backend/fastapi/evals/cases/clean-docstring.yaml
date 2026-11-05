@@ -1,0 +1,12 @@
+# Synthetic eval case written for DevMind. Line numbers are new-file lines.
+id: clean-docstring
+description: Adds a docstring.
+diff: |
+  diff --git a/geo/distance.py b/geo/distance.py
+  --- a/geo/distance.py
+  +++ b/geo/distance.py
+  @@ -7,2 +7,3 @@
+   def manhattan(a, b):
+  +    """Return the Manhattan distance between two (x, y) points."""
+       return abs(a[0] - b[0]) + abs(a[1] - b[1])
+expected: []  # clean diff: no findings expected

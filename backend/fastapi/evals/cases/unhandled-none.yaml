@@ -1,0 +1,18 @@
+# Synthetic eval case written for DevMind. Line numbers are new-file lines.
+id: unhandled-none
+description: dict.get result is dereferenced without a None check.
+diff: |
+  diff --git a/accounts/profile.py b/accounts/profile.py
+  --- a/accounts/profile.py
+  +++ b/accounts/profile.py
+  @@ -12,3 +12,3 @@
+   def display_name(users, user_id):
+  -    user = users[user_id]
+  -    return user.full_name
+  +    user = users.get(user_id)
+  +    return user.full_name.title()
+expected:
+- file: accounts/profile.py
+  line_range: [13, 14]
+  category: quality
+  min_severity: warning

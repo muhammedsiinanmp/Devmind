@@ -1,0 +1,19 @@
+# Synthetic eval case written for DevMind. Line numbers are new-file lines.
+id: off-by-one-range
+description: Loop runs one index past the end of the list.
+diff: |
+  diff --git a/stats/window.py b/stats/window.py
+  --- a/stats/window.py
+  +++ b/stats/window.py
+  @@ -5,5 +5,5 @@
+   def moving_sum(values, width):
+       totals = []
+  -    for i in range(len(values) - width + 1):
+  +    for i in range(len(values) - width + 2):
+           totals.append(sum(values[i : i + width]))
+       return totals
+expected:
+- file: stats/window.py
+  line_range: [7, 8]
+  category: quality
+  min_severity: warning
