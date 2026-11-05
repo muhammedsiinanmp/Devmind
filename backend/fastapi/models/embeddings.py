@@ -47,6 +47,14 @@ class CodeEmbedding(Base):
             "ix_code_embeddings_language",
             "language",
         ),
+        # Serves ORDER BY cosine distance in similarity search. Also created
+        # by migrations/sql/0002_code_embeddings_hnsw_index.sql.
+        Index(
+            "ix_code_embeddings_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
     )
 
 
