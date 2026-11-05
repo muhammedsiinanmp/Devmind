@@ -87,15 +87,16 @@ The full design, including [architectural decisions and their trade-offs](docs/S
 
 ## Engineering highlights
 
-**LangGraph review agent** (`backend/fastapi/agents/review_agent.py`). The agent is a 7-node `StateGraph`:
+**LangGraph review agent** (`backend/fastapi/agents/review_agent.py`). The agent is a 4-node `StateGraph`:
 
 ```
-fetch_conventions -> [analyze_security | analyze_quality | analyze_tests] -> synthesize -> generate_fixes -> format_output
+START -> [analyze_security | analyze_quality | analyze_tests] -> synthesize -> END
 ```
 
-- The three analyzers run as parallel branches. A custom list reducer (`_extend_list` in `agents/states.py`) merges their results; without it, a later branch would overwrite an earlier one.
-- `synthesize` removes duplicates (same file, line and category) and sorts by severity.
-- `format_output` computes a confidence score from the number of findings relative to the diff size. If the score is below 0.7, the graph goes back to the start, up to 3 passes in total.
+- The three analyzers run as parallel branches, one LLM call each, so a review normally makes 3 LLM calls. The prompt asks for only a JSON list, and for `[]` when there are no issues. An analyzer repeats its call once only if the model's response can't be parsed, adding a turn that asks for only the JSON list. An empty list of findings (also `{}` or `{"issues": null}`) is a valid result and is not retried.
+- Each analyzer records its model, latency, token counts, attempts and whether its reply parsed in `analyzer_runs` (merged by the `_merge_dict` reducer in `agents/states.py`), and `POST /review/analyze` returns it.
+- `synthesize` removes duplicates (same file, line and category), sorts by severity and sets `model_used` from the security, quality and tests analyzers in that order, so it doesn't depend on which branch finished last.
+- The risk score is driven by the worst finding: a base for the highest severity (critical 70, error 45, warning 20, info 5) plus 3 for each other finding above info, at most +15, so the maximum is 85.
 - The LLM output parser handles several formats: bare JSON, JSON inside markdown fences, JSON wrapped in an object, and JSON with prose around it. Each comment is then validated with Pydantic.
 
 **Line-anchored comments** (`backend/fastapi/services/comment_anchoring.py`):
@@ -280,12 +281,12 @@ nginx/  prometheus/  grafana/   local infrastructure config
 
 These are current gaps in the code, listed so nobody has to find them by surprise:
 
-- **`fetch_conventions` is a placeholder.** The first agent node returns an empty dict, so reviews get no repo-specific conventions.
+- **No repository conventions.** Nothing loads repo-specific conventions, so `build_review_prompt`'s `repo_conventions` slot is always empty.
 - **No pgvector setup.** Nothing creates the `vector` extension or the `code_embeddings` / `review_embeddings` tables. On a fresh database, FastAPI `/health` returns 503 until the extension is enabled. Until the tables exist, embedding storage and similarity search fail (logged), and reviews run without retrieved context. If you created `code_embeddings` by hand before `source_ref` existed, apply [`backend/fastapi/migrations/sql/0001_code_embeddings_source_ref.sql`](backend/fastapi/migrations/sql/0001_code_embeddings_source_ref.sql). Without it, retrieval and storage fail with a missing-column error, and the failure is only logged.
 - **Old untagged chunks can match their own PR.** Before `source_ref`, each review stored its hunks under their real file paths with no tag. If a PR was reviewed before this change and gets a new push afterwards, its old hunks can still be retrieved for it, unless their text exactly matches a hunk in the new diff. Deleting rows where `source_ref IS NULL` removes them, along with all other context stored before the change.
 - **`GET /api/v1/auth/github/token/` sends the user's decrypted GitHub token to the browser.** The frontend also keeps JWTs in `localStorage`.
 - **Repository scans never complete in Django.** Django starts a scan on FastAPI but never reads the result back, so `RepoScan` rows stay in `scanning`. FastAPI holds scan progress in process memory.
-- **Token counts are always zero.** FastAPI doesn't return token counts, so `ReviewRun.prompt_tokens` and `completion_tokens` stay at 0.
+- **Token counts are always zero in Django.** FastAPI returns token counts only per analyzer in `analyzer_runs`, which Django doesn't read, so `ReviewRun.prompt_tokens` and `completion_tokens` stay at 0.
 - **Anthropic keys aren't used for reviews.** They can be saved and validated, but the FastAPI client sends only OpenAI-compatible `/chat/completions` requests, so it skips them.
 - **Frontend tests are minimal.** Vitest covers only the review status polling loop (`frontend/src/lib/reviewStatusPolling.test.ts`); there are no component or page tests.
 

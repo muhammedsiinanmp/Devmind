@@ -25,6 +25,19 @@ class ReviewRequest(BaseModel):
     user_id: int = Field(default=0, description="Owning user ID for BYOK priority")
 
 
+class AnalyzerRun(BaseModel):
+    """Telemetry for one review analyzer, summed over its attempts."""
+
+    model: str
+    latency_ms: int
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    attempts: int = 1
+    parsed: bool = Field(
+        description="False if every attempt returned an unparseable reply",
+    )
+
+
 class ReviewResponse(BaseModel):
     """Response from review analysis."""
 
@@ -35,6 +48,10 @@ class ReviewResponse(BaseModel):
     model_used: str
     provider: str
     latency_ms: int
+    analyzer_runs: dict[str, AnalyzerRun] = Field(
+        default_factory=dict,
+        description="Per-analyzer model, latency and token counts",
+    )
     anchored: int = Field(default=0, description="Comments already on a diff line")
     snapped: int = Field(default=0, description="Comments moved to a nearby diff line")
     unanchored: int = Field(
