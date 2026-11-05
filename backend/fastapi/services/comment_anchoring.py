@@ -2,9 +2,10 @@
 Anchor review comments to lines that exist in the PR diff.
 
 GitHub rejects an inline comment whose line is not an added or context line
-of the diff. A comment on such a line is kept inline, moved to the nearest
-diff line within SNAP_DISTANCE lines of the same hunk, or turned into a
-file-level note (line_number 0), which the poster folds into the review body.
+of the diff. A comment on such a line is kept inline. One within
+SNAP_DISTANCE lines of exactly one hunk is moved to that hunk's nearest
+line. Any other comment becomes a file-level note (line_number 0), which the
+poster folds into the review body.
 """
 
 import logging
@@ -44,16 +45,39 @@ def build_line_index(chunks: list[DiffChunk]) -> dict[str, list[list[int]]]:
 
 
 def _nearest_line(hunks: list[list[int]], line: int) -> Optional[int]:
-    """Nearest commentable line within SNAP_DISTANCE; ties go to the lower line."""
-    best: Optional[int] = None
-    for hunk_lines in hunks:
-        for candidate in hunk_lines:
-            distance = abs(candidate - line)
-            if distance > SNAP_DISTANCE:
-                continue
-            if best is None or (distance, candidate) < (abs(best - line), best):
-                best = candidate
-    return best
+    """
+    Nearest commentable line of the one hunk within SNAP_DISTANCE.
+
+    Returns None when no hunk is in reach, or when more than one is, because
+    then it is unclear which hunk the comment is about. Ties inside the hunk
+    go to the lower line.
+    """
+    in_reach = [
+        hunk_lines
+        for hunk_lines in hunks
+        if any(abs(candidate - line) <= SNAP_DISTANCE for candidate in hunk_lines)
+    ]
+    if len(in_reach) != 1:
+        return None
+    return min(in_reach[0], key=lambda candidate: (abs(candidate - line), candidate))
+
+
+def _snap(comment: ReviewComment, line: int) -> ReviewComment:
+    """
+    Move a comment to ``line``.
+
+    A suggested fix was written for the original line, and GitHub would offer
+    it as a one-click replacement of the new line, so it moves into the body
+    as plain text instead.
+    """
+    update: dict = {"line_number": line}
+    if comment.suggested_fix:
+        update["body"] = (
+            f"{comment.body}\n\nSuggested fix (written for line "
+            f"{comment.line_number}):\n```\n{comment.suggested_fix}\n```"
+        )
+        update["suggested_fix"] = None
+    return comment.model_copy(update=update)
 
 
 def anchor_comments(
@@ -84,7 +108,7 @@ def anchor_comments(
         nearest = _nearest_line(hunks, line) if line > 0 else None
         if nearest is not None:
             stats.snapped += 1
-            result.append(comment.model_copy(update={"line_number": nearest}))
+            result.append(_snap(comment, nearest))
         else:
             stats.unanchored += 1
             result.append(comment.model_copy(update={"line_number": 0}))

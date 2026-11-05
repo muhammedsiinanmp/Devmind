@@ -31,6 +31,63 @@ def _comment(line_number, file_path="src/app.py", body="issue"):
     )
 
 
+class TestSnapStaysInOneHunk:
+    # Hunk one covers new lines 1-3, hunk two covers 5-7; line 4 is in neither.
+    DIFF = """--- a/m.py
++++ b/m.py
+@@ -1,3 +1,3 @@
+ one
+-two
++TWO
+ three
+@@ -5,3 +5,3 @@
+ five
+-six
++SIX
+ seven
+"""
+
+    def test_line_between_two_hunks_is_unanchored(self):
+        comments, stats = anchor_comments(
+            parse_diff(self.DIFF), [_comment(4, file_path="m.py")]
+        )
+
+        assert comments[0].line_number == 0
+        assert (stats.anchored, stats.snapped, stats.unanchored) == (0, 0, 1)
+
+    def test_line_near_only_one_hunk_still_snaps(self):
+        comments, stats = anchor_comments(
+            parse_diff(self.DIFF), [_comment(9, file_path="m.py")]
+        )
+
+        assert comments[0].line_number == 7
+        assert stats.snapped == 1
+
+
+class TestSnappedSuggestedFix:
+    def test_snapped_comment_loses_suggestion_but_keeps_fix_as_text(self):
+        comment = _comment(14).model_copy(
+            update={"suggested_fix": "c = compute()", "body": "Use compute()"}
+        )
+
+        comments, stats = anchor_comments(parse_diff(DIFF), [comment])
+
+        assert stats.snapped == 1
+        assert comments[0].line_number == 12
+        assert comments[0].suggested_fix is None
+        assert comments[0].body.startswith("Use compute()")
+        assert "c = compute()" in comments[0].body
+        assert "```suggestion" not in comments[0].body
+
+    def test_anchored_comment_keeps_its_suggested_fix(self):
+        comment = _comment(11).model_copy(update={"suggested_fix": "b = 4"})
+
+        comments, _ = anchor_comments(parse_diff(DIFF), [comment])
+
+        assert comments[0].suggested_fix == "b = 4"
+        assert comments[0].body == "issue"
+
+
 class TestAnchorComments:
     def test_comment_on_diff_line_is_kept_unchanged(self):
         comments, stats = anchor_comments(
