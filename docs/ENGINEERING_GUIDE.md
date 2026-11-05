@@ -108,27 +108,19 @@ cp .env.example .env
 # Sentry is off by default; set SENTRY_DSN_DJANGO / SENTRY_DSN_FASTAPI to enable it.
 ```
 
-### Step 2: Start the backend stack
+### Step 2: Start the stack
 
 ```bash
-docker compose up -d --build      # or: make build && make up
+make up             # runs: docker compose up -d
 ```
 
-### Step 3: Migrate
+This builds the images on first run and starts Postgres, Redis, Django, FastAPI, the Celery worker, Nginx and the frontend. The one-shot `migrate` service runs `manage.py migrate --noinput` once Postgres is healthy and then exits. Django, FastAPI and the worker wait for it to finish successfully. The `apps/core` migration `0001_enable_pgvector` runs `CREATE EXTENSION IF NOT EXISTS vector`, and its reverse is a no-op, so rolling back never drops the extension. The embedding tables still aren't created; see [Known Gaps](#10-known-gaps).
 
-```bash
-docker compose exec django uv run python manage.py migrate    # or: make migrate
-```
+If the images are out of date after a dependency change, run `make build` first.
 
-### Step 4: Enable pgvector
+Flower, Prometheus and Grafana are in the compose `ops` profile and only start with `make up-ops` (`docker compose --profile ops up -d`).
 
-```bash
-docker compose exec postgres psql -U devmind -c "CREATE EXTENSION IF NOT EXISTS vector;"
-```
-
-Until you run this, FastAPI `GET /health` returns 503 (`pgvector: error: extension not installed`). The embedding tables still won't exist afterwards; see [Known Gaps](#10-known-gaps).
-
-### Step 5: Configure the GitHub OAuth App
+### Step 3: Configure the GitHub OAuth App
 
 In GitHub, go to Settings, then Developer settings, then OAuth Apps:
 
@@ -137,17 +129,20 @@ In GitHub, go to Settings, then Developer settings, then OAuth Apps:
 | Homepage URL | `http://localhost:5173` |
 | Authorization callback URL | `http://localhost:5173/auth/callback` |
 
-### Step 6: Start the frontend
+### Step 4: Open the frontend
+
+The `frontend` compose service runs the Vite dev server on http://localhost:5173 with `./frontend` mounted, so edits hot-reload. It proxies `/api` to `http://django:8000` over the compose network (`API_PROXY_TARGET`, read by `frontend/vite.config.ts`).
+
+To run Vite on the host instead (needs Node.js 20 and pnpm), stop the container and start it locally; the proxy then defaults to `http://localhost:8000`:
 
 ```bash
+docker compose stop frontend
 cd frontend
 pnpm install --frozen-lockfile
-pnpm dev            # http://localhost:5173 (or: make frontend-dev)
+pnpm dev            # or: make frontend-dev
 ```
 
-The Vite dev server proxies `/api` to `http://localhost:8000` (`frontend/vite.config.ts`).
-
-### Step 7 (optional): Receive webhooks locally
+### Step 5 (optional): Receive webhooks locally
 
 GitHub can't reach `localhost`. Start a tunnel to Django:
 
@@ -170,10 +165,12 @@ Set `DEVMIND_PUBLIC_URL` to the https tunnel URL, then run `docker compose resta
 | FastAPI | 8001 | Published by compose. `/health`, `/metrics` and `/docs` are open; work routes need `X-Internal-Secret`. |
 | PostgreSQL | 5432 | user `devmind`, password `devmind_secret`, db `devmind` |
 | Redis | 6379 | |
-| Flower | 5555 | Uses the same `CELERY_BROKER_URL` as the worker (`redis://redis:6379/1` in the template) |
-| Prometheus | 9090 | |
-| Grafana | 3000 | User `admin`, password from `GRAFANA_ADMIN_PASSWORD` (default `devmind`). Provisions the "DevMind Overview" dashboard. |
-| Frontend | 5173 | Vite dev server; not in compose |
+| Flower | 5555 | `ops` profile only. Uses the same `CELERY_BROKER_URL` as the worker (`redis://redis:6379/1` in the template) |
+| Prometheus | 9090 | `ops` profile only |
+| Grafana | 3000 | `ops` profile only. User `admin`, password from `GRAFANA_ADMIN_PASSWORD` (default `devmind`). Provisions the "DevMind Overview" dashboard. |
+| Frontend | 5173 | Vite dev server (`frontend` service), proxies `/api` to Django |
+
+Each host port can be changed with an environment variable read by compose interpolation: `POSTGRES_PORT`, `REDIS_PORT`, `DJANGO_PORT`, `FASTAPI_PORT`, `FRONTEND_PORT`, `NGINX_PORT`, `FLOWER_PORT`, `PROMETHEUS_PORT`, `GRAFANA_PORT`. The defaults are the ports above.
 
 ---
 
@@ -183,13 +180,14 @@ Set `DEVMIND_PUBLIC_URL` to the https tunnel URL, then run `docker compose resta
 
 | Target | Command |
 |---|---|
-| `up` / `down` / `build` / `logs` / `reset` | `docker compose up -d`, `down`, `build`, `logs -f`, `down -v && up -d` |
+| `up` / `up-ops` | `docker compose up -d`; `docker compose --profile ops up -d` (adds Flower, Prometheus, Grafana) |
+| `down` / `build` / `logs` / `reset` | `docker compose --profile ops down`, `build`, `logs -f`, `--profile ops down -v && up -d` (`reset` deletes the database volume) |
 | `shell-django` / `shell-fastapi` | bash inside the container |
 | `psql` / `redis-flush` | Postgres shell / `FLUSHDB` |
 | `migrate` / `makemigrations` / `createsuperuser` | Django management commands in the container |
 | `test` (`test-all`) / `test-django` / `test-fastapi` | Backend test suites in the containers |
 | `format` | `black .` in the Django container |
-| `frontend-dev` | `cd frontend && pnpm dev` |
+| `frontend-dev` | `cd frontend && pnpm dev` (host alternative to the `frontend` service) |
 | `grafana-open` / `prometheus-open` / `prometheus-targets` | Observability helpers |
 | `ngrok` | `ngrok http 8000` |
 
@@ -433,7 +431,7 @@ The repo doesn't include deployment infrastructure (no Terraform, Helm or Kubern
 - [ ] Use strong random values for `DJANGO_SECRET_KEY`, `JWT_SECRET_KEY` and `FASTAPI_INTERNAL_SECRET`, and set `GITHUB_WEBHOOK_SECRET`
 - [ ] Treat `DJANGO_SECRET_KEY` as the encryption key: rotating it makes stored tokens and API keys unreadable
 - [ ] Don't publish FastAPI's port; only the Celery workers need to reach it
-- [ ] Enable the `vector` extension and create the embedding tables (see [Known Gaps](#10-known-gaps))
+- [ ] Make sure the database role can create the `vector` extension (`migrate` runs `CREATE EXTENSION IF NOT EXISTS vector`), and create the embedding tables (see [Known Gaps](#10-known-gaps))
 - [ ] Run `migrate` before starting new code that depends on schema changes
 - [ ] Set `SENTRY_DSN_*` and `SENTRY_ENVIRONMENT=production` (this also turns off FastAPI `/docs`)
 
@@ -452,8 +450,11 @@ The repo doesn't include deployment infrastructure (no Terraform, Helm or Kubern
 
 ### FastAPI `/health` returns 503 with `pgvector: error: extension not installed`
 
+The `core.0001_enable_pgvector` migration hasn't run against this database. Check the one-shot service's output and rerun it:
+
 ```bash
-docker compose exec postgres psql -U devmind -c "CREATE EXTENSION IF NOT EXISTS vector;"
+docker compose logs migrate
+docker compose run --rm migrate      # or: make migrate
 ```
 
 ### Review stuck in `processing`
@@ -548,9 +549,9 @@ These gaps are confirmed in the current code.
 
 The Channels consumers, routing and JWT query middleware exist and are tested. However, `ASGI_APPLICATION` isn't set, `daphne` isn't in `INSTALLED_APPS`, the production image runs gunicorn on WSGI, and Nginx has no upgrade block. `ReviewStatusConsumer` also doesn't check that the user owns the review. Add that check before serving it.
 
-### pgvector schema is never created
+### Embedding tables are never created
 
-Nothing enables the `vector` extension or creates `code_embeddings` / `review_embeddings` (FastAPI never calls `create_all`, and no Django migration covers them). Until both exist, the retrieval steps log errors and reviews run without similar-code context. There's also no vector index defined.
+The `vector` extension is enabled by a Django migration, but nothing creates `code_embeddings` / `review_embeddings` (FastAPI never calls `create_all`, and no Django migration covers them). Until they exist, the retrieval steps log errors and reviews run without similar-code context. There's also no vector index defined.
 
 ### `review_embeddings` is never written
 

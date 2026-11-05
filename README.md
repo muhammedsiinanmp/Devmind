@@ -150,33 +150,22 @@ CI doesn't enforce a coverage threshold. The frontend has no automated tests.
 
 ## Quick start (local development)
 
-Prerequisites: Docker with Compose v2, Node.js 20 with pnpm, and a [GitHub OAuth App](https://github.com/settings/developers) whose callback URL is `http://localhost:5173/auth/callback`.
+Prerequisites: Docker with Compose v2 and a [GitHub OAuth App](https://github.com/settings/developers) whose callback URL is `http://localhost:5173/auth/callback`.
 
 ```bash
-# 1. Configure
 cp .env.example .env
 #    Set DJANGO_SECRET_KEY, JWT_SECRET_KEY, FASTAPI_INTERNAL_SECRET,
 #    GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GITHUB_WEBHOOK_SECRET
 #    and at least one of GOOGLE_AI_API_KEY / GROQ_API_KEY / GITHUB_TOKEN.
 #    Sentry is off by default; set SENTRY_DSN_DJANGO / SENTRY_DSN_FASTAPI to enable it.
-
-# 2. Start the backend stack (Postgres, Redis, Django, FastAPI,
-#    Celery worker, Flower, Nginx, Prometheus, Grafana)
-docker compose up -d --build
-
-# 3. Apply migrations
-docker compose exec django uv run python manage.py migrate
-
-# 4. Enable the pgvector extension (no migration does this yet)
-docker compose exec postgres psql -U devmind -c "CREATE EXTENSION IF NOT EXISTS vector;"
-
-# 5. Start the frontend separately (it is not part of docker-compose.yml)
-cd frontend
-pnpm install --frozen-lockfile
-pnpm dev
+make up
 ```
 
-The `Makefile` has shortcuts: `make up`, `make migrate`, `make logs`, `make test`, `make frontend-dev`.
+`make up` (`docker compose up -d`) builds the images on first run and starts Postgres, Redis, Django, FastAPI, the Celery worker, Nginx and the Vite frontend. A one-shot `migrate` service applies Django migrations first, including the one that enables the pgvector extension, and the app services wait for it to finish.
+
+Flower, Prometheus and Grafana sit behind the compose `ops` profile. Start them with `make up-ops`.
+
+Other `Makefile` shortcuts: `make down`, `make logs`, `make migrate`, `make test`, and `make frontend-dev` to run Vite on the host instead (needs Node.js 20 and pnpm).
 
 | Service | URL |
 |---|---|
@@ -185,8 +174,8 @@ The `Makefile` has shortcuts: `make up`, `make migrate`, `make logs`, `make test
 | Swagger UI | http://localhost:8000/api/schema/swagger-ui/ |
 | Django health | http://localhost:8000/health/ |
 | FastAPI docs / health | http://localhost:8001/docs, http://localhost:8001/health |
-| Flower | http://localhost:5555 |
-| Prometheus / Grafana | http://localhost:9090, http://localhost:3000 |
+| Flower (`make up-ops`) | http://localhost:5555 |
+| Prometheus / Grafana (`make up-ops`) | http://localhost:9090, http://localhost:3000 |
 
 To get webhooks from GitHub while developing locally, expose Django with a tunnel (`make ngrok`) and set `DEVMIND_PUBLIC_URL` to the tunnel URL. The compose stack runs Django with **development settings** (`DEBUG=True`, all hosts allowed, throttling off), so only expose it briefly and only for testing.
 
@@ -275,7 +264,7 @@ These are current gaps in the code, listed so nobody has to find them by surpris
 
 - **WebSockets aren't served.** Django Channels consumers exist and are tested, but `ASGI_APPLICATION` isn't set and both the dev server and the production image (gunicorn, WSGI) serve plain HTTP. The frontend's live status component falls back to a static view.
 - **`fetch_conventions` is a placeholder.** The first agent node returns an empty dict, so reviews get no repo-specific conventions.
-- **No pgvector setup.** Nothing creates the `vector` extension or the `code_embeddings` / `review_embeddings` tables. On a fresh database, FastAPI `/health` returns 503 until the extension is enabled. Until the tables exist, embedding storage and similarity search fail (logged), and reviews run without retrieved context.
+- **No embedding tables.** A Django migration enables the `vector` extension, but nothing creates the `code_embeddings` / `review_embeddings` tables. Until they exist, embedding storage and similarity search fail (logged), and reviews run without retrieved context.
 - **`GET /api/v1/auth/github/token/` sends the user's decrypted GitHub token to the browser.** The frontend also keeps JWTs in `localStorage`.
 - **Repository scans never complete in Django.** Django starts a scan on FastAPI but never reads the result back, so `RepoScan` rows stay in `scanning`. FastAPI holds scan progress in process memory.
 - **Token counts are always zero.** FastAPI doesn't return token counts, so `ReviewRun.prompt_tokens` and `completion_tokens` stay at 0.
