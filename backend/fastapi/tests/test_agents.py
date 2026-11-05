@@ -448,6 +448,36 @@ class TestHonestGraph:
         )
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("empty_reply", ["", None])
+    async def test_empty_first_reply_retries_without_empty_assistant_turn(
+        self, empty_reply
+    ):
+        """Some OpenAI-compatible endpoints reject an empty assistant message,
+        so after an empty reply the retry sends only the corrective turn."""
+        from agents.review_agent import CORRECTIVE_PROMPT, run_review_agent
+
+        security_replies = iter([empty_reply, "[]"])
+        security_calls: list[list[dict]] = []
+
+        async def fake_generate(messages, user_id=None):
+            if _analyzer_of(messages) == "security":
+                security_calls.append(list(messages))
+                return _llm_response(next(security_replies))
+            return _llm_response("[]")
+
+        with patch("agents.review_agent.llm_client") as mock_client:
+            mock_client.generate = AsyncMock(side_effect=fake_generate)
+            result = await run_review_agent(
+                diff_text=_LARGE_DIFF, repo_full_name="owner/repo"
+            )
+
+        first, second = security_calls
+        assert second == first + [{"role": "user", "content": CORRECTIVE_PROMPT}]
+        assert all(m["role"] != "assistant" for m in second)
+        assert result["analyzer_runs"]["security"]["attempts"] == 2
+        assert result["analyzer_runs"]["security"]["parsed"] is True
+
+    @pytest.mark.asyncio
     async def test_unknown_token_counts_stay_none(self):
         from agents.review_agent import run_review_agent
         from services.llm_client import LLMResponse

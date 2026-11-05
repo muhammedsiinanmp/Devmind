@@ -86,10 +86,11 @@ async def _run_analyzer(
 
     while comments is None and run["attempts"] <= MAX_PARSE_RETRIES:
         if previous_reply is not None:
-            messages = messages + [
-                {"role": "assistant", "content": previous_reply},
-                {"role": "user", "content": CORRECTIVE_PROMPT},
-            ]
+            # Some OpenAI-compatible endpoints reject an empty assistant
+            # message, so an empty reply is left out of the retry.
+            if previous_reply:
+                messages = messages + [{"role": "assistant", "content": previous_reply}]
+            messages = messages + [{"role": "user", "content": CORRECTIVE_PROMPT}]
         run["attempts"] += 1
         started = time.perf_counter()
         response = await llm_client.generate(messages, user_id=state.get("user_id"))
