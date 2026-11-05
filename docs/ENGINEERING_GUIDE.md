@@ -60,7 +60,7 @@ There's no server-side OpenAI provider. OpenAI keys can be added per user throug
 
 | Variable | Default | Description |
 |---|---|---|
-| `REDIS_URL` | `redis://redis:6379/0` | Django cache (OAuth state, organization invite tokens, DRF throttle counters), Channels layer, FastAPI rate limiter |
+| `REDIS_URL` | `redis://redis:6379/0` | Django cache (OAuth state, organization invite tokens, DRF throttle counters), FastAPI rate limiter |
 | `CELERY_BROKER_URL` | `redis://redis:6379/1` | Celery broker |
 | `CELERY_RESULT_BACKEND` | `redis://redis:6379/2` | Celery results |
 | `FASTAPI_BASE_URL` | `http://fastapi:8001` | Where the Celery worker reaches FastAPI |
@@ -87,7 +87,6 @@ There's no server-side OpenAI provider. OpenAI keys can be added per user throug
 
 | Variable | Description |
 |---|---|
-| `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` | If both are set, the orchestrator pushes review status changes to Supabase. Leave empty to turn it off. |
 | `SENTRY_DSN_DJANGO`, `SENTRY_DSN_FASTAPI` | Empty in `.env.example`, so Sentry is off by default. Set a DSN to enable it for that service. |
 | `SENTRY_ENVIRONMENT` | Sentry environment tag. When it's `production`, FastAPI turns off `/docs`. |
 | `GRAFANA_ADMIN_PASSWORD` | Grafana admin password, used by compose interpolation; `devmind` if unset |
@@ -331,9 +330,9 @@ See `apps/organizations/views.py` for methods and permissions.
 | `/metrics` | GET | none | Prometheus instrumentator |
 | `/docs` | GET | none | OpenAPI UI (off when `SENTRY_ENVIRONMENT=production`) |
 
-### WebSocket (not currently served)
+### Review status (polling, no WebSocket)
 
-`realtime/routing.py` defines `ws/reviews/<review_id>/?token=<access_jwt>` and `ws/notifications/`, but no ASGI server is configured. See [SYSTEM_ARCHITECTURE.md, WebSocket status](SYSTEM_ARCHITECTURE.md#websocket-status). The frontend's `ReviewStatus` component tries to connect and falls back to a static view if it can't.
+There are no WebSocket routes. While a review is `pending` or `processing`, the frontend's `ReviewStatus` component polls `GET /api/v1/reviews/<id>/` every 3 seconds and stops on `completed`, `failed` or unmount. See [SYSTEM_ARCHITECTURE.md, Review status updates](SYSTEM_ARCHITECTURE.md#review-status-updates).
 
 ---
 
@@ -355,7 +354,7 @@ uv run pytest --cov
 make test-django
 ```
 
-`devmind/settings/test.py` sets Celery to eager mode (`CELERY_TASK_ALWAYS_EAGER`), uses an in-memory channel layer, the MD5 password hasher and no throttling, turns off Sentry and Supabase, and sets `SKIP_LLM_KEY_VALIDATION=True`. The cache is still django-redis, which is why Redis must be running.
+`devmind/settings/test.py` sets Celery to eager mode (`CELERY_TASK_ALWAYS_EAGER`), uses the MD5 password hasher and no throttling, turns off Sentry, and sets `SKIP_LLM_KEY_VALIDATION=True`. The cache is still django-redis, which is why Redis must be running.
 
 Test modules:
 
@@ -365,7 +364,6 @@ Test modules:
 | Repositories | `apps/repositories/tests/test_webhooks.py`, `test_views.py`, `test_tasks.py`, `test_services.py`, `test_models.py`, `test_managers.py`, `test_admin.py` |
 | Reviews | `apps/reviews/tests/test_orchestrator.py`, `test_views.py`, `test_github_poster.py`, `test_models.py` |
 | Organizations | `apps/organizations/tests/test_views.py` |
-| Realtime | `realtime/tests/test_consumers.py` |
 | End to end | `tests/test_e2e.py` |
 
 ### FastAPI
@@ -385,7 +383,7 @@ The tests in `backend/fastapi/tests/` cover the agent, diff parser, prompt build
 
 ### Frontend
 
-The frontend has no automated tests. CI runs:
+Vitest covers the review status polling loop (`src/lib/reviewStatusPolling.test.ts`): the 3-second interval, stopping on `completed` and `failed`, stopping when the component unmounts, and retrying after a failed request. There are no component or page tests. CI runs:
 
 ```bash
 cd frontend
@@ -393,6 +391,7 @@ pnpm install --frozen-lockfile
 pnpm exec tsc -p tsconfig.app.json --noEmit
 pnpm build
 pnpm lint
+pnpm test
 ```
 
 ### Measured results
@@ -401,7 +400,7 @@ These were measured locally on this branch. Coverage method: `pytest --cov`, the
 
 | Suite | Result | Line coverage |
 |---|---|---|
-| Django | 244 passed | 83% |
+| Django | 241 passed | 83% |
 | FastAPI | 176 passed | 80% |
 | Frontend | `tsc`, `build` pass; `lint` 0 errors, 3 warnings | n/a |
 
@@ -411,7 +410,7 @@ These were measured locally on this branch. Coverage method: `pytest --cov`, the
 
 - **Django (pytest):** Postgres (`pgvector/pgvector:pg16`) and Redis service containers; `ruff check`, `black --check`, `makemigrations --check --dry-run`, `pytest --cov`
 - **FastAPI (pytest):** `ruff check`, `black --check`, `pytest`
-- **Frontend (typecheck, build, lint):** pnpm 9 and Node 20; `tsc`, `pnpm build`, `pnpm lint`
+- **Frontend (typecheck, build, lint):** pnpm 9 and Node 20; `tsc`, `pnpm build`, `pnpm lint`, `pnpm test`
 
 CI doesn't enforce a coverage threshold.
 
@@ -544,10 +543,6 @@ docker compose restart redis
 
 These gaps are confirmed in the current code.
 
-### WebSockets are not served
-
-The Channels consumers, routing and JWT query middleware exist and are tested. However, `ASGI_APPLICATION` isn't set, `daphne` isn't in `INSTALLED_APPS`, the production image runs gunicorn on WSGI, and Nginx has no upgrade block. `ReviewStatusConsumer` also doesn't check that the user owns the review. Add that check before serving it.
-
 ### pgvector schema is never created
 
 Nothing enables the `vector` extension or creates `code_embeddings` / `review_embeddings` (FastAPI never calls `create_all`, and no Django migration covers them). Until both exist, the retrieval steps log errors and reviews run without similar-code context. There's also no vector index defined.
@@ -592,6 +587,6 @@ The task exists in `apps/reviews/tasks.py`, but there is no Celery beat service,
 
 `ReviewRun.diff_text` is a `TextField` with no size cap or compression.
 
-### Frontend has no tests
+### Frontend tests are minimal
 
-CI covers the type check, build and lint only.
+Vitest covers only the review status polling loop. There are no component or page tests.

@@ -95,8 +95,6 @@ class ReviewOrchestrator:
 
         self.review.status = "processing"
         self.review.save(update_fields=["status"])
-        self._push_status_to_channels("processing")
-        self._push_status_to_supabase("processing")
 
         try:
             diff = self._fetch_diff()
@@ -111,11 +109,6 @@ class ReviewOrchestrator:
                 update_fields=["status", "risk_score", "summary", "completed_at"]
             )
 
-            self._push_status_to_channels(
-                "completed",
-                {"summary": self.review.summary, "risk_score": self.review.risk_score},
-            )
-            self._push_status_to_supabase("completed")
             self._trigger_github_post()
 
             return result
@@ -124,8 +117,6 @@ class ReviewOrchestrator:
             self.review.status = "failed"
             self.review.summary = f"Error: {str(exc)[:500]}"
             self.review.save(update_fields=["status", "summary"])
-            self._push_status_to_channels("failed", {"error": str(exc)[:200]})
-            self._push_status_to_supabase("failed")
             raise
 
     def _fetch_diff(self) -> str:
@@ -302,67 +293,6 @@ class ReviewOrchestrator:
         except Exception as e:
             logger.error(
                 "orchestrator.github_post_failed review_id=%d error=%s",
-                self.review.pk,
-                str(e),
-            )
-
-    def _push_status_to_channels(self, status: str, extra: dict | None = None) -> None:
-        """Push status update to WebSocket channel group."""
-        try:
-            from asgiref.sync import async_to_sync
-            from channels.layers import get_channel_layer
-
-            channel_layer = get_channel_layer()
-            group_name = f"review_{self.review.pk}"
-            message = {
-                "type": "review.status.update",
-                "review_id": self.review.pk,
-                "status": status,
-            }
-            if extra:
-                message.update(extra)
-
-            async_to_sync(channel_layer.group_send)(group_name, message)
-        except Exception as e:
-            logger.error(
-                "orchestrator.channel_push_failed review_id=%d error=%s",
-                self.review.pk,
-                str(e),
-            )
-
-    def _push_status_to_supabase(self, status: str) -> None:
-        """Insert status update into Supabase (optional — skipped if not configured)."""
-        supabase_url = getattr(settings, "SUPABASE_URL", None)
-        supabase_key = getattr(settings, "SUPABASE_SERVICE_KEY", None)
-        if not supabase_url or not supabase_key:
-            return
-
-        try:
-            from asgiref.sync import async_to_sync
-
-            async def _insert():
-                async with httpx.AsyncClient(timeout=10.0) as client:
-                    await client.post(
-                        f"{supabase_url}/rest/v1/review_status_updates",
-                        json={
-                            "review_id": self.review.pk,
-                            "status": status,
-                            "summary": self.review.summary or "",
-                            "risk_score": self.review.risk_score or 0,
-                            "updated_at": timezone.now().isoformat(),
-                        },
-                        headers={
-                            "apikey": supabase_key,
-                            "Authorization": f"Bearer {supabase_key}",
-                            "Content-Type": "application/json",
-                            "Prefer": "return=minimal",
-                        },
-                    )
-
-            async_to_sync(_insert)()
-        except Exception as e:
-            logger.error(
-                "orchestrator.supabase_push_failed review_id=%d error=%s",
                 self.review.pk,
                 str(e),
             )

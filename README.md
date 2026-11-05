@@ -39,7 +39,6 @@ flowchart LR
     subgraph External
         GH["GitHub"]
         LLM["LLM providers<br/>Gemini / Groq / GitHub Models<br/>+ user BYOK"]
-        SB["Supabase<br/>optional"]
     end
 
     FE["React app<br/>Vite dev server :5173"]
@@ -72,7 +71,6 @@ flowchart LR
     FA -->|"rate-limit counters"| RD
     API --- PG
     CW --- PG
-    CW -.->|"status updates"| SB
     PR -->|"scrape /metrics, /fastapi-metrics"| NGX
 ```
 
@@ -124,18 +122,18 @@ START -> [analyze_security | analyze_quality | analyze_tests] -> synthesize -> E
 |---|---|
 | Django (pytest) | ruff, black, missing-migration check, pytest against Postgres (pgvector image) and Redis service containers |
 | FastAPI (pytest) | ruff, black, pytest (no external services) |
-| Frontend (typecheck, build, lint) | `tsc`, `vite build`, `eslint` |
+| Frontend (typecheck, build, lint) | `tsc`, `vite build`, `eslint`, `vitest run` |
 
 Measured locally on this branch:
 
 | Suite | Tests | Line coverage |
 |---|---|---|
-| Django | 244 passed | 83% |
+| Django | 241 passed | 83% |
 | FastAPI | 176 passed | 80% |
 
 Coverage method: `pytest --cov`, then `coverage report --omit='*/tests/*,*/migrations/*,*conftest.py'`, so test files, migrations and conftest are excluded. Including the test files would give a higher figure.
 
-CI doesn't enforce a coverage threshold. The frontend has no automated tests.
+CI doesn't enforce a coverage threshold. The frontend has 6 Vitest tests, all for the review status polling loop; coverage isn't measured.
 
 ## Tech stack
 
@@ -209,7 +207,7 @@ uv run pytest
 
 # Frontend
 cd frontend
-pnpm exec tsc -p tsconfig.app.json --noEmit && pnpm build && pnpm lint
+pnpm exec tsc -p tsconfig.app.json --noEmit && pnpm build && pnpm lint && pnpm test
 
 # Or run both backend suites inside the running containers
 make test
@@ -231,7 +229,6 @@ All services read the root `.env` (template: [.env.example](.env.example)). Thes
 | `DEVMIND_PUBLIC_URL` | Django | Base URL that installed GitHub webhooks point to |
 | `GOOGLE_AI_API_KEY`, `GROQ_API_KEY`, `GITHUB_TOKEN` | FastAPI | Server LLM providers. The Google key is also used for embeddings. |
 | `DJANGO_BASE_URL` | FastAPI | Where FastAPI fetches BYOK configs from |
-| `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` | Django | Optional review status push. Leave empty to turn it off. |
 
 [docs/ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md) lists every variable.
 
@@ -259,7 +256,6 @@ backend/
     apps/reviews/    Review models, orchestrator, GitHub comment poster, scans
     apps/organizations/ organizations, members, invites
     apps/core/       structlog configuration
-    realtime/        Channels consumers and JWT query-string auth
     tests/           end-to-end pipeline test
   fastapi/           AI service
     agents/          LangGraph review agent and state
@@ -274,14 +270,13 @@ nginx/  prometheus/  grafana/   local infrastructure config
 
 These are current gaps in the code, listed so nobody has to find them by surprise:
 
-- **WebSockets aren't served.** Django Channels consumers exist and are tested, but `ASGI_APPLICATION` isn't set and both the dev server and the production image (gunicorn, WSGI) serve plain HTTP. The frontend's live status component falls back to a static view.
 - **No repository conventions.** Nothing loads repo-specific conventions, so `build_review_prompt`'s `repo_conventions` slot is always empty.
 - **No pgvector setup.** Nothing creates the `vector` extension or the `code_embeddings` / `review_embeddings` tables. On a fresh database, FastAPI `/health` returns 503 until the extension is enabled. Until the tables exist, embedding storage and similarity search fail (logged), and reviews run without retrieved context.
 - **`GET /api/v1/auth/github/token/` sends the user's decrypted GitHub token to the browser.** The frontend also keeps JWTs in `localStorage`.
 - **Repository scans never complete in Django.** Django starts a scan on FastAPI but never reads the result back, so `RepoScan` rows stay in `scanning`. FastAPI holds scan progress in process memory.
 - **Token counts are always zero in Django.** FastAPI returns token counts only per analyzer in `analyzer_runs`, which Django doesn't read, so `ReviewRun.prompt_tokens` and `completion_tokens` stay at 0.
 - **Anthropic keys aren't used for reviews.** They can be saved and validated, but the FastAPI client sends only OpenAI-compatible `/chat/completions` requests, so it skips them.
-- **The frontend has no tests.**
+- **Frontend tests are minimal.** Vitest covers only the review status polling loop (`frontend/src/lib/reviewStatusPolling.test.ts`); there are no component or page tests.
 
 ## Further reading
 
