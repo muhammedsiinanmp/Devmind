@@ -114,6 +114,7 @@ class TestAnalyzeEndpoint:
             assert set(response.analyzer_runs) == {"security", "quality", "tests"}
             assert response.analyzer_runs["security"].model == "google/gemini"
             assert response.analyzer_runs["security"].prompt_tokens == 10
+            assert response.analyzer_runs["security"].parsed is True
 
     @pytest.mark.asyncio
     async def test_analyze_handles_error(self):

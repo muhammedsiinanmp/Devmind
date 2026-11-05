@@ -9,8 +9,10 @@ from agents.states import ReviewState
 from agents.review_agent import (
     create_system_message,
     _parse_llm_comments,
+    _parse_llm_comment_list,
     MAX_PARSE_RETRIES,
 )
+from services.prompt_builder import REVIEW_SYSTEM_PROMPT
 
 
 class TestReviewState:
@@ -132,6 +134,49 @@ class TestParseLLMComments:
         comments = _parse_llm_comments(content, "security")
 
         assert len(comments) == 1
+
+    def test_parse_empty_object_is_no_findings(self):
+        """'{}' is a valid "nothing found" reply, not a parse failure."""
+        assert _parse_llm_comment_list("{}", "security") == []
+
+    def test_parse_known_key_null_is_no_findings(self):
+        assert _parse_llm_comment_list('{"issues": null}', "security") == []
+        assert _parse_llm_comment_list('{"findings": []}', "security") == []
+
+    def test_parse_prose_is_unparseable(self):
+        assert _parse_llm_comment_list("No issues found.", "security") is None
+        assert _parse_llm_comment_list('{"verdict": "LGTM"}', "security") is None
+
+    def test_parse_maps_high_medium_low_severities(self):
+        content = (
+            '[{"file_path": "a.py", "line_number": 1, "severity": "High", "body": "h"},'
+            ' {"file_path": "a.py", "line_number": 2, "severity": "medium", "body": "m"},'
+            ' {"file_path": "a.py", "line_number": 3, "severity": "LOW", "body": "l"}]'
+        )
+        comments = _parse_llm_comments(content, "security")
+
+        assert [c["severity"] for c in comments] == ["error", "warning", "info"]
+
+
+class TestPromptContract:
+    def test_system_prompt_asks_for_parser_severities_not_prose(self):
+        prompt = REVIEW_SYSTEM_PROMPT.lower()
+        assert "critical, error, warning, info" in prompt
+        assert "high/medium/low" not in prompt
+        assert "review format" not in prompt
+
+    @pytest.mark.asyncio
+    async def test_analyzer_instruction_asks_for_empty_list_when_clean(self):
+        from agents.review_agent import analyze_quality
+
+        with patch("agents.review_agent.llm_client") as mock_client:
+            mock_client.generate = AsyncMock(return_value=_llm_response("[]"))
+            await analyze_quality({"diff_text": _LARGE_DIFF, "repo_full_name": "o/r"})
+
+        messages = mock_client.generate.await_args.args[0]
+        assert "If there are no issues, return an empty JSON list: []" in (
+            messages[-1]["content"]
+        )
 
 
 class TestConstants:
@@ -292,6 +337,10 @@ class TestHonestGraph:
         assert result["analyzer_runs"]["quality"]["attempts"] == 1
         assert result["analyzer_runs"]["tests"]["attempts"] == 1
         assert result["synthesized_comments"] == []
+        # A twice-failed analyzer is distinguishable from a clean one.
+        assert result["analyzer_runs"]["security"]["parsed"] is False
+        assert result["analyzer_runs"]["quality"]["parsed"] is True
+        assert result["analyzer_runs"]["tests"]["parsed"] is True
 
     @pytest.mark.asyncio
     async def test_retry_recovers_findings_after_unparseable_response(self):
@@ -364,3 +413,58 @@ class TestHonestGraph:
             "quality": "b/two",
             "tests": "c/three",
         }
+
+    @pytest.mark.asyncio
+    async def test_prose_reply_then_empty_list_is_clean_after_corrective_turn(self):
+        """A model that answers "No issues found." is asked once more for
+        JSON, and its [] then counts as a clean, parsed result."""
+        from agents.review_agent import CORRECTIVE_PROMPT, run_review_agent
+
+        security_replies = iter(["No issues found.", "[]"])
+        security_calls: list[list[dict]] = []
+
+        async def fake_generate(messages, user_id=None):
+            if _analyzer_of(messages) == "security":
+                security_calls.append(list(messages))
+                return _llm_response(next(security_replies))
+            return _llm_response("[]")
+
+        with patch("agents.review_agent.llm_client") as mock_client:
+            mock_client.generate = AsyncMock(side_effect=fake_generate)
+            result = await run_review_agent(
+                diff_text=_LARGE_DIFF, repo_full_name="owner/repo"
+            )
+
+        assert result["synthesized_comments"] == []
+        run = result["analyzer_runs"]["security"]
+        assert run["attempts"] == 2
+        assert run["parsed"] is True
+        first, second = security_calls
+        assert second[: len(first)] == first
+        assert second[-1] == {"role": "user", "content": CORRECTIVE_PROMPT}
+        assert CORRECTIVE_PROMPT == (
+            "Your previous reply was not a JSON list. "
+            "Reply with only the JSON list, or [] if there are no issues."
+        )
+
+    @pytest.mark.asyncio
+    async def test_unknown_token_counts_stay_none(self):
+        from agents.review_agent import run_review_agent
+        from services.llm_client import LLMResponse
+
+        response = LLMResponse(
+            content="[]",
+            model_used="x/y",
+            provider="test",
+            prompt_tokens=None,
+            completion_tokens=None,
+        )
+        with patch("agents.review_agent.llm_client") as mock_client:
+            mock_client.generate = AsyncMock(return_value=response)
+            result = await run_review_agent(
+                diff_text=_LARGE_DIFF, repo_full_name="owner/repo"
+            )
+
+        for run in result["analyzer_runs"].values():
+            assert run["prompt_tokens"] is None
+            assert run["completion_tokens"] is None

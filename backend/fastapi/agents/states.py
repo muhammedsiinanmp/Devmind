@@ -30,9 +30,10 @@ class AnalyzerRun(TypedDict, total=False):
 
     model: str
     latency_ms: int
-    prompt_tokens: int
-    completion_tokens: int
+    prompt_tokens: Optional[int]  # None if the provider never reported it
+    completion_tokens: Optional[int]
     attempts: int
+    parsed: bool  # False if every attempt returned an unparseable reply
 
 
 class ReviewComment(TypedDict):

@@ -28,6 +28,11 @@ logger = logging.getLogger(__name__)
 
 # Extra attempts an analyzer gets when its response can't be parsed.
 MAX_PARSE_RETRIES = 1
+# Sent after an unparseable reply, before the single retry.
+CORRECTIVE_PROMPT = (
+    "Your previous reply was not a JSON list. "
+    "Reply with only the JSON list, or [] if there are no issues."
+)
 # Fixed order used to pick model_used, so it doesn't depend on branch timing.
 ANALYZER_ORDER = ("security", "quality", "tests")
 SEVERITY_ORDER = {"critical": 0, "error": 1, "warning": 2, "info": 3}
@@ -52,37 +57,52 @@ async def _run_analyzer(
     """
     Call the LLM for one analyzer and parse its findings.
 
-    If the response can't be parsed, the call is repeated up to
-    MAX_PARSE_RETRIES times. A parsed empty list is a valid result and is
-    never retried. Latency and token counts are summed over attempts.
+    If the response can't be parsed, the model's reply and CORRECTIVE_PROMPT
+    are appended and the call is repeated, up to MAX_PARSE_RETRIES times. A
+    parsed empty list is a valid result and is never retried. Latency and
+    token counts are summed over attempts; token counts stay None if the
+    provider never reports them. run["parsed"] is False if every attempt
+    failed to parse.
     """
     prompt = state.get("prebuilt_prompt") or build_review_prompt(context)
     messages = [
         {"role": "system", "content": create_system_message(category)},
         {
             "role": "user",
-            "content": f"{prompt}\n\n{instruction} Return JSON list with: file_path, line_number, category, severity, body, suggested_fix.",
+            "content": f"{prompt}\n\n{instruction} Return JSON list with: file_path, line_number, category, severity (critical, error, warning or info), body, suggested_fix. If there are no issues, return an empty JSON list: []",
         },
     ]
 
     run: AnalyzerRun = {
         "model": "",
         "latency_ms": 0,
-        "prompt_tokens": 0,
-        "completion_tokens": 0,
+        "prompt_tokens": None,
+        "completion_tokens": None,
         "attempts": 0,
+        "parsed": False,
     }
     comments: list[ReviewComment] | None = None
+    previous_reply: str | None = None
 
     while comments is None and run["attempts"] <= MAX_PARSE_RETRIES:
+        if previous_reply is not None:
+            messages = messages + [
+                {"role": "assistant", "content": previous_reply},
+                {"role": "user", "content": CORRECTIVE_PROMPT},
+            ]
         run["attempts"] += 1
         started = time.perf_counter()
         response = await llm_client.generate(messages, user_id=state.get("user_id"))
         run["latency_ms"] += int((time.perf_counter() - started) * 1000)
         run["model"] = response.model_used
-        run["prompt_tokens"] += response.prompt_tokens or 0
-        run["completion_tokens"] += response.completion_tokens or 0
+        for key in ("prompt_tokens", "completion_tokens"):
+            value = getattr(response, key)
+            if value is not None:
+                run[key] = (run[key] or 0) + value
         comments = _parse_llm_comment_list(response.content, category)
+        previous_reply = response.content or ""
+
+    run["parsed"] = comments is not None
 
     logger.info(
         "analyze_%s found=%d attempts=%d",
@@ -134,6 +154,9 @@ async def analyze_tests(state: ReviewState) -> dict[str, Any]:
 
 
 _SEVERITY_VALUES = {"critical", "error", "warning", "info"}
+# Fallback for models that answer with the common high/medium/low scale.
+_SEVERITY_ALIASES = {"high": "error", "medium": "warning", "low": "info"}
+_LIST_KEYS = ("issues", "comments", "findings", "results", "data")
 
 
 class _LLMCommentSchema(BaseModel):
@@ -147,7 +170,8 @@ class _LLMCommentSchema(BaseModel):
     @field_validator("severity", mode="before")
     @classmethod
     def normalise_severity(cls, v: object) -> str:
-        s = str(v).lower()
+        s = str(v).strip().lower()
+        s = _SEVERITY_ALIASES.get(s, s)
         return s if s in _SEVERITY_VALUES else "warning"
 
 
@@ -166,6 +190,8 @@ def _parse_llm_comment_list(
     - Markdown-fenced JSON:         ```json\\n[...]\\n```
     - Dict-wrapped array:           {"issues": [...]}
     - Prefix text before array:     "Here are the issues: [...]"
+
+    "{}" and a known key set to null ({"issues": null}) mean no findings.
     """
     if not content:
         logger.warning("llm_parse_failed category=%s empty response", default_category)
@@ -182,9 +208,13 @@ def _parse_llm_comment_list(
         if isinstance(parsed, list):
             raw_list = parsed
         elif isinstance(parsed, dict):
-            for key in ("issues", "comments", "findings", "results", "data"):
-                if isinstance(parsed.get(key), list):
-                    raw_list = parsed[key]
+            if not parsed:
+                raw_list = []
+            for key in _LIST_KEYS:
+                if key in parsed and (
+                    parsed[key] is None or isinstance(parsed[key], list)
+                ):
+                    raw_list = parsed[key] or []
                     break
     except json.JSONDecodeError:
         pass
