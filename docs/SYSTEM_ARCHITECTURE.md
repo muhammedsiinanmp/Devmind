@@ -297,10 +297,13 @@ run_review_agent(...)
 store_review_async(...)                -> background task after the response is built: for up to 20
                                           chunks, store_code_embedding(..., source_ref="PR#<n>"),
                                           task_type RETRIEVAL_DOCUMENT, 768 dims, skipped if the
-                                          sha256 of the chunk text already exists
+                                          sha256 of the chunk text already exists; a database error
+                                          on one chunk is rolled back and the rest are still stored
 ```
 
-Nothing is stored before the search, and rows tagged with the current PR's `source_ref` are filtered out in SQL (`source_ref IS DISTINCT FROM 'PR#<n>'`, so untagged rows are kept). That keeps a review, including a re-review after a new push, from retrieving its own diff. When `pr_number` is 0, chunks are stored with no `source_ref` and nothing is excluded.
+Nothing is stored before the search, and rows tagged with the current PR's `source_ref` are filtered out in SQL (`source_ref IS DISTINCT FROM 'PR#<n>'`, so untagged rows are kept). That keeps a review, including a re-review after a new push, from retrieving its own diff. When `pr_number` is 0, chunks are stored with no `source_ref` and nothing is excluded. The duplicate check compares against every hunk in the diff, even though only the first 20 are used as queries.
+
+**Transition gap:** rows written before `source_ref` existed carry no tag, and hunk rows used real file paths. If a PR was reviewed before the change and gets a new push afterwards, its old hunks can still be retrieved for it, unless their text exactly matches a hunk in the new diff.
 
 Each retrieved chunk is logged as `review.rag_context.retrieved` with repo, PR number, file path and similarity. Chunk text and the query are not logged, and the SQLAlchemy engine sets `hide_parameters=True` so bound values stay out of database error messages.
 
@@ -599,7 +602,7 @@ Constraints the diagram can't show:
 
 ### FastAPI tables (SQLAlchemy, `models/embeddings.py`)
 
-FastAPI owns two pgvector tables in the same Postgres database. They are defined only in SQLAlchemy, have no Django model and no migration, and aren't joined to Django tables by any foreign key.
+FastAPI owns two pgvector tables in the same Postgres database. They are defined only in SQLAlchemy, have no Django model and no migration that creates them, and aren't joined to Django tables by any foreign key.
 
 ```mermaid
 erDiagram
@@ -647,7 +650,7 @@ The dotted lines are **logical references, not foreign keys**. Nothing enforces 
 - `code_embeddings.repo_full_name` is the `repo_full_name` the Celery worker sends to `POST /review/analyze`. It holds a name, not an ID, so when `initial_sync` picks up a renamed repository, its older chunks stay under the old name. After each review, a background task writes up to 20 diff chunks here with `source_ref` `PR#<number>` (none when `pr_number` is 0). Older versions also wrote one untagged row for the first 1000 characters of the diff (`file_path` `PR#<number>`, `chunk_type` `pr`); retrieval skips those rows for the PR being reviewed.
 - `review_embeddings.review_id` and `user_id` are meant to hold Django `Review` and `CustomUser` IDs, but nothing in the application writes this table today. `VectorStore.store_review_embedding` is only called from tests, and the `/review/analyze` request carries `user_id` but no review ID. As a result, the "past reviews" section of the prompt is always empty.
 
-There are B-tree indexes on `repo_full_name`, `language`, `review_id`, `user_id` and `code_hash`. There is no vector (HNSW or IVFFlat) index, so similarity search scans the table sequentially. As noted in section 5, nothing in the repo creates these tables yet.
+There are B-tree indexes on `repo_full_name`, `language`, `review_id`, `user_id` and `code_hash`. There is no vector (HNSW or IVFFlat) index, so similarity search scans the table sequentially. As noted in section 5, nothing in the repo creates these tables yet. For a table created by hand before `source_ref` existed, `backend/fastapi/migrations/sql/0001_code_embeddings_source_ref.sql` adds the column. It is idempotent and must be applied by hand.
 
 ### Enum values
 
