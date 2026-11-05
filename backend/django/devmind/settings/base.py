@@ -270,7 +270,6 @@ CELERY_TASK_ROUTES = {
     "repositories.trigger_review": {"queue": "review"},
     "apps.reviews.tasks.trigger_review_task": {"queue": "default"},
     "apps.reviews.tasks.post_github_comments_task": {"queue": "default"},
-    "apps.reviews.tasks.full_repo_scan_task": {"queue": "default"},
     "apps.reviews.tasks.cleanup_old_reviews": {"queue": "default"},
     "organizations.send_invite_email_task": {"queue": "default"},
     "organizations.sync_org_members_task": {"queue": "default"},

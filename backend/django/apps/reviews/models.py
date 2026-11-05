@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from django.conf import settings
 from django.db import models
 
 from apps.reviews.managers import ReviewQuerySet
@@ -203,77 +202,3 @@ class ReviewRun(models.Model):
 
     def __str__(self) -> str:
         return f"ReviewRun for Review #{self.review_id} ({self.model_used})"
-
-
-class RepoScan(models.Model):
-    """
-    Represents a full repository scan for code issues.
-
-    Status:
-    - queued: Waiting to be processed
-    - scanning: Currently scanning files
-    - completed: Scan finished
-    - failed: Scan failed (check summary for error)
-    """
-
-    STATUS_CHOICES = [
-        ("queued", "Queued"),
-        ("scanning", "Scanning"),
-        ("completed", "Completed"),
-        ("failed", "Failed"),
-    ]
-
-    repository = models.ForeignKey(
-        "repositories.Repository",
-        on_delete=models.CASCADE,
-        related_name="scans",
-    )
-    triggered_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.CASCADE,
-        related_name="repo_scans",
-    )
-    status = models.CharField(
-        max_length=20,
-        choices=STATUS_CHOICES,
-        default="queued",
-        db_index=True,
-    )
-    progress = models.IntegerField(
-        default=0,
-        help_text="Scan progress percentage 0-100.",
-    )
-    total_files = models.IntegerField(
-        default=0,
-        help_text="Total number of files to scan.",
-    )
-    files_scanned = models.IntegerField(
-        default=0,
-        help_text="Number of files scanned so far.",
-    )
-    total_issues = models.IntegerField(
-        default=0,
-        help_text="Total issues found.",
-    )
-    critical_count = models.IntegerField(default=0)
-    warning_count = models.IntegerField(default=0)
-    info_count = models.IntegerField(default=0)
-    scan_duration_ms = models.IntegerField(null=True, blank=True)
-    scan_id = models.IntegerField(null=True, blank=True, help_text="FastAPI scan ID")
-    summary = models.TextField(blank=True, default="")
-    created_at = models.DateTimeField(auto_now_add=True)
-    completed_at = models.DateTimeField(null=True, blank=True)
-
-    class Meta:
-        db_table = "reviews_reposcan"
-        ordering = ["-created_at"]
-
-    def __str__(self) -> str:
-        return f"RepoScan #{self.pk} ({self.status}) - {self.progress}%"
-
-    def save(self, *args, **kwargs) -> None:
-        if self.completed_at and self.created_at:
-            self.scan_duration_ms = int(
-                (self.completed_at - self.created_at).total_seconds() * 1000
-            )
-        super().save(*args, **kwargs)

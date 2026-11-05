@@ -320,25 +320,6 @@ paths:
               schema:
                 $ref: '#/components/schemas/RepositoryUpdate'
           description: ''
-  /api/v1/repositories/{id}/scan/:
-    post:
-      operationId: v1_repositories_scan_create
-      description: |-
-        POST /api/v1/repositories/{id}/scan/
-        Trigger a full repository scan.
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: integer
-        required: true
-      tags:
-      - v1
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          description: No response body
   /api/v1/repositories/connect/:
     post:
       operationId: v1_repositories_connect_create
@@ -460,29 +441,6 @@ paths:
       responses:
         '200':
           description: No response body
-  /api/v1/reviews/scans/{id}/:
-    get:
-      operationId: v1_reviews_scans_retrieve
-      description: |-
-        GET /api/v1/scans/{scan_id}/
-        Get scan details and report.
-      parameters:
-      - in: path
-        name: id
-        schema:
-          type: integer
-        required: true
-      tags:
-      - v1
-      security:
-      - jwtAuth: []
-      responses:
-        '200':
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/RepoScan'
-          description: ''
   /api/v1/settings/github/callback/:
     get:
       operationId: v1_settings_github_callback_retrieve
@@ -776,91 +734,6 @@ components:
           type: string
           minLength: 1
           maxLength: 255
-    RepoScan:
-      type: object
-      description: Serializer for RepoScan model.
-      properties:
-        id:
-          type: integer
-          readOnly: true
-        repository:
-          type: integer
-        repository_name:
-          type: string
-          readOnly: true
-        triggered_by:
-          type: integer
-        triggered_by_email:
-          type: string
-          readOnly: true
-        status:
-          $ref: '#/components/schemas/RepoScanStatusEnum'
-        progress:
-          type: integer
-          maximum: 2147483647
-          minimum: -2147483648
-          description: Scan progress percentage 0-100.
-        total_files:
-          type: integer
-          maximum: 2147483647
-          minimum: -2147483648
-          description: Total number of files to scan.
-        files_scanned:
-          type: integer
-          maximum: 2147483647
-          minimum: -2147483648
-          description: Number of files scanned so far.
-        total_issues:
-          type: integer
-          maximum: 2147483647
-          minimum: -2147483648
-          description: Total issues found.
-        critical_count:
-          type: integer
-          maximum: 2147483647
-          minimum: -2147483648
-        warning_count:
-          type: integer
-          maximum: 2147483647
-          minimum: -2147483648
-        info_count:
-          type: integer
-          maximum: 2147483647
-          minimum: -2147483648
-        scan_duration_ms:
-          type: integer
-          maximum: 2147483647
-          minimum: -2147483648
-          nullable: true
-        created_at:
-          type: string
-          format: date-time
-          readOnly: true
-        completed_at:
-          type: string
-          format: date-time
-          readOnly: true
-          nullable: true
-      required:
-      - completed_at
-      - created_at
-      - id
-      - repository
-      - repository_name
-      - triggered_by
-      - triggered_by_email
-    RepoScanStatusEnum:
-      enum:
-      - queued
-      - scanning
-      - completed
-      - failed
-      type: string
-      description: |-
-        * `queued` - Queued
-        * `scanning` - Scanning
-        * `completed` - Completed
-        * `failed` - Failed
     Repository:
       type: object
       description: Read serializer — exposes all repository metadata.
