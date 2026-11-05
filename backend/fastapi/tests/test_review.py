@@ -16,33 +16,48 @@ class TestCalculateRiskScore:
 
     def test_critical_severity(self):
         score = calculate_risk_score([{"severity": "critical"}])
-        assert score == 40
+        assert score == 70
 
     def test_error_severity(self):
         score = calculate_risk_score([{"severity": "error"}])
-        assert score == 25
+        assert score == 45
 
     def test_warning_severity(self):
         score = calculate_risk_score([{"severity": "warning"}])
-        assert score == 10
+        assert score == 20
 
     def test_info_severity(self):
         score = calculate_risk_score([{"severity": "info"}])
-        assert score == 2
+        assert score == 5
 
     def test_multiple_comments(self):
+        """Highest severity base (critical 70) + 3 per other finding above info."""
         comments = [
+            {"severity": "warning"},
             {"severity": "critical"},
             {"severity": "error"},
-            {"severity": "warning"},
+            {"severity": "info"},
         ]
         score = calculate_risk_score(comments)
-        assert score == 75
+        assert score == 76
 
-    def test_caps_at_100(self):
+    def test_extra_findings_add_at_most_15(self):
         comments = [{"severity": "critical"}] * 10
         score = calculate_risk_score(comments)
-        assert score == 100
+        assert score == 85
+
+    def test_unknown_severity_counts_as_info(self):
+        assert calculate_risk_score([{"severity": "blocker"}, {}]) == 5
+
+    def test_ten_info_notes_score_below_one_critical(self):
+        ten_info = calculate_risk_score([{"severity": "info"}] * 10)
+        one_critical = calculate_risk_score([{"severity": "critical"}])
+        assert ten_info < one_critical
+
+    def test_nitpicks_never_outscore_one_critical(self):
+        one_critical = calculate_risk_score([{"severity": "critical"}])
+        assert calculate_risk_score([{"severity": "info"}] * 50) < one_critical
+        assert calculate_risk_score([{"severity": "warning"}] * 50) < one_critical
 
 
 class TestReviewModels:
@@ -96,6 +111,9 @@ class TestAnalyzeEndpoint:
             assert response.pr_number == 1
             assert response.risk_score >= 0
             assert response.risk_score <= 100
+            assert set(response.analyzer_runs) == {"security", "quality", "tests"}
+            assert response.analyzer_runs["security"].model == "google/gemini"
+            assert response.analyzer_runs["security"].prompt_tokens == 10
 
     @pytest.mark.asyncio
     async def test_analyze_handles_error(self):
