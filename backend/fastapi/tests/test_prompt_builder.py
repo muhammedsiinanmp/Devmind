@@ -58,7 +58,8 @@ class TestBuildReviewPrompt:
         context = PromptContext()
         prompt = build_review_prompt(context)
 
-        assert REVIEW_SYSTEM_PROMPT in prompt
+        # The system prompt goes in the system message, not the user prompt.
+        assert REVIEW_SYSTEM_PROMPT not in prompt
         assert "CODE CHANGES" in prompt
 
     def test_build_prompt_with_diff_chunks(self):
@@ -204,7 +205,7 @@ class TestDiffLineNumbersInPrompt:
         prompt = build_review_prompt(PromptContext(diff_chunks=parse_diff(self.DIFF)))
 
         assert "L41 + z = 4" in prompt
-        assert "line_number" in prompt
+        assert "line_number" in REVIEW_SYSTEM_PROMPT
 
 
 def _file_diff(path, lines, start=1):

@@ -128,7 +128,7 @@ class TestAnalyzeEndpoint:
             pr_number=1,
         )
 
-        async def fake_generate(messages, user_id=None):
+        async def fake_generate(messages, user_id=None, **kwargs):
             focus = messages[0]["content"].splitlines()[-1].lower()
             content = "Looks fine to me." if "security" in focus else "[]"
             return LLMResponse(
