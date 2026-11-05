@@ -79,6 +79,16 @@ class TestSnappedSuggestedFix:
         assert "c = compute()" in comments[0].body
         assert "```suggestion" not in comments[0].body
 
+    def test_snapped_fix_containing_a_fence_stays_inside_its_block(self):
+        fix = 'doc = """\n```python\nprint(1)\n```\n"""'
+        comment = _comment(14).model_copy(update={"suggested_fix": fix})
+
+        comments, _ = anchor_comments(parse_diff(DIFF), [comment])
+
+        body = comments[0].body
+        assert "\n````\n" + fix + "\n````" in body
+        assert "\n```\n" not in body.replace(fix, "")
+
     def test_anchored_comment_keeps_its_suggested_fix(self):
         comment = _comment(11).model_copy(update={"suggested_fix": "b = 4"})
 

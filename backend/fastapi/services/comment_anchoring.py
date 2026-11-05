@@ -9,6 +9,7 @@ poster folds into the review body.
 """
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Optional
 
@@ -72,9 +73,13 @@ def _snap(comment: ReviewComment, line: int) -> ReviewComment:
     """
     update: dict = {"line_number": line}
     if comment.suggested_fix:
+        fix = comment.suggested_fix
+        # The fence must be longer than any backtick run inside the fix.
+        longest_run = max((len(run) for run in re.findall(r"`+", fix)), default=0)
+        fence = "`" * max(3, longest_run + 1)
         update["body"] = (
             f"{comment.body}\n\nSuggested fix (written for line "
-            f"{comment.line_number}):\n```\n{comment.suggested_fix}\n```"
+            f"{comment.line_number}):\n{fence}\n{fix}\n{fence}"
         )
         update["suggested_fix"] = None
     return comment.model_copy(update=update)
