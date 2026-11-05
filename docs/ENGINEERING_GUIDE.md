@@ -53,6 +53,7 @@ There's no `FERNET_KEY` variable. The encryption key comes from `DJANGO_SECRET_K
 | `GROQ_API_KEY` | Groq key for `llama-3.3-70b-versatile` (second) |
 | `GITHUB_TOKEN` | GitHub token with access to GitHub Models, for `gpt-4o-mini` (third) |
 | `LLM_FAILOVER_ENABLED` | Default `True`. When `False`, only the first provider in the chain is tried. |
+| `REVIEW_TEMPERATURE` | Default `0.1`. Sampling temperature for the review analyzers' LLM calls (0.0 to 2.0). |
 
 There's no server-side OpenAI provider. OpenAI keys can be added per user through the BYOK settings.
 

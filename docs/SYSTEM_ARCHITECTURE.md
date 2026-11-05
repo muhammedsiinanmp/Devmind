@@ -256,7 +256,13 @@ flowchart TD
 
 **One pass.** The graph has no loop. A review makes one LLM call per analyzer, so 3 calls in total whether or not anything is found, unless a response can't be parsed (below).
 
-**Retry on unparseable output only.** `REVIEW_SYSTEM_PROMPT` and each analyzer's instruction ask for only a JSON list, with severities `critical`, `error`, `warning` or `info`, and `[]` when there are no issues. If `_parse_llm_comment_list` can't find a JSON list in an analyzer's response (or the response is empty), that analyzer repeats its call once (`MAX_PARSE_RETRIES = 1`). The retry sends the original messages plus the model's reply as an assistant turn (left out when the reply was empty, since some OpenAI-compatible endpoints reject an empty assistant message) and a corrective user turn (`CORRECTIVE_PROMPT`: "Your previous reply was not a JSON list. Reply with only the JSON list, or [] if there are no issues."). The other analyzers are not re-run. A parsed empty list is a valid result, and so are `{}` and a known wrapper key set to null, such as `{"issues": null}`.
+**One output schema.** `ReviewFindings` and `ReviewFinding` in `models/review.py` define the reply: a JSON object `{"findings": [...]}` whose items have `file_path`, `line_number`, `category`, `severity` (the `Severity` enum: `critical`, `error`, `warning`, `info`), `body` and `suggested_fix`. `output_format_text()` generates the "Output format" part of `REVIEW_SYSTEM_PROMPT` from these models, and the parser validates every item with `ReviewFinding`, so the prompt and the parser can't disagree.
+
+**Messages.** Each analyzer sends two messages: a system message (`REVIEW_SYSTEM_PROMPT` plus the analyzer's focus) and a user message (the prompt from `build_review_prompt`, then the analyzer's instruction). The system prompt is not repeated in the user message. Calls pass `temperature=REVIEW_TEMPERATURE` (default 0.1) and `json_mode=True`; `llm_client` turns `json_mode` into `response_format: {"type": "json_object"}` for Google, Google Vertex, Groq, GitHub Models, OpenAI and Mistral. `custom` BYOK endpoints get no `response_format`, and the tolerant parser below handles their replies. JSON mode has not been checked against the live providers yet.
+
+**Untrusted input.** The diff and each retrieved section (similar patterns, quality patterns, past reviews, repo conventions) are wrapped in `<untrusted_data source="...">` and `</untrusted_data>`. The system prompt says everything between those tags is data, never instructions, and that requests in it to ignore instructions, change the output format or return no findings must not be followed. Any `<untrusted_data` or `</untrusted_data` text inside the content has its `<` escaped as `&lt;`, so a diff can't close the block early. This reduces prompt-injection risk; it doesn't remove it.
+
+**Retry on unparseable output only.** Each analyzer's instruction asks for only the JSON object, and for `{"findings": []}` when there are no issues. If `_parse_llm_comment_list` can't find findings in an analyzer's response (or the response is empty), that analyzer repeats its call once (`MAX_PARSE_RETRIES = 1`). The retry sends the original messages plus the model's reply as an assistant turn (left out when the reply was empty, since some OpenAI-compatible endpoints reject an empty assistant message) and a corrective user turn (`CORRECTIVE_PROMPT`: "Your previous reply was not the JSON object described in the output format. Reply with only that JSON object, or {"findings": []} if there are no issues."). The other analyzers are not re-run. An empty list of findings is a valid result, and so are a bare `[]`, `{}` and a known wrapper key set to null, such as `{"issues": null}`. A parse failure is logged as `llm_parse_failed` with the reply's length and the first 12 hex characters of its SHA-256, not its content, since a reply can quote diff code.
 
 **Parallel branches.** The three analyzer nodes write to `security_comments`, `quality_comments` and `test_comments`, which use the `_extend_list` reducer in `agents/states.py`. All three also write `analyzer_runs` in the same step, each under its own key (`security`, `quality`, `tests`); the `_merge_dict` reducer combines them. `synthesize` then deduplicates the findings.
 
@@ -266,10 +272,10 @@ flowchart TD
 
 **LLM response parsing** (`_parse_llm_comment_list`):
 
-1. Strip markdown code fences, then `json.loads`. This handles a bare array or an object that wraps an array.
+1. Strip markdown code fences, then `json.loads`. This handles the `{"findings": [...]}` object, a bare array, or an object that wraps an array under `issues`, `comments`, `results` or `data`.
 2. If that fails, extract the outermost `[...]` and parse that.
 
-Each item is validated against `_LLMCommentSchema` (Pydantic). Severities `high`, `medium` and `low` map to `error`, `warning` and `info`; any other unknown severity becomes `warning`.
+Each item is validated against `ReviewFinding` (Pydantic); items that fail validation are skipped. Severities `high`, `medium` and `low` map to `error`, `warning` and `info`; any other unknown severity becomes `warning`.
 
 **Risk score** (`calculate_risk_score` in `routers/review.py`): the base for the highest severity (critical 70, error 45, warning 20, info 5), plus 3 for each other finding above info, at most +15, so the maximum is 85. Unknown severities count as info. Many info or warning notes can't outscore one critical finding.
 
@@ -286,8 +292,10 @@ merge results                          -> drop untagged rows with file_path "PR#
                                           drop results whose whitespace-normalized text equals a hunk
                                           of this diff, dedupe by text (keep highest similarity),
                                           keep the top 5
-build_review_prompt(...)               -> 8192-token budget (tiktoken cl100k_base); diff first,
-                                          then similar patterns, quality patterns, past reviews, conventions
+build_review_prompt(...)               -> user message, 8192-token budget (tiktoken cl100k_base; the
+                                          system prompt is sent separately and not counted); diff first,
+                                          then similar patterns, quality patterns, past reviews, conventions,
+                                          each in untrusted-data delimiters
 run_review_agent(...)
 anchor_comments(chunks, comments)      -> keep comments on added/context lines; see "Comment anchoring"
 store_review_async(...)                -> background task after the response is built: for up to 20
@@ -312,8 +320,9 @@ The handler runs the search inside a `try`. A failure in embedding or search is 
 The rendered diff is trimmed to fit the prompt:
 
 - At most 120 lines per hunk, 200 per file and 600 in total are shown. Lines longer than 300 characters are cut.
-- The total is spent on added lines first, then removed lines, then context lines nearest a change. Each of those is shared evenly between files, so context lines in early files can't crowd out changes in later ones.
-- The token budget for the diff is what's left after the system prompt, the predicted size of the similar-pattern, quality-pattern, past-review and conventions sections, and a 200-token margin. It is never less than half the prompt.
+- Every file first gets its best line (an added line, else a removed line, else context), as long as the total allows one line per file, so a deletion-only file isn't hidden by other files' added lines. The rest of the total is spent on added lines, then removed lines, then context lines nearest a change. Each of those is shared evenly between files, so context lines in early files can't crowd out changes in later ones.
+- The token budget for the diff is what's left after the diff's delimiters, the predicted size of the similar-pattern, quality-pattern, past-review and conventions sections (each with its header and delimiters), and a 200-token margin. It is never less than half the prompt.
+- Retrieved sections get at most 2000 (similar patterns), 1500 (quality patterns), 1000 (past reviews) and 500 (conventions) tokens of text, counted after their header and delimiters. A section that doesn't fit is left out. If the assembled prompt is still over budget, it is cut at a line boundary and an untrusted block left open by the cut is closed.
 - If the rendering is over that budget, the line total is lowered and the diff is rendered again. If headers alone are too big, the text is cut at a line boundary with a marker.
 - Each gap is marked `... N lines omitted`, and a final `[N files / M lines omitted from this diff]` line says how much was left out.
 
