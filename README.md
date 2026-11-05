@@ -1,6 +1,7 @@
 # DevMind
 
 [![CI](https://github.com/muhammedsiinanmp/Devmind/actions/workflows/ci.yml/badge.svg)](https://github.com/muhammedsiinanmp/Devmind/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 DevMind is an AI pull-request reviewer for GitHub. When a pull request is opened or updated, it reads the diff, runs it through a multi-step LLM review pipeline, and posts the findings back to the pull request as inline review comments.
 
@@ -14,46 +15,68 @@ DevMind is an AI pull-request reviewer for GitHub. When a pull request is opened
 
 ## Architecture
 
+**Context.** Who and what DevMind talks to:
+
+```mermaid
+flowchart LR
+    Author["PR author<br/>opens or updates a pull request"]
+    User["DevMind user<br/>signs in, connects repositories,<br/>reads reviews, adds BYOK keys"]
+    DM["DevMind<br/>React app, Django API, Celery worker,<br/>FastAPI AI service, Postgres, Redis"]
+    GH["GitHub<br/>OAuth, repositories, webhooks,<br/>pull request reviews"]
+    LLM["LLM and embedding APIs<br/>server keys: Gemini, Groq, GitHub Models<br/>or the user's own keys"]
+
+    Author -->|"push to a pull request"| GH
+    User -->|"browser"| DM
+    GH -->|"pull_request webhook, HMAC-signed"| DM
+    DM -->|"OAuth, repo sync, webhook install,<br/>diff fetch, review comments"| GH
+    DM -->|"chat completions, embeddings"| LLM
+```
+
+**Containers.** The processes inside DevMind and how they connect:
+
 ```mermaid
 flowchart LR
     subgraph External
-        GH[GitHub]
-        LLM[LLM providers<br/>Gemini / Groq / GitHub Models<br/>+ user BYOK]
-        SB[Supabase<br/>optional]
+        GH["GitHub"]
+        LLM["LLM providers<br/>Gemini / Groq / GitHub Models<br/>+ user BYOK"]
+        SB["Supabase<br/>optional"]
     end
 
-    FE[React app<br/>Vite dev server :5173]
-    NGX[Nginx :80]
+    FE["React app<br/>Vite dev server :5173"]
+    NGX["Nginx :80"]
 
     subgraph Django["Django :8000"]
-        API[REST API + OAuth<br/>webhook receiver]
+        API["REST API + OAuth<br/>webhook receiver"]
     end
 
     subgraph Workers["Celery"]
-        CW[celery_worker]
+        CW["celery_worker"]
     end
 
-    FA[FastAPI :8001<br/>LangGraph review agent]
+    FA["FastAPI :8001<br/>LangGraph review agent"]
 
-    PG[(PostgreSQL 16<br/>+ pgvector)]
-    RD[(Redis)]
-    PR[Prometheus] --> GR[Grafana]
+    PG[("PostgreSQL 16<br/>+ pgvector")]
+    RD[("Redis")]
+    PR["Prometheus"] --> GR["Grafana"]
 
-    FE -->|/api proxy| API
-    GH -->|webhook| NGX --> API
-    API -->|enqueue| RD
+    FE -->|"/api proxy"| API
+    GH -->|"webhook"| API
+    NGX -->|"/ and /metrics"| API
+    API -->|"enqueue"| RD
     RD --> CW
-    CW -->|fetch diff, post comments| GH
-    CW -->|POST /review/analyze<br/>X-Internal-Secret| FA
-    FA -->|BYOK key lookup<br/>X-Internal-Secret| API
+    CW -->|"fetch diff, post comments"| GH
+    CW -->|"POST /review/analyze, /scan/full<br/>X-Internal-Secret"| FA
+    FA -->|"BYOK key lookup<br/>X-Internal-Secret"| API
     FA --> LLM
-    FA -->|embeddings + similarity search| PG
-    FA -->|rate-limit counters| RD
+    FA -->|"embeddings + similarity search"| PG
+    FA -->|"rate-limit counters"| RD
     API --- PG
     CW --- PG
-    CW -.->|status updates| SB
-    PR -->|scrape /metrics, /fastapi-metrics| NGX
+    CW -.->|"status updates"| SB
+    PR -->|"scrape /metrics, /fastapi-metrics"| NGX
 ```
+
+The deployment view (all nine compose services, ports and Redis databases), the data model and the scan flow are in [docs/SYSTEM_ARCHITECTURE.md](docs/SYSTEM_ARCHITECTURE.md).
 
 A review moves through the system like this:
 
@@ -62,7 +85,7 @@ A review moves through the system like this:
 3. FastAPI parses the diff, embeds the chunks, searches pgvector for similar code, builds a prompt within a token budget and runs the LangGraph agent.
 4. The worker saves the comments and a `ReviewRun` record, then queues a separate task that posts the comments to GitHub. If posting fails, that task can be retried without re-running the review.
 
-The full design is in [docs/SYSTEM_ARCHITECTURE.md](docs/SYSTEM_ARCHITECTURE.md).
+The full design, including [architectural decisions and their trade-offs](docs/SYSTEM_ARCHITECTURE.md#12-architectural-decisions), is in [docs/SYSTEM_ARCHITECTURE.md](docs/SYSTEM_ARCHITECTURE.md).
 
 ## Engineering highlights
 
@@ -263,6 +286,16 @@ These are current gaps in the code, listed so nobody has to find them by surpris
 
 | Document | Contents |
 |---|---|
-| [docs/SYSTEM_ARCHITECTURE.md](docs/SYSTEM_ARCHITECTURE.md) | Services, request flows, AI pipeline, data model, failure handling, security model, design decisions |
+| [docs/SYSTEM_ARCHITECTURE.md](docs/SYSTEM_ARCHITECTURE.md) | Services, deployment topology, review and scan flows, AI pipeline, data model (Django and pgvector tables), failure handling, security model, architectural decisions |
 | [docs/ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md) | Environment variables, local setup, workflows, full API reference, testing, deployment notes, troubleshooting, known gaps |
 | [frontend/README.md](frontend/README.md) | Frontend stack, scripts and how it talks to the API |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | Branches, pull requests, required CI checks and the checks to run locally |
+| [SECURITY.md](SECURITY.md) | How to report a vulnerability |
+
+## Contributing and security
+
+Contributions go through pull requests into `dev`; see [CONTRIBUTING.md](CONTRIBUTING.md). Please report vulnerabilities privately as described in [SECURITY.md](SECURITY.md), not in a public issue.
+
+## License
+
+DevMind is released under the [MIT License](LICENSE).
