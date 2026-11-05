@@ -164,3 +164,21 @@ rename to src/after.py
         assert chunks[0].removed_lines == ["-- old comment"]
         assert _numbered(chunks[0], "added") == [(1, "++ new comment")]
         assert _numbered(chunks[0], "context") == [(2, "SELECT 1;")]
+
+    def test_crlf_blank_context_line_does_not_end_the_hunk(self):
+        # A blank context line whose leading space was stripped arrives as "\r".
+        diff = (
+            "--- a/win.py\r\n"
+            "+++ b/win.py\r\n"
+            "@@ -1,3 +1,4 @@\r\n"
+            " a = 1\r\n"
+            "\r\n"
+            "+b = 2\r\n"
+            " c = 3\r\n"
+        )
+        chunks = parse_diff(diff)
+
+        assert len(chunks) == 1
+        assert chunks[0].file_path == "win.py"
+        assert _numbered(chunks[0], "added") == [(3, "b = 2")]
+        assert _numbered(chunks[0], "context") == [(1, "a = 1"), (2, ""), (4, "c = 3")]

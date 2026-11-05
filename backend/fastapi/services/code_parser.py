@@ -223,7 +223,8 @@ def parse_diff(diff_text: str) -> list[DiffChunk]:
         ):
             chunks.append(current)
 
-    lines = diff_text.split("\n")
+    # Strip the "\r" of CRLF line endings so a blank "\r" line reads as context.
+    lines = [ln[:-1] if ln.endswith("\r") else ln for ln in diff_text.split("\n")]
     if lines and lines[-1] == "":
         lines.pop()
 
