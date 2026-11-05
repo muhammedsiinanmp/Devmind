@@ -27,7 +27,7 @@
 
 DevMind is a monorepo with two backend processes and a React frontend:
 
-- **Django** (`backend/django`) handles GitHub OAuth, users, repositories, webhook ingestion, review orchestration (in Celery tasks), the BYOK settings API and posting comments to GitHub. It uses the Django ORM, DRF, SimpleJWT and Celery. Channels consumers are defined in `realtime/` but are not currently served (see [WebSocket status](#websocket-status)).
+- **Django** (`backend/django`) handles GitHub OAuth, users, repositories, webhook ingestion, review orchestration (in Celery tasks), the BYOK settings API and posting comments to GitHub. It uses the Django ORM, DRF, SimpleJWT and Celery. It serves HTTP only; review status reaches the browser by polling (see [Review status updates](#review-status-updates)).
 - **FastAPI** (`backend/fastapi`) runs the AI work: diff parsing, embeddings and pgvector similarity search, prompt building, the LangGraph review agent and the multi-provider LLM client. It also runs a regex-based full-repository scan.
 - **Frontend** (`frontend`) is a React + Vite single-page app. It talks only to Django (`/api/v1`) and never calls FastAPI.
 
@@ -47,13 +47,13 @@ Services defined in `docker-compose.yml`:
 | `celery_worker` | same image as Django | - | Consumes queues `default`, `review`, `notifications` |
 | `flower` | `mher/flower:2.0` | 5555 | Celery monitor UI, on the same `CELERY_BROKER_URL` as the worker |
 | `postgres` | `pgvector/pgvector:pg16` | 5432 | Primary datastore; pgvector extension available |
-| `redis` | `redis:7-alpine` | 6379 | Cache, channel layer, Celery broker/results, LLM rate limiter |
+| `redis` | `redis:7-alpine` | 6379 | Cache, Celery broker/results, LLM rate limiter |
 | `prometheus` | `prom/prometheus:latest` | 9090 | Scrapes Django and FastAPI via Nginx; 15-day retention |
 | `grafana` | `grafana/grafana:latest` | 3000 | Provisioned Prometheus datasource and `devmind-overview` dashboard |
 
 The frontend isn't a compose service. Run it with `pnpm dev` (port 5173). `frontend/Dockerfile` exists but compose doesn't use it.
 
-Redis database allocation (db 0 for cache, channel layer and rate limiter; db 1 broker; db 2 results) is broken down in [Redis usage by database](#redis-usage-by-database). Flower reads `CELERY_BROKER_URL` too, so it watches the same broker database as the worker.
+Redis database allocation (db 0 for cache and rate limiter; db 1 broker; db 2 results) is broken down in [Redis usage by database](#redis-usage-by-database). Flower reads `CELERY_BROKER_URL` too, so it watches the same broker database as the worker.
 
 ---
 
@@ -83,7 +83,7 @@ flowchart TB
     end
 
     Browser --> VITE
-    VITE -->|"proxies /api and /ws to localhost:8000"| DJ
+    VITE -->|"proxies /api to localhost:8000"| DJ
     GH -->|"webhook POST, HMAC-SHA256<br/>via DEVMIND_PUBLIC_URL"| DJ
     NGX -->|"/ and /health/ and /metrics"| DJ
     NGX -->|"/fastapi-metrics to /metrics"| FA
@@ -94,7 +94,6 @@ flowchart TB
     CW -->|"consume db 1, results db 2"| RD
     FL -->|"monitor broker db 1"| RD
     DJ -->|"cache db 0"| RD
-    CW -->|"channel layer group_send, db 0"| RD
     FA -->|"rate-limit counters, db 0"| RD
 
     DJ --> PG
@@ -115,7 +114,7 @@ Notes on the diagram:
 - **Nginx routes** (`nginx/nginx.conf`): `/metrics` goes to `django:8000/metrics`, `/fastapi-metrics` to `fastapi:8001/metrics`, and `/health/` and `/` to Django. Nginx has no WebSocket upgrade block and doesn't route `/api` anywhere other than Django.
 - **Published ports.** Django (8000) and FastAPI (8001) are published directly as well as sitting behind Nginx. Postgres (5432) and Redis (6379) are published too, which suits local development only.
 - **Webhooks.** GitHub calls whatever URL `DEVMIND_PUBLIC_URL` points to. The `make ngrok` target tunnels to port 8000, so in local development webhooks reach Django directly. Nginx's `/` route would also forward them to Django.
-- **Vite** runs on the host with `pnpm dev`. Its proxy (`frontend/vite.config.ts`) forwards `/api` and `/ws` to `localhost:8000`. The `/ws` proxy has nothing to connect to, because Django doesn't serve WebSockets (see [WebSocket status](#websocket-status)).
+- **Vite** runs on the host with `pnpm dev`. Its proxy (`frontend/vite.config.ts`) forwards `/api` to `localhost:8000`.
 - **Prometheus** scrapes both apps through `nginx:80` (`prometheus/prometheus.yml`), and Grafana reads from Prometheus with a provisioned datasource.
 
 ### Redis usage by database
@@ -125,7 +124,6 @@ All values come from the defaults in `.env.example` and `devmind/settings/base.p
 | DB | Variable | Used by | What for (verified in code) |
 |---|---|---|---|
 | 0 | `REDIS_URL` | Django | Django cache (`django_redis`): OAuth `state` tokens (10 min, `apps/accounts/oauth.py`), organization invite tokens (72 h, `apps/organizations/views.py`) and DRF throttle counters (base settings only; development and test settings turn throttling off). `/health/` pings this connection. |
-| 0 | `REDIS_URL` | Django, Celery worker | Channels layer (`channels_redis`). The orchestrator calls `group_send` on status changes; nothing serves the consumers yet. |
 | 0 | `redis_url` | FastAPI | LLM rate-limit counters `ratelimit:{provider}:{minute}` (`services/rate_limiter.py`) |
 | 1 | `CELERY_BROKER_URL` | Django, Celery worker, Flower | Task broker |
 | 2 | `CELERY_RESULT_BACKEND` | Celery worker | Task results |
@@ -178,7 +176,7 @@ sequenceDiagram
     CW->>GH: POST /repos/{owner}/{repo}/pulls/{pr}/reviews (event COMMENT)
 ```
 
-On each status change, the orchestrator also calls `channel_layer.group_send` (group `review_<id>`) and, when Supabase is configured, pushes the status there. Both are best-effort.
+The orchestrator only writes status to Postgres. While a review is `pending` or `processing`, the frontend's `ReviewStatus` component polls `GET /api/v1/reviews/<id>/` every 3 seconds and stops on `completed`, `failed` or unmount.
 
 ### Idempotency
 
@@ -370,17 +368,9 @@ The state token comes from `secrets.token_urlsafe(32)` (`apps/accounts/oauth.py`
 
 The frontend stores both tokens in `localStorage` and refreshes on 401 (`frontend/src/api/client.ts`).
 
-### WebSocket status
+### Review status updates
 
-`devmind/asgi.py` builds a Channels `ProtocolTypeRouter` with `JwtQueryAuthMiddleware`, which reads `?token=` from the URL. `realtime/routing.py` maps `ws/reviews/<id>/` and `ws/notifications/`. The consumers are covered by `realtime/tests/test_consumers.py`.
-
-None of this is served today:
-
-- `ASGI_APPLICATION` isn't set and `daphne` isn't in `INSTALLED_APPS`, so `runserver` serves HTTP only (a WebSocket upgrade to `/ws/reviews/1/` returns 404).
-- The production image runs `gunicorn devmind.wsgi:application`.
-- `nginx/nginx.conf` has no WebSocket upgrade block.
-
-Separately, `ReviewStatusConsumer` accepts any authenticated user for any review ID without checking ownership. That needs fixing before the endpoint is enabled.
+There are no WebSockets. `devmind/asgi.py` is the plain Django ASGI app, the production image runs `gunicorn devmind.wsgi:application`, and Nginx has no upgrade block. The browser reads status through the same JWT-authenticated REST endpoint as everything else, so the ownership checks on `GET /api/v1/reviews/<id>/` apply. While a review is `pending` or `processing`, the frontend's `ReviewStatus` component polls `GET /api/v1/reviews/<id>/` every 3 seconds and stops on `completed`, `failed` or unmount. Each request waits for the previous one, and a failed request is retried on the next tick. The loop is in `frontend/src/lib/reviewStatusPolling.ts`.
 
 ### Service-to-service authentication
 
@@ -699,8 +689,7 @@ stateDiagram-v2
 | Failure | Behavior |
 |---|---|
 | Redis unavailable (FastAPI) | Rate limiter logs and lets the request through |
-| Channels push fails | Caught and logged |
-| Supabase unavailable | Caught and logged; review continues |
+| Status poll request fails | `ReviewStatus` skips that tick and tries again 3 seconds later |
 | An LLM provider fails | Next provider in the chain; all failed means FastAPI returns 429 and the review fails |
 | Embedding/search fails | Logged; review runs without retrieved context |
 
@@ -812,7 +801,7 @@ Each decision lists what the code does, why, and the trade-offs. Some also note 
 - [Token encryption with Fernet and a key derived from SECRET_KEY](#token-encryption-with-fernet-and-a-key-derived-from-secret_key)
 - [JWTs in localStorage](#jwts-in-localstorage)
 - [GitHub OAuth App and per-repository webhooks instead of a GitHub App](#github-oauth-app-and-per-repository-webhooks-instead-of-a-github-app)
-- [Fetch on demand instead of WebSockets for review status](#fetch-on-demand-instead-of-websockets-for-review-status)
+- [Polling instead of WebSockets for review status](#polling-instead-of-websockets-for-review-status)
 - [One Redis instance in several roles](#one-redis-instance-in-several-roles)
 - [Shared-secret service-to-service authentication](#shared-secret-service-to-service-authentication)
 
@@ -903,7 +892,7 @@ Each decision lists what the code does, why, and the trade-offs. Some also note 
 
 ### JWTs in localStorage
 
-**What:** SimpleJWT issues an access token (60 minutes by default) and a refresh token (30 days by default, rotated and blacklisted after rotation). The frontend stores both in `localStorage` and sends `Authorization: Bearer` (`frontend/src/api/client.ts`). The unused WebSocket client would also put the access token in the URL query string.
+**What:** SimpleJWT issues an access token (60 minutes by default) and a refresh token (30 days by default, rotated and blacklisted after rotation). The frontend stores both in `localStorage` and sends `Authorization: Bearer` (`frontend/src/api/client.ts`).
 
 **Why:** It's the simplest setup for a SPA: the axios client adds the header in one interceptor and refreshes on 401, and the API needs no cookie or CSRF configuration. Because the browser never attaches a bearer token on its own, the JWT-authenticated API isn't exposed to CSRF.
 
@@ -926,19 +915,19 @@ Each decision lists what the code does, why, and the trade-offs. Some also note 
 
 **What would change at larger scale:** A GitHub App would allow per-repository installation, fine-grained permissions, short-lived installation tokens, one app-level webhook and a bot identity for comments. Adopting one would mean replacing the token storage, sync and webhook-install code.
 
-### Fetch on demand instead of WebSockets for review status
+### Polling instead of WebSockets for review status
 
-**What:** The frontend learns review and scan status by HTTP requests: the dashboard and review pages fetch `GET /reviews/` or `GET /reviews/<id>/` when they load, and the scan page fetches `GET /reviews/scans/<id>/` on load and when the user clicks Refresh. Nothing polls on a timer. `ReviewStatus.tsx` tries to open `ws/reviews/<id>/` and stays static when that fails, which it always does today.
+**What:** The dashboard and review pages fetch `GET /reviews/` or `GET /reviews/<id>/` when they load. For each review shown as `pending` or `processing`, `ReviewStatus.tsx` then polls `GET /reviews/<id>/` every 3 seconds until the status is `completed` or `failed` or the component unmounts. The scan page fetches `GET /reviews/scans/<id>/` on load and when the user clicks Refresh; it doesn't poll.
 
-**Why:** This is the current state rather than a finished design. The WebSocket pieces exist (Channels consumers in `realtime/`, a `ProtocolTypeRouter` in `devmind/asgi.py`, the Vite `/ws` proxy and orchestrator `group_send` calls), but `ASGI_APPLICATION` isn't set, the production image runs `gunicorn devmind.wsgi:application` and Nginx has no upgrade block. The orchestrator can also push status to Supabase, but the frontend doesn't read from Supabase.
+**Why:** Django Channels consumers and an optional Supabase status push used to exist but were never served: there was no ASGI server, the production image runs gunicorn on WSGI and Nginx had no upgrade block. They were removed rather than finished. Polling reuses the existing authenticated REST endpoint and its ownership checks, so there's no second auth path (such as a JWT in a WebSocket query string) to secure.
 
-**Tradeoffs:** Users reload to see a review finish. In exchange, the server only has to handle short HTTP requests under WSGI, with no long-lived connections.
+**Tradeoffs:** Status shows up to 3 seconds late, and every open page with an unfinished review sends a request every 3 seconds. In exchange, the server only handles short HTTP requests under WSGI, with no long-lived connections and no channel layer.
 
-**What would change at larger scale:** Serving the existing consumers needs an ASGI server, `ASGI_APPLICATION`, an Nginx upgrade route and an ownership check in `ReviewStatusConsumer`, which today accepts any authenticated user for any review ID. Polling `GET /reviews/<id>/` on an interval is the simpler alternative, at the cost of extra read traffic.
+**What would change at larger scale:** Many open dashboards would make polling the main read load. At that point, server-sent events or WebSockets behind an ASGI server, with a per-review ownership check, would push changes instead.
 
 ### One Redis instance in several roles
 
-**What:** A single `redis:7-alpine` service is the Celery broker (db 1) and result backend (db 2), the Django cache for OAuth state, invite tokens and DRF throttle counters, the Channels layer, and the FastAPI rate-limit store (all db 0). See [Redis usage by database](#redis-usage-by-database).
+**What:** A single `redis:7-alpine` service is the Celery broker (db 1) and result backend (db 2), the Django cache for OAuth state, invite tokens and DRF throttle counters, and the FastAPI rate-limit store (all db 0). See [Redis usage by database](#redis-usage-by-database).
 
 **Why:** It's one service to run, and every role needs short-lived keys or queues, which Redis handles well. Separate database numbers keep broker and result keys apart from cache keys.
 
@@ -946,7 +935,7 @@ Each decision lists what the code does, why, and the trade-offs. Some also note 
 - The webhook view doesn't catch errors from `.delay()`, so webhook deliveries fail with a server error and reviews aren't queued.
 - GitHub sign-in fails, because the OAuth state can't be stored or checked.
 - Pending invites live only in Redis, so losing the data loses the invites.
-- The FastAPI rate limiter fails open and lets requests through. Channels pushes are caught and logged.
+- The FastAPI rate limiter fails open and lets requests through.
 - `/health/` reports `redis: error` but still answers 200.
 
 `docker-compose.yml` gives Redis no named volume, persistence options or password, and database numbers aren't access control: any client that can reach the port can select any database.
