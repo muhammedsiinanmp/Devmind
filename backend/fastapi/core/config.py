@@ -24,7 +24,7 @@ class Settings(BaseSettings):
     primary_llm_provider: str = "google"
 
     # Embeddings
-    embedding_model: str = "text-embedding-004"
+    embedding_model: str = "gemini-embedding-001"
 
     # Security
     fastapi_internal_secret: str = ""

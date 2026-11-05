@@ -2,6 +2,7 @@
 Tests for vector store service - additional edge cases.
 """
 
+import hashlib
 import logging
 
 import pytest
@@ -72,36 +73,31 @@ class TestVectorStoreEdgeCases:
                 )
 
     @pytest.mark.asyncio
-    async def test_store_code_embedding_duplicate(self):
-        """Test duplicate embedding error."""
+    async def test_store_code_embedding_duplicate_skips_embedding(self):
+        """A chunk whose sha256 is already stored raises before any
+        embedding call is made."""
         store = VectorStore()
-
-        mock_query_emb = [0.1] * 768
         mock_session = AsyncMock()
 
         with patch.object(
             store, "generate_embedding", new_callable=AsyncMock
         ) as mock_gen:
-            mock_gen.return_value = mock_query_emb
+            existing = MagicMock()
+            existing.scalars.return_value.all.return_value = [
+                hashlib.sha256(b"test code").hexdigest()
+            ]
+            mock_session.execute = AsyncMock(return_value=existing)
 
-            with patch("services.vector_store.hashlib.sha256") as mock_hash:
-                mock_hash.return_value.hexdigest.return_value = "test_hash"
+            with pytest.raises(VectorStoreError, match="already exists"):
+                await store.store_code_embedding(
+                    session=mock_session,
+                    repo_full_name="owner/repo",
+                    file_path="src/foo.py",
+                    chunk_text="test code",
+                )
 
-                with patch("services.vector_store.select", return_value=MagicMock()):
-                    mock_existing = MagicMock()
-                    mock_existing.scalar_one_or_none = MagicMock(
-                        return_value=MagicMock()
-                    )
-
-                    mock_session.execute = AsyncMock(return_value=mock_existing)
-
-                    with pytest.raises(VectorStoreError):
-                        await store.store_code_embedding(
-                            session=mock_session,
-                            repo_full_name="owner/repo",
-                            file_path="src/foo.py",
-                            chunk_text="test code",
-                        )
+            mock_gen.assert_not_awaited()
+            mock_session.add.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_search_similar_does_not_log_query_text(self, caplog):
