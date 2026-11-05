@@ -164,3 +164,42 @@ class TestSystemPrompt:
     def test_system_prompt_contains_guidelines(self):
         assert "security" in REVIEW_SYSTEM_PROMPT.lower()
         assert "quality" in REVIEW_SYSTEM_PROMPT.lower()
+
+
+class TestDiffLineNumbersInPrompt:
+    DIFF = """--- a/src/app.py
++++ b/src/app.py
+@@ -40,3 +40,4 @@ def run():
+ y = 2
+-z = 3
++z = 4
++w = 5
+ return z
+"""
+
+    def test_added_and_context_lines_show_new_file_numbers(self):
+        from services.code_parser import parse_diff
+
+        lines = format_diff_chunks(parse_diff(self.DIFF)).split("\n")
+
+        assert "L40   y = 2" in lines
+        assert "L41 + z = 4" in lines
+        assert "L42 + w = 5" in lines
+        assert "L43   return z" in lines
+
+    def test_removed_lines_have_no_new_file_number(self):
+        from services.code_parser import parse_diff
+
+        lines = format_diff_chunks(parse_diff(self.DIFF)).split("\n")
+
+        removed = [ln for ln in lines if ln.endswith("- z = 3")]
+        assert len(removed) == 1
+        assert not removed[0].lstrip().startswith("L")
+
+    def test_full_prompt_includes_numbered_diff_and_instruction(self):
+        from services.code_parser import parse_diff
+
+        prompt = build_review_prompt(PromptContext(diff_chunks=parse_diff(self.DIFF)))
+
+        assert "L41 + z = 4" in prompt
+        assert "line_number" in prompt

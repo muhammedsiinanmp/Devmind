@@ -19,6 +19,7 @@ except ImportError:
 
 
 MAX_TOKENS = 8192
+MAX_HUNK_LINES = 120
 
 
 REVIEW_SYSTEM_PROMPT = """You are an expert code reviewer AI. Your task is to review code changes and provide constructive, actionable feedback.
@@ -35,6 +36,12 @@ Review format:
 - Severity: critical/high/medium/low
 - Location: file:line
 - Suggestion: How to fix
+
+Line numbers:
+- Diff lines are shown as "L<n> + code" (added) or "L<n>   code" (unchanged context),
+  where <n> is the line number in the new file. Removed lines ("- code") have no number.
+- Set line_number to the <n> of the added or context line the comment is about.
+  Never use a line number that is not shown in the diff.
 """
 
 
@@ -178,12 +185,37 @@ def build_review_prompt(
     return final_prompt
 
 
+def format_hunk_lines(hunk, max_lines: int = MAX_HUNK_LINES) -> list[str]:
+    """
+    Render a hunk with new-file line numbers.
+
+    Added lines render as ``L42 + code`` and context lines as ``L41   code``.
+    Removed lines have no new-file number and render as ``      - code``.
+    """
+    width = len(str(max((ln.new_line or 0 for ln in hunk.lines), default=0))) + 1
+    rendered = []
+    for line in hunk.lines[:max_lines]:
+        marker = {"added": "+", "removed": "-"}.get(line.kind, " ")
+        number = f"L{line.new_line}" if line.new_line is not None else ""
+        rendered.append(f"{number:<{width}} {marker} {line.content}")
+    if len(hunk.lines) > max_lines:
+        rendered.append(f"... {len(hunk.lines) - max_lines} more lines")
+    return rendered
+
+
 def format_diff_chunks(chunks: list) -> str:
     """Format diff chunks for prompt."""
     lines = []
     for chunk in chunks:
         lines.append(f"File: {chunk.file_path}")
         lines.append(f"Language: {chunk.language}")
+        hunks = getattr(chunk, "hunks", None)
+        if hunks:
+            for hunk in hunks:
+                lines.append(f"Hunk: {hunk.header}")
+                lines.extend(format_hunk_lines(hunk))
+            lines.append("")
+            continue
         if chunk.hunk_header:
             lines.append(f"Hunk: {chunk.hunk_header}")
         if chunk.added_lines:
