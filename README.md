@@ -39,7 +39,6 @@ flowchart LR
     subgraph External
         GH["GitHub"]
         LLM["LLM providers<br/>Gemini / Groq / GitHub Models<br/>+ user BYOK"]
-        SB["Supabase<br/>optional"]
     end
 
     FE["React app<br/>Vite dev server :5173"]
@@ -72,7 +71,6 @@ flowchart LR
     FA -->|"rate-limit counters"| RD
     API --- PG
     CW --- PG
-    CW -.->|"status updates"| SB
     PR -->|"scrape /metrics, /fastapi-metrics"| NGX
 ```
 
@@ -82,7 +80,7 @@ A review moves through the system like this:
 
 1. GitHub sends a webhook to `POST /api/v1/webhooks/github/`. Django checks the signature (constant-time compare). It returns 403 if the signature is wrong or if `GITHUB_WEBHOOK_SECRET` isn't set. Valid requests get a Celery task queued.
 2. The Celery worker creates the `Review` row (one per repo, PR number and head SHA, so a redelivered webhook doesn't create a duplicate). It fetches the diff from GitHub and calls FastAPI.
-3. FastAPI parses the diff, embeds the chunks, searches pgvector for similar code, builds a prompt within a token budget and runs the LangGraph agent.
+3. FastAPI parses the diff and searches pgvector once per changed hunk for similar code elsewhere in the repository, leaving out the PR's own chunks. It builds a prompt within a token budget and runs the LangGraph agent. After it responds, a background task embeds the PR's hunks so later reviews can retrieve them.
 4. The worker saves the comments and a `ReviewRun` record, then queues a separate task that posts the comments to GitHub. If posting fails, that task can be retried without re-running the review.
 
 The full design, including [architectural decisions and their trade-offs](docs/SYSTEM_ARCHITECTURE.md#12-architectural-decisions), is in [docs/SYSTEM_ARCHITECTURE.md](docs/SYSTEM_ARCHITECTURE.md).
@@ -123,18 +121,19 @@ fetch_conventions -> [analyze_security | analyze_quality | analyze_tests] -> syn
 |---|---|
 | Django (pytest) | ruff, black, missing-migration check, pytest against Postgres (pgvector image) and Redis service containers |
 | FastAPI (pytest) | ruff, black, pytest (no external services) |
-| Frontend (typecheck, build, lint) | `tsc`, `vite build`, `eslint` |
+| Frontend (typecheck, build, lint) | `tsc`, `vite build`, `eslint`, `vitest run` |
+| Compose (profiles) | `docker compose config` with `.env.example`: Flower, Prometheus and Grafana appear only under the `ops` profile |
 
 Measured locally on this branch:
 
 | Suite | Tests | Line coverage |
 |---|---|---|
-| Django | 244 passed | 83% |
+| Django | 241 passed | 83% |
 | FastAPI | 176 passed | 80% |
 
 Coverage method: `pytest --cov`, then `coverage report --omit='*/tests/*,*/migrations/*,*conftest.py'`, so test files, migrations and conftest are excluded. Including the test files would give a higher figure.
 
-CI doesn't enforce a coverage threshold. The frontend has no automated tests.
+CI doesn't enforce a coverage threshold. The frontend has 6 Vitest tests, all for the review status polling loop; coverage isn't measured.
 
 ## Tech stack
 
@@ -197,7 +196,7 @@ uv run pytest
 
 # Frontend
 cd frontend
-pnpm exec tsc -p tsconfig.app.json --noEmit && pnpm build && pnpm lint
+pnpm exec tsc -p tsconfig.app.json --noEmit && pnpm build && pnpm lint && pnpm test
 
 # Or run both backend suites inside the running containers
 make test
@@ -219,7 +218,6 @@ All services read the root `.env` (template: [.env.example](.env.example)). Thes
 | `DEVMIND_PUBLIC_URL` | Django | Base URL that installed GitHub webhooks point to |
 | `GOOGLE_AI_API_KEY`, `GROQ_API_KEY`, `GITHUB_TOKEN` | FastAPI | Server LLM providers. The Google key is also used for embeddings. |
 | `DJANGO_BASE_URL` | FastAPI | Where FastAPI fetches BYOK configs from |
-| `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` | Django | Optional review status push. Leave empty to turn it off. |
 
 [docs/ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md) lists every variable.
 
@@ -247,7 +245,6 @@ backend/
     apps/reviews/    Review models, orchestrator, GitHub comment poster, scans
     apps/organizations/ organizations, members, invites
     apps/core/       structlog configuration
-    realtime/        Channels consumers and JWT query-string auth
     tests/           end-to-end pipeline test
   fastapi/           AI service
     agents/          LangGraph review agent and state
@@ -262,14 +259,13 @@ nginx/  prometheus/  grafana/   local infrastructure config
 
 These are current gaps in the code, listed so nobody has to find them by surprise:
 
-- **WebSockets aren't served.** Django Channels consumers exist and are tested, but `ASGI_APPLICATION` isn't set and both the dev server and the production image (gunicorn, WSGI) serve plain HTTP. The frontend's live status component falls back to a static view.
 - **`fetch_conventions` is a placeholder.** The first agent node returns an empty dict, so reviews get no repo-specific conventions.
 - **No embedding tables.** A Django migration enables the `vector` extension, but nothing creates the `code_embeddings` / `review_embeddings` tables. Until they exist, embedding storage and similarity search fail (logged), and reviews run without retrieved context.
 - **`GET /api/v1/auth/github/token/` sends the user's decrypted GitHub token to the browser.** The frontend also keeps JWTs in `localStorage`.
 - **Repository scans never complete in Django.** Django starts a scan on FastAPI but never reads the result back, so `RepoScan` rows stay in `scanning`. FastAPI holds scan progress in process memory.
 - **Token counts are always zero.** FastAPI doesn't return token counts, so `ReviewRun.prompt_tokens` and `completion_tokens` stay at 0.
 - **Anthropic keys aren't used for reviews.** They can be saved and validated, but the FastAPI client sends only OpenAI-compatible `/chat/completions` requests, so it skips them.
-- **The frontend has no tests.**
+- **Frontend tests are minimal.** Vitest covers only the review status polling loop (`frontend/src/lib/reviewStatusPolling.test.ts`); there are no component or page tests.
 
 ## Further reading
 

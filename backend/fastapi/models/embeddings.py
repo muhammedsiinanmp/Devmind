@@ -31,6 +31,9 @@ class CodeEmbedding(Base):
     )
     embedding: Mapped[list[float]] = mapped_column(Vector(768), nullable=False)
     sha256: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    # Where the chunk came from, e.g. "PR#12". Retrieval for a PR excludes rows
+    # with that PR's source_ref so a review never retrieves its own diff.
+    source_ref: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=datetime.utcnow
     )

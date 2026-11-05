@@ -21,10 +21,6 @@ export default defineConfig({
         target: proxyTarget,
         changeOrigin: true,
       },
-      '/ws': {
-        target: proxyTarget.replace(/^http/, 'ws'),
-        ws: true,
-      },
     },
   },
 })
