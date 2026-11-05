@@ -82,18 +82,12 @@ def _redact(line: str, secrets: list[str]) -> str:
 
 def main(transport: httpx.BaseTransport | None = None) -> int:
     settings = get_settings()
-    secrets = [
-        settings.google_ai_api_key,
-        settings.groq_api_key,
-        settings.github_token,
-    ]
+    secrets = [settings.google_ai_api_key, settings.groq_api_key]
 
     def emit(line: str) -> None:
         print(_redact(line, secrets))
 
     chain = _init_model_chain()
-    if settings.github_token and not settings.github_models_enabled:
-        emit("github: skipped (GITHUB_MODELS_ENABLED is false)")
     if not chain:
         emit("No server LLM provider has a key set.")
         return 1

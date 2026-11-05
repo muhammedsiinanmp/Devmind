@@ -16,10 +16,10 @@ class Settings(BaseSettings):
         "postgresql+asyncpg://devmind:devmind_secret@postgres:5432/devmind"
     )
 
-    # LLM Client (Google, Groq, GitHub)
+    # LLM Client (Google, then Groq). GitHub Models was retired on 2026-07-30
+    # and was removed.
     google_ai_api_key: str = ""
     groq_api_key: str = ""
-    github_token: str = ""
     llm_failover_enabled: bool = True
     primary_llm_provider: str = "google"
 
@@ -27,11 +27,6 @@ class Settings(BaseSettings):
     # so a provider-side alias change can't silently change review output.
     google_model: str = "gemini-2.5-flash"
     groq_model: str = "openai/gpt-oss-120b"
-    # GitHub Models was retired on 2026-07-30 (docs.github.com/en/github-models),
-    # so it stays out of the chain unless explicitly enabled.
-    github_models_enabled: bool = False
-    github_models_model: str = "openai/gpt-4o-mini"
-    github_models_base_url: str = "https://models.github.ai/inference"
     # Seconds /health caches each provider's model listing
     llm_health_cache_seconds: int = 300
 

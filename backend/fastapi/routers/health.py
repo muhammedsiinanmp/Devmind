@@ -41,7 +41,7 @@ async def health_check():
         checks["pgvector"] = "unknown"
 
     # LLM providers — informational only, failover chain handles degradation.
-    # "listed" is null when the provider has no key (or is disabled) or its
+    # "listed" is null when the provider has no key or its
     # model listing couldn't be fetched. Listings are cached for a few minutes.
     llm: dict[str, dict[str, object]] = {
         provider: {"model": model, "enabled": False, "listed": None}

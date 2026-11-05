@@ -11,7 +11,6 @@ from scripts import providers_check
 
 GOOGLE_KEY = "AIzaFAKE-google-key-0123456789"
 GROQ_KEY = "gsk_FAKE_groq_key_0123456789"
-GITHUB_KEY = "github_pat_FAKE_token_0123456789"
 
 
 @pytest.fixture(autouse=True)
@@ -20,8 +19,6 @@ def fake_keys(monkeypatch):
 
     monkeypatch.setattr(llm_client.settings, "google_ai_api_key", GOOGLE_KEY)
     monkeypatch.setattr(llm_client.settings, "groq_api_key", GROQ_KEY)
-    monkeypatch.setattr(llm_client.settings, "github_token", GITHUB_KEY)
-    monkeypatch.setattr(llm_client.settings, "github_models_enabled", False)
 
 
 def _transport(chat_status: dict[str, int], seen: list[httpx.Request]):
@@ -59,7 +56,6 @@ def test_reports_each_provider_and_exits_zero_when_one_works(capsys):
     assert "google" in out and "gemini-2.5-flash" in out
     assert "groq" in out and "openai/gpt-oss-120b" in out
     assert "model_not_found" in out
-    assert "github: skipped" in out
     assert "Working: google" in out
     # It sent the configured model to each provider
     chat_bodies = [r.content for r in seen if r.url.path.endswith("/chat/completions")]
@@ -84,18 +80,14 @@ def test_exits_nonzero_without_keys(monkeypatch, capsys):
 
     monkeypatch.setattr(llm_client.settings, "google_ai_api_key", "")
     monkeypatch.setattr(llm_client.settings, "groq_api_key", "")
-    monkeypatch.setattr(llm_client.settings, "github_token", "")
 
     assert providers_check.main(transport=_transport({}, [])) == 1
     assert "No server LLM provider has a key set." in capsys.readouterr().out
 
 
-def test_never_prints_keys(monkeypatch, capsys, caplog):
-    from services import llm_client
-
-    monkeypatch.setattr(llm_client.settings, "github_models_enabled", True)
+def test_never_prints_keys(capsys, caplog):
     seen: list[httpx.Request] = []
-    transport = _transport({"models.github.ai": 401}, seen)
+    transport = _transport({"api.groq.com": 401}, seen)
 
     with caplog.at_level("DEBUG"):
         providers_check.main(transport=transport)
@@ -103,6 +95,19 @@ def test_never_prints_keys(monkeypatch, capsys, caplog):
     output = captured.out + captured.err + caplog.text
 
     # The keys really were sent, so their absence from output is meaningful
-    assert any(GITHUB_KEY in r.headers["authorization"] for r in seen)
-    for key in (GOOGLE_KEY, GROQ_KEY, GITHUB_KEY):
+    sent = " ".join(r.headers["authorization"] for r in seen)
+    for key in (GOOGLE_KEY, GROQ_KEY):
+        assert key in sent
         assert key not in output
+
+
+def test_github_models_is_not_checked(capsys):
+    seen: list[httpx.Request] = []
+
+    providers_check.main(transport=_transport({}, seen))
+
+    assert {r.url.host for r in seen} == {
+        "generativelanguage.googleapis.com",
+        "api.groq.com",
+    }
+    assert "github" not in capsys.readouterr().out

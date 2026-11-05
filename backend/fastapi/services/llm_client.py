@@ -4,9 +4,9 @@ LLM Client with automatic failover chain.
 Supports multiple LLM providers:
 1. Google Gemini (primary)
 2. Groq (fallback)
-3. GitHub Models (emergency fallback, off unless GITHUB_MODELS_ENABLED=true)
 
-Model IDs and the GitHub Models base URL come from settings (core/config.py).
+GitHub Models was retired on 2026-07-30 and was removed.
+Model IDs come from settings (core/config.py).
 Automatically fails over on rate limits, unknown models, service errors or
 timeouts.
 """
@@ -31,7 +31,6 @@ class LLMProvider(str, Enum):
 
     GOOGLE = "google"
     GROQ = "groq"
-    GITHUB = "github"
     OPENAI = "openai"
     CUSTOM = "custom"
     MISTRAL = "mistral"
@@ -101,7 +100,6 @@ def _parse_provider(provider: str) -> LLMProvider | None:
     mapping = {
         "google": LLMProvider.GOOGLE,
         "groq": LLMProvider.GROQ,
-        "github": LLMProvider.GITHUB,
         "openai": LLMProvider.OPENAI,
         "custom": LLMProvider.CUSTOM,
         "mistral": LLMProvider.MISTRAL,
@@ -135,18 +133,6 @@ def _init_model_chain() -> list[LLMConfig]:
                 base_url=GROQ_BASE_URL,
                 max_tokens=4096,
                 rpm_limit=30,
-            )
-        )
-
-    if settings.github_token and settings.github_models_enabled:
-        chain.append(
-            LLMConfig(
-                provider=LLMProvider.GITHUB,
-                model=settings.github_models_model,
-                api_key=settings.github_token,
-                base_url=settings.github_models_base_url,
-                max_tokens=4096,
-                rpm_limit=150,
             )
         )
 
@@ -208,6 +194,12 @@ class LLMClient:
             provider_raw = str(item.get("provider", ""))
             provider = _parse_provider(provider_raw)
             if provider is None:
+                # e.g. "anthropic", or the removed GitHub Models ("github")
+                logger.warning(
+                    "llm.byok_unsupported_provider provider=%s user_id=%s",
+                    provider_raw,
+                    user_id,
+                )
                 continue
 
             model = str(item.get("model_name", "")).strip()
@@ -469,5 +461,4 @@ def server_provider_models() -> dict[str, str]:
     return {
         LLMProvider.GOOGLE.value: settings.google_model,
         LLMProvider.GROQ.value: settings.groq_model,
-        LLMProvider.GITHUB.value: settings.github_models_model,
     }

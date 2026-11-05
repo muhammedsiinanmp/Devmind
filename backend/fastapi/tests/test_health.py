@@ -137,7 +137,6 @@ class TestHealthCheck:
             "listed": True,
         }
         assert body["llm"]["groq"]["listed"] is False
-        # GitHub Models is off by default: model reported, not checked
-        assert body["llm"]["github"]["enabled"] is False
-        assert body["llm"]["github"]["listed"] is None
+        # GitHub Models was removed
+        assert set(body["llm"]) == {"google", "groq"}
         assert "health-test-key-value" not in response.text
