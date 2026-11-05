@@ -30,11 +30,11 @@ Guidelines:
 4. Flag critical issues immediately
 5. Suggest improvements politely
 
-Review format:
-- Issue: Description
-- Severity: critical/high/medium/low
-- Location: file:line
-- Suggestion: How to fix
+Output format:
+- Reply with only a JSON list of findings, no prose.
+- Each finding has file_path, line_number, category, severity, body, suggested_fix.
+- severity is one of: critical, error, warning, info.
+- If there are no issues, reply with an empty JSON list: []
 """
 
 
