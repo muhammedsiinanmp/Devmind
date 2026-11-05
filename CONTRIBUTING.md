@@ -26,6 +26,7 @@ uv sync --frozen
 uvx ruff@0.17.3 check .
 uv run black --check .
 DJANGO_SECRET_KEY=dev JWT_SECRET_KEY=dev DJANGO_SETTINGS_MODULE=devmind.settings.test \
+  DATABASE_URL=postgresql://devmind:devmind_secret@localhost:5432/devmind \
   uv run python manage.py makemigrations --check --dry-run
 DJANGO_SECRET_KEY=dev JWT_SECRET_KEY=dev \
 DATABASE_URL=postgresql://devmind:devmind_secret@localhost:5432/devmind \

@@ -135,7 +135,7 @@ All values come from the defaults in `.env.example` and `devmind/settings/base.p
 - Browser traffic reaches Django only (through Vite in development). The frontend never calls FastAPI.
 - Celery to FastAPI and FastAPI to Django use the shared `X-Internal-Secret` header. Calls on the compose network are plain HTTP.
 - FastAPI's CORS middleware allows only `http://localhost:8000`. That stops browsers on other origins from calling it, but it isn't access control. Access control comes from the internal secret.
-- FastAPI's `/health`, `/metrics` and `/docs` need no secret, and port 8001 is published, so anyone who can reach the host can read them.
+- FastAPI's `/health`, `/metrics` and `/docs` need no secret (`/docs` is disabled when `SENTRY_ENVIRONMENT=production`), and port 8001 is published, so anyone who can reach the host can read them.
 
 ---
 
@@ -204,7 +204,7 @@ sequenceDiagram
 
     FE->>DJ: POST /api/v1/repositories/{id}/scan/
     DJ->>DJ: repo must belong to the user (else 404)
-    DJ->>DJ: last scan completed under 24h ago? then 429 + Retry-After
+    DJ->>DJ: latest scan completed and created under 24h ago? then 429 + Retry-After
     DJ->>DJ: INSERT RepoScan (status=queued)
     DJ->>RD: enqueue full_repo_scan_task (queue "default")
     DJ-->>FE: 202 {scan_id, status: "queued"}
@@ -434,7 +434,7 @@ flowchart LR
 
 ### Django entities
 
-Fields are taken from the models in `apps/accounts`, `apps/repositories`, `apps/reviews` and `apps/organizations`. Timestamps (`created_at`, `updated_at`) are left out to keep the diagram readable. `encrypted` marks an `EncryptedCharField`: a `varchar` column holding a Fernet token.
+Fields are taken from the models in `apps/accounts`, `apps/repositories`, `apps/reviews` and `apps/organizations`. The diagram shows selected fields: timestamps (`created_at`, `updated_at`), auth bookkeeping (`password`, `last_login`, `is_superuser`) and descriptive text such as `Repository.description` are left out to keep it readable. `encrypted` marks an `EncryptedCharField`: a `varchar` column holding a Fernet token.
 
 ```mermaid
 erDiagram
