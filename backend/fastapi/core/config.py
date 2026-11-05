@@ -1,6 +1,7 @@
 import os
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Path of the dotenv file to read. Set DEVMIND_ENV_FILE="" to disable it
@@ -22,6 +23,9 @@ class Settings(BaseSettings):
     github_token: str = ""
     llm_failover_enabled: bool = True
     primary_llm_provider: str = "google"
+
+    # Sampling temperature for review analyzer calls (REVIEW_TEMPERATURE).
+    review_temperature: float = Field(default=0.1, ge=0.0, le=2.0)
 
     # Embeddings
     embedding_model: str = "text-embedding-004"

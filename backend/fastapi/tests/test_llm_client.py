@@ -275,3 +275,62 @@ class TestErrorClasses:
     def test_all_providers_down_error(self):
         with pytest.raises(AllProvidersDownError):
             raise AllProvidersDownError("All down")
+
+
+class TestRequestBody:
+    """What _call_provider sends to the chat completions endpoint."""
+
+    @staticmethod
+    async def _sent_body(provider: LLMProvider, **kwargs) -> dict:
+        config = LLMConfig(
+            provider=provider,
+            model="some-model",
+            api_key="key",
+            base_url="https://example.test/v1",
+            max_tokens=1024,
+            rpm_limit=30,
+        )
+        ok = MagicMock()
+        ok.status_code = 200
+        ok.json.return_value = {"choices": [{"message": {"content": "{}"}}]}
+        with patch("services.llm_client.httpx.AsyncClient") as mock_client:
+            mock_instance = AsyncMock()
+            mock_client.return_value.__aenter__.return_value = mock_instance
+            mock_instance.post.return_value = ok
+            await LLMClient()._call_provider(
+                config, [{"role": "user", "content": "JSON please"}], **kwargs
+            )
+        return mock_instance.post.await_args.kwargs["json"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "provider",
+        [
+            LLMProvider.GOOGLE,
+            LLMProvider.GROQ,
+            LLMProvider.GITHUB,
+            LLMProvider.OPENAI,
+            LLMProvider.MISTRAL,
+            LLMProvider.GOOGLE_VERTEX,
+        ],
+    )
+    async def test_json_mode_sets_response_format(self, provider):
+        body = await self._sent_body(provider, json_mode=True, temperature=0.1)
+
+        assert body["response_format"] == {"type": "json_object"}
+        assert body["temperature"] == 0.1
+
+    @pytest.mark.asyncio
+    async def test_custom_endpoint_gets_no_response_format(self):
+        """A custom endpoint may not accept response_format, so the tolerant
+        parser handles its reply instead."""
+        body = await self._sent_body(LLMProvider.CUSTOM, json_mode=True)
+
+        assert "response_format" not in body
+
+    @pytest.mark.asyncio
+    async def test_no_json_mode_by_default(self):
+        body = await self._sent_body(LLMProvider.GROQ)
+
+        assert "response_format" not in body
+        assert "json_mode" not in body

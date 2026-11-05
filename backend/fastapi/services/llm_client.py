@@ -141,6 +141,42 @@ def _init_model_chain() -> list[LLMConfig]:
     return chain
 
 
+# Providers whose OpenAI-compatible endpoint accepts
+# response_format={"type": "json_object"}. A custom endpoint may not, so it
+# gets no response_format and the caller's tolerant parser handles its reply.
+JSON_MODE_PROVIDERS = frozenset(
+    {
+        LLMProvider.GOOGLE,
+        LLMProvider.GOOGLE_VERTEX,
+        LLMProvider.GROQ,
+        LLMProvider.GITHUB,
+        LLMProvider.OPENAI,
+        LLMProvider.MISTRAL,
+    }
+)
+
+
+def _request_body(
+    config: LLMConfig, messages: list[dict[str, str]], kwargs: dict[str, Any]
+) -> dict[str, Any]:
+    """
+    Chat completions request body.
+
+    ``temperature`` and ``max_tokens`` come from kwargs when given.
+    ``json_mode=True`` asks for a JSON object reply where the provider
+    supports it.
+    """
+    body: dict[str, Any] = {
+        "model": config.model,
+        "messages": messages,
+        "max_tokens": kwargs.get("max_tokens", config.max_tokens),
+        "temperature": kwargs.get("temperature", 0.7),
+    }
+    if kwargs.get("json_mode") and config.provider in JSON_MODE_PROVIDERS:
+        body["response_format"] = {"type": "json_object"}
+    return body
+
+
 class LLMClient:
     """
     Multi-provider LLM client with automatic failover.
@@ -313,12 +349,7 @@ class LLMClient:
                         "Authorization": f"Bearer {config.api_key}",
                         "Content-Type": "application/json",
                     },
-                    json={
-                        "model": config.model,
-                        "messages": messages,
-                        "max_tokens": kwargs.get("max_tokens", config.max_tokens),
-                        "temperature": kwargs.get("temperature", 0.7),
-                    },
+                    json=_request_body(config, messages, kwargs),
                 )
 
                 if response.status_code == 429:
