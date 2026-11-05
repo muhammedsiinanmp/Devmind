@@ -248,7 +248,7 @@ class TestDiffBudget:
         assert "ctx74" in rendered and "ctx75" in rendered
         assert "ctx0\n" not in rendered + "\n"
 
-    def test_files_over_the_total_budget_are_reported_as_omitted(self):
+    def test_total_budget_is_shared_evenly_between_files(self):
         from services.code_parser import parse_diff
 
         diff = "".join(
@@ -256,11 +256,92 @@ class TestDiffBudget:
             for n in range(5)
         )
 
-        result = format_diff_chunks(parse_diff(diff))
+        result = format_diff_chunks(parse_diff(diff), max_lines=200)
 
-        assert "File: f3.py" in result
-        assert "File: f4.py" not in result
-        assert "[1 files / 100 lines omitted from this diff]" in result
+        for n in range(5):
+            section = result.split(f"File: f{n}.py")[1].split("File: ")[0]
+            assert len(_numbered_lines(section)) == 40
+            assert "+ v0 = 0" in section
+        assert "[0 files / 300 lines omitted from this diff]" in result
+
+    def test_files_past_a_tiny_budget_are_reported_as_omitted(self):
+        from services.code_parser import parse_diff
+
+        diff = "".join(
+            _file_diff(f"f{n}.py", [("+", f"v{i} = {i}") for i in range(10)])
+            for n in range(5)
+        )
+
+        result = format_diff_chunks(parse_diff(diff), max_lines=3)
+
+        assert len(_numbered_lines(result)) == 3
+        assert "[2 files / 47 lines omitted from this diff]" in result
+
+    def test_early_context_does_not_starve_later_added_lines(self):
+        from services.code_parser import parse_diff
+
+        diff = ""
+        for n in range(11):
+            lines = [(" ", f"    ctx_{n}_{i} = keep_this_line({i})") for i in range(60)]
+            lines += [("+", f"    add_{n}_{i} = changed_line({i})") for i in range(20)]
+            lines += [
+                (" ", f"    tail_{n}_{i} = keep_this_line({i})") for i in range(60)
+            ]
+            diff += _file_diff(f"pkg/file_{n}.py", lines, start=1)
+        context = PromptContext(
+            diff_chunks=parse_diff(diff),
+            similar_patterns=["PATTERN-MARKER: use parameterized queries"],
+        )
+
+        prompt = build_review_prompt(context)
+
+        assert count_tokens(prompt) <= 8192
+        assert "PATTERN-MARKER: use parameterized queries" in prompt
+        for n in range(11):
+            assert f"File: pkg/file_{n}.py" in prompt
+            assert f"+     add_{n}_0 = changed_line(0)" in prompt
+
+    def test_diff_uses_budget_the_rag_sections_leave_unused(self):
+        from services.code_parser import parse_diff
+
+        diff = "".join(
+            _file_diff(
+                f"f{n}.py",
+                [("+", f"value_{n}_{i} = compute(item_{i})") for i in range(120)],
+            )
+            for n in range(10)
+        )
+        chunks = parse_diff(diff)
+        big_patterns = [f"pattern {i}: " + "word " * 150 for i in range(10)]
+
+        alone = build_review_prompt(PromptContext(diff_chunks=chunks))
+        with_rag = build_review_prompt(
+            PromptContext(diff_chunks=chunks, similar_patterns=big_patterns)
+        )
+
+        assert count_tokens(alone) <= 8192 and count_tokens(with_rag) <= 8192
+        assert "SIMILAR SECURITY PATTERNS" in with_rag
+        assert len(_numbered_lines(alone)) > len(_numbered_lines(with_rag))
+        assert count_tokens(alone) > 6500
+
+    def test_line_selection_is_fast_on_a_huge_hunk(self):
+        import time
+
+        from services.code_parser import DiffHunk, DiffLine
+        from services.prompt_builder import select_hunk_lines
+
+        lines = []
+        for i in range(16000):
+            kind = "added" if i % 2 else "context"
+            lines.append(DiffLine(kind, f"line {i}", new_line=i + 1))
+        hunk = DiffHunk(header="@@ -1,8000 +1,16000 @@", new_start=1, lines=lines)
+
+        start = time.perf_counter()
+        keep = select_hunk_lines([hunk])
+        elapsed = time.perf_counter() - start
+
+        assert sum(len(k) for k in keep) == 120
+        assert elapsed < 1.0
 
     def test_medium_diff_keeps_similar_patterns_in_prompt(self):
         from services.code_parser import parse_diff
@@ -286,5 +367,6 @@ class TestDiffBudget:
         assert count_tokens(prompt) <= 8192
         assert "SIMILAR SECURITY PATTERNS" in prompt
         assert "PATTERN-MARKER: use parameterized queries" in prompt
-        assert "more diff lines omitted to fit the prompt]" in prompt
-        assert "[6 files / 480 lines omitted from this diff]" in prompt
+        assert "lines omitted from this diff]" in prompt
+        for n in range(11):
+            assert f"File: pkg/module_{n}.py" in prompt
