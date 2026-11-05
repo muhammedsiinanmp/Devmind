@@ -101,7 +101,8 @@ def calculate_risk_score(comments: list[dict]) -> int:
     Calculate risk score from 0-100, driven by the worst finding.
 
     Base score for the highest severity, plus 3 per other finding above
-    info (at most +15), capped at 100. Unknown severities count as info.
+    info (at most +15). The maximum is 70 + 15 = 85. Unknown severities
+    count as info.
     """
     if not comments:
         return 0
@@ -113,7 +114,7 @@ def calculate_risk_score(comments: list[dict]) -> int:
     info_base = RISK_BASE_BY_SEVERITY["info"]
     others_above_info = sum(1 for base in bases[1:] if base > info_base)
 
-    return min(100, bases[0] + min(15, 3 * others_above_info))
+    return bases[0] + min(15, 3 * others_above_info)
 
 
 @router.post("/analyze", response_model=ReviewResponse)
