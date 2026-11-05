@@ -137,6 +137,7 @@ class VectorStore:
         chunk_text: str,
         language: str = "python",
         chunk_type: str = "function",
+        source_ref: Optional[str] = None,
     ) -> CodeEmbedding:
         """
         Store code chunk embedding.
@@ -148,6 +149,7 @@ class VectorStore:
             chunk_text: Code chunk text
             language: Programming language
             chunk_type: Type of chunk (function, class, etc.)
+            source_ref: Origin of the chunk, e.g. "PR#12"
 
         Returns:
             Created CodeEmbedding
@@ -169,6 +171,7 @@ class VectorStore:
             chunk_type=chunk_type,
             embedding=embedding,
             sha256=text_hash,
+            source_ref=source_ref,
         )
 
         session.add(code_embedding)
@@ -190,6 +193,7 @@ class VectorStore:
         repo_full_name: str,
         top_k: int = 5,
         threshold: float = 0.6,
+        exclude_source_ref: Optional[str] = None,
     ) -> list[SimilarChunk]:
         """
         Search for similar code chunks.
@@ -200,6 +204,8 @@ class VectorStore:
             repo_full_name: Repository to search in
             top_k: Number of results to return
             threshold: Minimum similarity threshold (0-1)
+            exclude_source_ref: Skip rows with this source_ref (rows with no
+                source_ref are kept)
 
         Returns:
             List of similar chunks (empty if no results above threshold)
@@ -212,12 +218,14 @@ class VectorStore:
             "distance"
         )
 
-        stmt = (
-            select(CodeEmbedding, distance_col)
-            .where(CodeEmbedding.repo_full_name == repo_full_name)
-            .order_by(distance_col)
-            .limit(top_k)
+        stmt = select(CodeEmbedding, distance_col).where(
+            CodeEmbedding.repo_full_name == repo_full_name
         )
+        if exclude_source_ref is not None:
+            stmt = stmt.where(
+                CodeEmbedding.source_ref.is_distinct_from(exclude_source_ref)
+            )
+        stmt = stmt.order_by(distance_col).limit(top_k)
 
         result = await session.execute(stmt)
         rows = result.all()
@@ -239,9 +247,10 @@ class VectorStore:
                     )
                 )
 
+        # No query text here: it is code from the diff being reviewed.
         logger.info(
-            "vector_store.search query=%s results=%d",
-            query_text[:30],
+            "vector_store.search repo=%s results=%d",
+            repo_full_name,
             len(results),
         )
 
