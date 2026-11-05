@@ -52,6 +52,7 @@ pnpm install --frozen-lockfile
 pnpm exec tsc -p tsconfig.app.json --noEmit
 pnpm build
 pnpm lint
+pnpm test
 ```
 
 With the compose stack running, `make test` runs both backend test suites inside the containers, and `make format` runs black on the Django code.

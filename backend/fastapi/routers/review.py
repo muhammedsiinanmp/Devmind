@@ -1,7 +1,7 @@
 """
 Review router with full RAG pipeline.
 
-Wires: parse diff → embed → similarity search → build prompt → review agent → store embedding → return response.
+Wires: parse diff → similarity search per hunk → build prompt → review agent → return response → embed the PR's hunks.
 """
 
 import time
@@ -40,50 +40,73 @@ def _chunk_text(chunk: DiffChunk) -> str:
     return "\n".join(lines).strip()
 
 
+def _source_ref(pr_number: int) -> str | None:
+    """source_ref tag for a PR's chunks in code_embeddings (None if unknown)."""
+    return f"PR#{pr_number}" if pr_number else None
+
+
+def _normalize(text: str) -> str:
+    return " ".join(text.split())
+
+
 async def _prepare_rag_context(
     request: ReviewRequest,
 ) -> tuple[list[DiffChunk], list[str], str]:
     """
     Run the RAG context preparation steps:
-    parse diff -> embed/store chunks -> similarity search -> build prompt.
+    parse diff -> similarity search per hunk -> build prompt.
+
+    Nothing is stored here. The PR's own chunks are embedded by
+    store_review_async after the review, so retrieval only sees other code:
+    rows tagged with this PR's source_ref are excluded in the query, and any
+    result whose text matches a hunk of this diff is dropped.
     """
     parsed_chunks = parse_diff(request.diff)
     similar_patterns: list[str] = []
 
+    hunk_texts = [text for text in map(_chunk_text, parsed_chunks[:20]) if text]
+    current_hunks = {_normalize(text[:4000]) for text in hunk_texts}
+    legacy_pr_path = f"PR#{request.pr_number}"
+
     try:
         from core.database import AsyncSessionLocal
-        from services.vector_store import vector_store, VectorStoreError
+        from services.vector_store import SimilarChunk, vector_store
 
+        best: dict[str, SimilarChunk] = {}
         async with AsyncSessionLocal() as session:
-            for chunk in parsed_chunks[:20]:
-                chunk_text = _chunk_text(chunk)
-                if not chunk_text:
-                    continue
-                try:
-                    await vector_store.store_code_embedding(
-                        session=session,
-                        repo_full_name=request.repo_full_name,
-                        file_path=chunk.file_path or f"PR#{request.pr_number}",
-                        chunk_text=chunk_text[:4000],
-                        language=chunk.language or "unknown",
-                        chunk_type=chunk.chunk_type or "hunk",
-                    )
-                except VectorStoreError:
-                    # duplicate or transient embedding issues should not block reviews
-                    continue
+            for text in hunk_texts:
+                results = await vector_store.search_similar(
+                    session=session,
+                    query_text=text[:4000],
+                    repo_full_name=request.repo_full_name,
+                    top_k=5,
+                    threshold=0.6,
+                    exclude_source_ref=_source_ref(request.pr_number),
+                )
+                for item in results:
+                    if item.file_path == legacy_pr_path:
+                        # Untagged row written for this PR by older versions
+                        continue
+                    key = _normalize(item.chunk_text)
+                    if key in current_hunks:
+                        continue
+                    kept = best.get(key)
+                    if kept is None or item.similarity > kept.similarity:
+                        best[key] = item
 
-            search_query = request.diff[:2000]
-            similar_chunks = await vector_store.search_similar(
-                session=session,
-                query_text=search_query,
-                repo_full_name=request.repo_full_name,
-                top_k=5,
-                threshold=0.6,
+        similar_chunks = sorted(best.values(), key=lambda c: -c.similarity)[:5]
+        for item in similar_chunks:
+            logger.info(
+                "review.rag_context.retrieved repo=%s pr=%s file=%s similarity=%s",
+                request.repo_full_name,
+                request.pr_number,
+                item.file_path,
+                item.similarity,
             )
-            similar_patterns = [
-                f"{item.file_path} ({item.language}, sim={item.similarity}): {item.chunk_text[:300]}"
-                for item in similar_chunks
-            ]
+        similar_patterns = [
+            f"{item.file_path} ({item.language}, sim={item.similarity}): {item.chunk_text[:300]}"
+            for item in similar_chunks
+        ]
     except Exception as exc:
         logger.warning("review.rag_context_partial error=%s", str(exc))
 
@@ -171,14 +194,12 @@ async def analyze_review(
 
         model_used = result.get("model_used", "unknown")
 
-        # Store embedding asynchronously (fire-and-forget)
+        # Embed the PR's hunks after the review (fire-and-forget)
         asyncio.create_task(
             store_review_async(
                 repo_full_name=request.repo_full_name,
                 pr_number=request.pr_number,
-                diff=request.diff,
-                comments=comments_data,
-                model=model_used,
+                chunks=parsed_chunks,
             )
         )
 
@@ -214,23 +235,41 @@ async def analyze_review(
 async def store_review_async(
     repo_full_name: str,
     pr_number: int,
-    diff: str,
-    comments: list[dict],
-    model: str,
+    chunks: list[DiffChunk],
 ):
-    """Store review embedding asynchronously."""
+    """Embed the reviewed PR's hunks, tagged with the PR's source_ref.
+
+    Runs after the review so the PR's own chunks are never retrieved for it.
+    """
     try:
-        from services.vector_store import vector_store
+        from services.vector_store import vector_store, VectorStoreError
         from core.database import AsyncSessionLocal
 
+        stored = 0
         async with AsyncSessionLocal() as session:
-            await vector_store.store_code_embedding(
-                session=session,
-                repo_full_name=repo_full_name,
-                file_path=f"PR#{pr_number}",
-                chunk_text=diff[:1000],
-                language="diff",
-                chunk_type="pr",
-            )
+            for chunk in chunks[:20]:
+                chunk_text = _chunk_text(chunk)
+                if not chunk_text:
+                    continue
+                try:
+                    await vector_store.store_code_embedding(
+                        session=session,
+                        repo_full_name=repo_full_name,
+                        file_path=chunk.file_path or f"PR#{pr_number}",
+                        chunk_text=chunk_text[:4000],
+                        language=chunk.language or "unknown",
+                        chunk_type=chunk.chunk_type or "hunk",
+                        source_ref=_source_ref(pr_number),
+                    )
+                    stored += 1
+                except VectorStoreError:
+                    # Duplicate chunk or embedding failure: skip this chunk.
+                    continue
+        logger.info(
+            "store_review.done repo=%s pr=%s stored=%d",
+            repo_full_name,
+            pr_number,
+            stored,
+        )
     except Exception as e:
         logger.error("store_review.error error=%s", str(e))

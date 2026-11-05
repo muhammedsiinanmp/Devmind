@@ -27,15 +27,15 @@ pnpm lint       # eslint .
 pnpm preview    # serve the production build locally
 ```
 
-CI (`.github/workflows/ci.yml`) runs `pnpm exec tsc -p tsconfig.app.json --noEmit`, `pnpm build` and `pnpm lint`. There are no automated frontend tests.
+CI (`.github/workflows/ci.yml`) runs `pnpm exec tsc -p tsconfig.app.json --noEmit`, `pnpm build`, `pnpm lint` and `pnpm test`. `pnpm test` runs Vitest, which currently covers only the review status polling loop (`src/lib/reviewStatusPolling.test.ts`).
 
 ## How it talks to the backend
 
 - **Django only.** All requests go to Django under `/api/v1` (axios `baseURL: '/api/v1'`). The frontend never calls the FastAPI service.
-- **Dev proxy.** In development, `vite.config.ts` proxies `/api` to `http://localhost:8000` (the Django container from the root `docker-compose.yml`) and `/ws` to `ws://localhost:8000`. Start the backend stack first; see the [root README](../README.md).
+- **Dev proxy.** In development, `vite.config.ts` proxies `/api` to `http://localhost:8000` (the Django container from the root `docker-compose.yml`). Start the backend stack first; see the [root README](../README.md).
 - **Sign-in.** `Login` calls `GET /api/v1/auth/github/start/` and redirects to the returned GitHub URL. GitHub sends the user back to `/auth/callback`, which calls `GET /api/v1/auth/github/callback/?code=&state=` and stores the returned `access` / `refresh` JWTs in `localStorage`. The GitHub OAuth App's callback URL must be `http://localhost:5173/auth/callback`.
 - **Auth headers.** An axios request interceptor adds `Authorization: Bearer <access>`. On a 401 it calls `POST /api/v1/auth/token/refresh/` once, queues other requests until the refresh finishes, and sends the user to `/login` if the refresh fails.
-- **Live status.** `ReviewStatus` tries a WebSocket at `/ws/reviews/<id>/?token=<access>`. The backend doesn't serve WebSockets at present, so the component falls back to showing the status from the API.
+- **Live status.** While a review is `pending` or `processing`, `ReviewStatus` polls `GET /api/v1/reviews/<id>/` every 3 seconds. It stops when the status becomes `completed` or `failed`, or when the component unmounts. Each request waits for the previous one to finish, and a failed request is retried on the next tick.
 
 ## Environment variables
 
@@ -53,7 +53,6 @@ Routes come from `src/App.tsx`. Every route except `/login` and `/auth/callback`
 | `/repositories` | Connected repositories, GitHub sync, per-repo review toggle |
 | `/scans/:id` | Scan status/report, with a re-scan button |
 | `/settings` | BYOK LLM provider management |
-| `/analytics` | Placeholder ("Coming Soon") |
 
 ## Docker
 
