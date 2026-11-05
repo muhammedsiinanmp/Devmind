@@ -53,7 +53,6 @@ Routes come from `src/App.tsx`. Every route except `/login` and `/auth/callback`
 | `/repositories` | Connected repositories, GitHub sync, per-repo review toggle |
 | `/scans/:id` | Scan status/report, with a re-scan button |
 | `/settings` | BYOK LLM provider management |
-| `/analytics` | Placeholder ("Coming Soon") |
 
 ## Docker
 

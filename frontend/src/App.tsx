@@ -6,7 +6,6 @@ import ReviewDetail from "./pages/ReviewDetail";
 import ScanReport from "./pages/ScanReport";
 import Settings from "./pages/Settings";
 import Repositories from "./pages/Repositories";
-import Analytics from "./pages/Analytics";
 import Login from "./pages/Login";
 import AuthCallback from "./pages/AuthCallback";
 
@@ -69,14 +68,6 @@ function App() {
           element={
             <ProtectedRoute>
               <Repositories />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/analytics"
-          element={
-            <ProtectedRoute>
-              <Analytics />
             </ProtectedRoute>
           }
         />

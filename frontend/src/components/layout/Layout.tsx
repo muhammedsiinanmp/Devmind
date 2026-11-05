@@ -1,6 +1,6 @@
 import { Link, useLocation } from "react-router-dom";
 import { useAuthStore } from "../../store/index";
-import { LayoutDashboard, GitBranch, Settings, BarChart3, LogOut, Terminal } from "lucide-react";
+import { LayoutDashboard, GitBranch, Settings, LogOut, Terminal } from "lucide-react";
 import { useEffect, useState } from "react";
 import apiClient from "../../api/client";
 
@@ -25,7 +25,6 @@ export default function Layout({ children }: { children: React.ReactNode }) {
   const navItems = [
     { path: "/dashboard", icon: LayoutDashboard, label: "Dashboard" },
     { path: "/repositories", icon: GitBranch, label: "Repositories" },
-    { path: "/analytics", icon: BarChart3, label: "Analytics" },
     { path: "/settings", icon: Settings, label: "Settings" },
   ];
 
