@@ -41,18 +41,6 @@ test-all: test
 format:
 	docker compose exec django uv run black .
 
-# ─── Kafka ────────────────────────────────────────────────────
-kafka-topics:
-	docker compose exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list
-kafka-create-topics:
-	@echo "Creating DevMind Kafka topics..."
-	@for topic in devmind.pr.opened devmind.pr.merged devmind.review.requested devmind.review.completed devmind.repo.indexed devmind.cve.detected devmind.digest.generate; do \
-		docker compose exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --topic $$topic --partitions 1 --replication-factor 1 --if-not-exists; \
-	done
-	@echo "All topics created."
-kafka-consume:
-	docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh --bootstrap-server localhost:9092 --topic $(topic) --from-beginning
-
 # ─── Frontend ─────────────────────────────────────────────────
 frontend-dev:
 	cd frontend && pnpm dev

@@ -10,9 +10,6 @@ os.environ["FASTAPI_INTERNAL_SECRET"] = "test-internal-secret"
 os.environ["GOOGLE_AI_API_KEY"] = "test-google-key"
 os.environ["GROQ_API_KEY"] = "test-groq-key"
 os.environ["GITHUB_TOKEN"] = "test-github-token"
-os.environ["OPENAI_API_KEY"] = ""
-os.environ["SUPABASE_URL"] = ""
-os.environ["SUPABASE_SERVICE_KEY"] = ""
 
 import pytest  # noqa: E402
 from httpx import AsyncClient, ASGITransport  # noqa: E402

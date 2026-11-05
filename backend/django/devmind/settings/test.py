@@ -15,9 +15,6 @@ CELERY_TASK_EAGER_PROPAGATES = True
 # Disable throttling in tests
 REST_FRAMEWORK["DEFAULT_THROTTLE_CLASSES"] = []  # noqa: F405
 
-# Disable Kafka in tests
-KAFKA_BOOTSTRAP_SERVERS = ""
-
 # Use in-memory channel layer instead of Redis
 CHANNEL_LAYERS = {
     "default": {

@@ -63,7 +63,6 @@ There's no server-side OpenAI provider. OpenAI keys can be added per user throug
 | `REDIS_URL` | `redis://redis:6379/0` | Django cache (OAuth state), Channels layer, FastAPI rate limiter |
 | `CELERY_BROKER_URL` | `redis://redis:6379/1` | Celery broker |
 | `CELERY_RESULT_BACKEND` | `redis://redis:6379/2` | Celery results |
-| `KAFKA_BOOTSTRAP_SERVERS` | empty in code, `kafka:9092` in template | Leave empty to turn off Kafka events |
 | `FASTAPI_BASE_URL` | `http://fastapi:8001` | Where the Celery worker reaches FastAPI |
 | `FASTAPI_TIMEOUT_SECONDS` | `60` | HTTP timeout for worker-to-FastAPI calls |
 | `FASTAPI_DATABASE_URL` | `postgresql+asyncpg://devmind:devmind_secret@postgres:5432/devmind` | FastAPI's async database URL |
@@ -115,14 +114,11 @@ cp .env.example .env
 docker compose up -d --build      # or: make build && make up
 ```
 
-### Step 3: Migrate and restart beat
+### Step 3: Migrate
 
 ```bash
 docker compose exec django uv run python manage.py migrate    # or: make migrate
-docker compose restart celery_beat
 ```
-
-`celery_beat` exits on first start if the `django_celery_beat` tables don't exist yet, so restart it after migrating.
 
 ### Step 4: Enable pgvector
 
@@ -174,10 +170,9 @@ Set `DEVMIND_PUBLIC_URL` to the https tunnel URL, then run `docker compose resta
 | FastAPI | 8001 | Published by compose. `/health`, `/metrics` and `/docs` are open; work routes need `X-Internal-Secret`. |
 | PostgreSQL | 5432 | user `devmind`, password `devmind_secret`, db `devmind` |
 | Redis | 6379 | |
-| Kafka | 9092, 9093 | 9093 is the `EXTERNAL` listener advertised as `localhost:9093` |
-| Flower | 5555 | Started with broker `redis://redis:6379/0` (workers use db 1 by default) |
+| Flower | 5555 | Uses the same `CELERY_BROKER_URL` as the worker (`redis://redis:6379/1` in the template) |
 | Prometheus | 9090 | |
-| Grafana | 3000 | User `admin`, password from `GRAFANA_ADMIN_PASSWORD` (default `devmind`) |
+| Grafana | 3000 | User `admin`, password from `GRAFANA_ADMIN_PASSWORD` (default `devmind`). Provisions the "DevMind Overview" dashboard. |
 | Frontend | 5173 | Vite dev server; not in compose |
 
 ---
@@ -194,7 +189,6 @@ Set `DEVMIND_PUBLIC_URL` to the https tunnel URL, then run `docker compose resta
 | `migrate` / `makemigrations` / `createsuperuser` | Django management commands in the container |
 | `test` (`test-all`) / `test-django` / `test-fastapi` | Backend test suites in the containers |
 | `format` | `black .` in the Django container |
-| `kafka-topics` / `kafka-create-topics` / `kafka-consume topic=...` | Kafka helpers |
 | `frontend-dev` | `cd frontend && pnpm dev` |
 | `grafana-open` / `prometheus-open` / `prometheus-targets` | Observability helpers |
 | `ngrok` | `ngrok http 8000` |
@@ -212,7 +206,6 @@ docker compose exec django uv run python manage.py <command>
 docker compose logs -f django
 docker compose logs -f fastapi
 docker compose logs -f celery_worker
-docker compose logs -f celery_beat
 ```
 
 ### Re-running a review
@@ -243,7 +236,7 @@ docker compose exec postgres psql -U devmind -d devmind
 ### Adding a Python dependency
 
 ```bash
-docker compose exec django uv add <package>     # then rebuild django, celery_worker, celery_beat
+docker compose exec django uv add <package>     # then rebuild django and celery_worker
 docker compose exec fastapi uv add <package>    # then rebuild fastapi
 ```
 
@@ -362,7 +355,7 @@ uv run pytest --cov
 make test-django
 ```
 
-`devmind/settings/test.py` sets Celery to eager mode (`CELERY_TASK_ALWAYS_EAGER`), uses an in-memory channel layer, the MD5 password hasher and no throttling, turns off Kafka, Sentry and Supabase, and sets `SKIP_LLM_KEY_VALIDATION=True`. The cache is still django-redis, which is why Redis must be running.
+`devmind/settings/test.py` sets Celery to eager mode (`CELERY_TASK_ALWAYS_EAGER`), uses an in-memory channel layer, the MD5 password hasher and no throttling, turns off Sentry and Supabase, and sets `SKIP_LLM_KEY_VALIDATION=True`. The cache is still django-redis, which is why Redis must be running.
 
 Test modules:
 
@@ -370,7 +363,7 @@ Test modules:
 |---|---|
 | Accounts | `apps/accounts/tests/test_views.py`, `test_oauth.py`, `test_byok.py`, `test_base_url_ssrf.py`, `test_url_safety.py`, `test_models.py` |
 | Repositories | `apps/repositories/tests/test_webhooks.py`, `test_views.py`, `test_tasks.py`, `test_services.py`, `test_models.py`, `test_managers.py`, `test_admin.py` |
-| Reviews | `apps/reviews/tests/test_orchestrator.py`, `test_views.py`, `test_github_poster.py`, `test_kafka.py`, `test_models.py` |
+| Reviews | `apps/reviews/tests/test_orchestrator.py`, `test_views.py`, `test_github_poster.py`, `test_models.py` |
 | Organizations | `apps/organizations/tests/test_views.py` |
 | Realtime | `realtime/tests/test_consumers.py` |
 | End to end | `tests/test_e2e.py` |
@@ -388,7 +381,7 @@ uv run pytest            # pyproject addopts include --cov
 make test-fastapi
 ```
 
-The tests in `backend/fastapi/tests/` cover the agent, diff parser, prompt builder, LLM client, rate limiter (with `fakeredis`), vector store, review/embeddings/scan/health routers, internal-secret enforcement and the Supabase client.
+The tests in `backend/fastapi/tests/` cover the agent, diff parser, prompt builder, LLM client, rate limiter (with `fakeredis`), vector store, review/embeddings/scan/health routers and internal-secret enforcement.
 
 ### Frontend
 
@@ -408,8 +401,8 @@ These were measured locally on this branch. Coverage method: `pytest --cov`, the
 
 | Suite | Result | Line coverage |
 |---|---|---|
-| Django | 258 passed | 83% |
-| FastAPI | 183 passed | 81% |
+| Django | 244 passed | 83% |
+| FastAPI | 176 passed | 80% |
 | Frontend | `tsc`, `build` pass; `lint` 0 errors, 3 warnings | n/a |
 
 ### CI
@@ -435,7 +428,7 @@ The repo doesn't include deployment infrastructure (no Terraform, Helm or Kubern
 
 ### Checklist
 
-- [ ] Set `DJANGO_SETTINGS_MODULE=devmind.settings.production` for web, worker and beat
+- [ ] Set `DJANGO_SETTINGS_MODULE=devmind.settings.production` for web and worker
 - [ ] Set `DJANGO_ALLOWED_HOSTS`, `DJANGO_CORS_ORIGINS` and `DEVMIND_PUBLIC_URL` for your domains
 - [ ] Use strong random values for `DJANGO_SECRET_KEY`, `JWT_SECRET_KEY` and `FASTAPI_INTERNAL_SECRET`, and set `GITHUB_WEBHOOK_SECRET`
 - [ ] Treat `DJANGO_SECRET_KEY` as the encryption key: rotating it makes stored tokens and API keys unreadable
@@ -462,10 +455,6 @@ The repo doesn't include deployment infrastructure (no Terraform, Helm or Kubern
 ```bash
 docker compose exec postgres psql -U devmind -c "CREATE EXTENSION IF NOT EXISTS vector;"
 ```
-
-### `celery_beat` exited right after `docker compose up`
-
-The `django_celery_beat` tables didn't exist yet. Run `migrate`, then `docker compose restart celery_beat`.
 
 ### Review stuck in `processing`
 
@@ -531,9 +520,15 @@ docker compose logs django | grep webhook
 
 Recent deliveries appear in GitHub under the repo's Settings, Webhooks.
 
-### Grafana dashboards show no data
+### Grafana dashboard shows no data
 
-This is expected for now. The dashboard queries `devmind_*` metrics, which are defined in `apps/core/metrics.py` but never recorded. See [Known Gaps](#10-known-gaps).
+The "DevMind Overview" dashboard charts django-prometheus and prometheus-fastapi-instrumentator request rate and latency, plus FastAPI's `rag_pipeline_duration_ms`, `agent_iterations_total` and `review_errors_total`. Check that Prometheus can scrape both apps through Nginx:
+
+```bash
+make prometheus-targets    # django and fastapi should be "up"
+```
+
+The three review panels stay empty until `POST /review/analyze` has been called, and `review_errors_total` has no series until the first review error.
 
 ### Redis connection refused
 
@@ -542,17 +537,6 @@ docker compose ps redis
 docker compose exec redis redis-cli ping    # PONG
 docker compose restart redis
 ```
-
-### Kafka events missing
-
-Producing is fire-and-forget and logged on failure (`kafka.*` log lines). To check the broker:
-
-```bash
-make kafka-topics
-make kafka-consume topic=devmind.review.completed
-```
-
-To turn Kafka events off, set `KAFKA_BOOTSTRAP_SERVERS=` (empty).
 
 ---
 
@@ -580,10 +564,6 @@ The first agent node returns `{}`. Repository conventions never reach the prompt
 
 `full_repo_scan_task` starts `/scan/full` and records the FastAPI scan ID. Django never calls `/scan/status` or `/scan/report`, so `RepoScan` stays in `scanning`. Django also passes no GitHub token, so private repositories can't be read. FastAPI keeps progress in a module-level dict, which is lost on restart and not shared between workers.
 
-### Custom metrics not recorded
-
-The `devmind_*` metrics in `apps/core/metrics.py` have no call sites, and the Grafana dashboard queries only those. In FastAPI, only `agent_iterations_total`, `rag_pipeline_duration_ms` and `review_errors_total` are recorded (`routers/review.py`).
-
 ### Token counts not reported
 
 `ReviewResponse` has no token fields, so `ReviewRun.prompt_tokens`, `completion_tokens` and `agent_iterations` keep their defaults.
@@ -600,13 +580,9 @@ When a provider's per-minute window is full, `wait_for_token` sleeps until the n
 
 `REVIEW_RATE_LIMIT_PER_HOUR` and `FRONTEND_URL` are read but unused. The `AWS_*` variables in `.env.example` aren't read by any code. The worker consumes the `notifications` queue, but no task is routed to it.
 
-### No periodic tasks defined
+### `cleanup_old_reviews` is never scheduled
 
-Beat uses the database scheduler, and no schedule is defined in code, so `cleanup_old_reviews` runs only if someone schedules it manually.
-
-### Flower points at the wrong Redis database
-
-Compose starts Flower with `redis://redis:6379/0`, but the Celery broker defaults to db 1.
+The task exists in `apps/reviews/tasks.py`, but there is no Celery beat service, so it runs only if someone calls it.
 
 ### `diff_text` is unbounded
 

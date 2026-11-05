@@ -33,8 +33,6 @@ THIRD_PARTY_APPS = [
     "rest_framework_simplejwt",
     "rest_framework_simplejwt.token_blacklist",
     "corsheaders",
-    "django_celery_beat",
-    "django_celery_results",
     "channels",
     "django_filters",
     "django_prometheus",
@@ -180,14 +178,10 @@ CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = "UTC"
-CELERY_BEAT_SCHEDULER = "django_celery_beat.schedulers:DatabaseScheduler"
 CELERY_RESULT_EXTENDED = True
 # Without this, tasks with no explicit queue go to the built-in "celery" queue,
 # but the worker listens to "default,review,notifications" — not "celery".
 CELERY_TASK_DEFAULT_QUEUE = "default"
-
-# Kafka
-KAFKA_BOOTSTRAP_SERVERS = env("KAFKA_BOOTSTRAP_SERVERS", default="")
 
 # GitHub
 GITHUB_CLIENT_ID = env("GITHUB_CLIENT_ID", default="")
@@ -206,10 +200,6 @@ FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:5173")
 FASTAPI_BASE_URL = env("FASTAPI_BASE_URL", default="http://fastapi:8001")
 FASTAPI_INTERNAL_SECRET = env("FASTAPI_INTERNAL_SECRET", default="")
 FASTAPI_TIMEOUT_SECONDS = env.int("FASTAPI_TIMEOUT_SECONDS", default=60)
-
-# OpenAI
-OPENAI_API_KEY = env("OPENAI_API_KEY", default="")
-OPENAI_MODEL = env("OPENAI_MODEL", default="gpt-4o")
 
 # Sentry
 SENTRY_DSN = env("SENTRY_DSN_DJANGO", default="")

@@ -207,7 +207,7 @@ class UserMeView(APIView):
         summary="Get current user profile",
     )
     def get(self, request: Request) -> Response:
-        assert request.user.is_authenticated  # nosec: B101 (used for mypy typing)
+        assert request.user.is_authenticated  # narrows the user type
         serializer = UserSerializer(request.user)
         return Response(serializer.data)
 
