@@ -19,6 +19,9 @@ AI pull-request reviewer: Django (API, webhooks, Celery) + FastAPI (LangGraph re
 - **Context7 MCP:** check current docs for LangGraph, Django 5, React 19, Vite 8 and Tailwind 4 before using an API you're unsure of.
 - **Playwright MCP:** verify frontend changes in a real browser (`pnpm dev`, then navigate). The frontend has no automated tests, so this is the UI check for verifiers.
 
+## Owner-only actions
+Anything only the owner can do (merging, auth scopes, secrets, runs that need their API keys, actions an agent was denied, product decisions, accounts) goes to the pinned issue **#86 "Owner action queue"**: an unchecked item with the exact command and why it matters, marked urgent if it blocks other work. Agents report such items in their hand-back under a `Needs owner` heading. Never ask for them only in chat.
+
 ## Rules
 - Bug-fix tests must fail before the fix. Never skip or weaken a test.
 - Quality claims (README, PRs) must come from eval output or a committed results file.
