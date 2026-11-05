@@ -152,6 +152,21 @@ class TestAnalyzeEndpoint:
                 await analyze_review(request, secret="valid-secret")
 
 
+class TestChunkText:
+    def test_chunk_text_has_no_line_number_prefixes(self):
+        from routers.review import _chunk_text
+        from services.code_parser import parse_diff
+
+        diff = (
+            "--- a/app.py\n+++ b/app.py\n@@ -7,2 +7,2 @@\n keep = 1\n-x = 1\n+x = 2\n"
+        )
+
+        text = _chunk_text(parse_diff(diff)[0])
+
+        assert "x = 2" in text
+        assert "L8" not in text and "L7" not in text
+
+
 class TestReviewRouter:
     def test_router_exists(self):
         from routers.review import router
