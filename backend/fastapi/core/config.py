@@ -23,6 +23,18 @@ class Settings(BaseSettings):
     llm_failover_enabled: bool = True
     primary_llm_provider: str = "google"
 
+    # Server provider models. Pinned stable IDs rather than "-latest" aliases,
+    # so a provider-side alias change can't silently change review output.
+    google_model: str = "gemini-2.5-flash"
+    groq_model: str = "openai/gpt-oss-120b"
+    # GitHub Models was retired on 2026-07-30 (docs.github.com/en/github-models),
+    # so it stays out of the chain unless explicitly enabled.
+    github_models_enabled: bool = False
+    github_models_model: str = "openai/gpt-4o-mini"
+    github_models_base_url: str = "https://models.github.ai/inference"
+    # Seconds /health caches each provider's model listing
+    llm_health_cache_seconds: int = 300
+
     # Embeddings
     embedding_model: str = "text-embedding-004"
 

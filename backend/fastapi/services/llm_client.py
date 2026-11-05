@@ -4,12 +4,15 @@ LLM Client with automatic failover chain.
 Supports multiple LLM providers:
 1. Google Gemini (primary)
 2. Groq (fallback)
-3. GitHub Models (emergency fallback)
+3. GitHub Models (emergency fallback, off unless GITHUB_MODELS_ENABLED=true)
 
-Automatically fails over on rate limits, service unavailable, or timeout.
+Model IDs and the GitHub Models base URL come from settings (core/config.py).
+Automatically fails over on rate limits, unknown models, service errors or
+timeouts.
 """
 
 import logging
+import time
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -43,6 +46,12 @@ class RateLimitError(Exception):
 
 class ServiceUnavailableError(Exception):
     """Raised when provider service is unavailable."""
+
+    pass
+
+
+class ModelNotFoundError(ServiceUnavailableError):
+    """Raised on a 404: the provider doesn't serve the configured model."""
 
     pass
 
@@ -84,6 +93,9 @@ class LLMResponse:
 
 MODEL_CHAIN: list[LLMConfig] = []
 
+GOOGLE_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+
 
 def _parse_provider(provider: str) -> LLMProvider | None:
     mapping = {
@@ -106,9 +118,9 @@ def _init_model_chain() -> list[LLMConfig]:
         chain.append(
             LLMConfig(
                 provider=LLMProvider.GOOGLE,
-                model="gemini-2.0-flash",
+                model=settings.google_model,
                 api_key=settings.google_ai_api_key,
-                base_url="https://generativelanguage.googleapis.com/v1beta/openai",
+                base_url=GOOGLE_BASE_URL,
                 max_tokens=8192,
                 rpm_limit=15,
             )
@@ -118,21 +130,21 @@ def _init_model_chain() -> list[LLMConfig]:
         chain.append(
             LLMConfig(
                 provider=LLMProvider.GROQ,
-                model="llama-3.3-70b-versatile",
+                model=settings.groq_model,
                 api_key=settings.groq_api_key,
-                base_url="https://api.groq.com/openai/v1",
+                base_url=GROQ_BASE_URL,
                 max_tokens=4096,
                 rpm_limit=30,
             )
         )
 
-    if settings.github_token:
+    if settings.github_token and settings.github_models_enabled:
         chain.append(
             LLMConfig(
                 provider=LLMProvider.GITHUB,
-                model="gpt-4o-mini",
+                model=settings.github_models_model,
                 api_key=settings.github_token,
-                base_url="https://models.inference.ai.azure.com",
+                base_url=settings.github_models_base_url,
                 max_tokens=4096,
                 rpm_limit=150,
             )
@@ -270,9 +282,10 @@ class LLMClient:
                 return response
             except (RateLimitError, ServiceUnavailableError, TimeoutError) as exc:
                 logger.warning(
-                    "llm.failover provider=%s model=%s error=%s",
+                    "llm.failover provider=%s model=%s reason=%s error=%s",
                     config.provider.value,
                     config.model,
+                    _failover_reason(exc),
                     str(exc),
                 )
                 continue
@@ -323,6 +336,16 @@ class LLMClient:
 
                 if response.status_code == 429:
                     raise RateLimitError(f"Rate limited: {config.provider.value}")
+                if response.status_code == 404:
+                    # Usually a retired or misspelled model ID, not an outage
+                    logger.error(
+                        "llm.model_not_found provider=%s model=%s",
+                        config.provider.value,
+                        config.model,
+                    )
+                    raise ModelNotFoundError(
+                        f"Model not found: {config.provider.value}/{config.model}"
+                    )
                 if response.status_code >= 500:
                     raise ServiceUnavailableError(
                         f"Service unavailable: {config.provider.value}"
@@ -354,6 +377,16 @@ class LLMClient:
                 )
 
 
+def _failover_reason(exc: Exception) -> str:
+    if isinstance(exc, RateLimitError):
+        return "rate_limited"
+    if isinstance(exc, ModelNotFoundError):
+        return "model_not_found"
+    if isinstance(exc, TimeoutError):
+        return "timeout"
+    return "unavailable"
+
+
 llm_client = LLMClient()
 
 
@@ -378,3 +411,63 @@ async def check_provider_health(config: LLMConfig) -> tuple[str, bool]:
             return config.provider.value, response.status_code == 200
     except Exception:
         return config.provider.value, False
+
+
+def model_ids(payload: Any) -> set[str]:
+    """
+    Model IDs from an OpenAI-style ``GET /models`` body.
+
+    Google's OpenAI-compatible endpoint prefixes IDs with ``models/``; the
+    prefix is dropped so they compare equal to the configured model names.
+    """
+    items = payload.get("data", []) if isinstance(payload, dict) else payload
+    ids: set[str] = set()
+    for item in items or []:
+        model_id = item.get("id") if isinstance(item, dict) else None
+        if isinstance(model_id, str):
+            ids.add(model_id.removeprefix("models/"))
+    return ids
+
+
+async def check_model_listed(config: LLMConfig) -> bool | None:
+    """
+    Whether the provider's ``GET /models`` lists ``config.model``.
+
+    Returns None when the listing can't be fetched (network error or a
+    non-200), so "unreachable" stays distinct from "model not served".
+    """
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                f"{config.base_url.rstrip('/')}/models",
+                headers={"Authorization": f"Bearer {config.api_key}"},
+            )
+            if response.status_code != 200:
+                return None
+            return config.model in model_ids(response.json())
+    except Exception:
+        return None
+
+
+_MODEL_LISTED_CACHE: dict[tuple[str, str, str], tuple[float, bool | None]] = {}
+
+
+async def cached_model_listed(config: LLMConfig) -> bool | None:
+    """``check_model_listed``, cached for ``llm_health_cache_seconds``."""
+    key = (config.provider.value, config.base_url, config.model)
+    now = time.monotonic()
+    cached = _MODEL_LISTED_CACHE.get(key)
+    if cached is not None and now - cached[0] < settings.llm_health_cache_seconds:
+        return cached[1]
+    listed = await check_model_listed(config)
+    _MODEL_LISTED_CACHE[key] = (now, listed)
+    return listed
+
+
+def server_provider_models() -> dict[str, str]:
+    """The configured model for each server provider, keyed by provider."""
+    return {
+        LLMProvider.GOOGLE.value: settings.google_model,
+        LLMProvider.GROQ.value: settings.groq_model,
+        LLMProvider.GITHUB.value: settings.github_models_model,
+    }
