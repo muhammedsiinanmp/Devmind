@@ -49,10 +49,25 @@ There's no `FERNET_KEY` variable. The encryption key comes from `DJANGO_SECRET_K
 
 | Variable | Description |
 |---|---|
-| `GOOGLE_AI_API_KEY` | Google AI Studio key. Used for `gemini-2.0-flash` (first server provider) and for `text-embedding-004` embeddings. |
-| `GROQ_API_KEY` | Groq key for `llama-3.3-70b-versatile` (second) |
-| `GITHUB_TOKEN` | GitHub token with access to GitHub Models, for `gpt-4o-mini` (third) |
+| `GOOGLE_AI_API_KEY` | Google AI Studio key. Used for `GOOGLE_MODEL` (first server provider) and for `text-embedding-004` embeddings. |
+| `GROQ_API_KEY` | Groq key for `GROQ_MODEL` (second) |
+| `GITHUB_TOKEN` | GitHub token for GitHub Models, `GITHUB_MODELS_MODEL` (third). Only used when `GITHUB_MODELS_ENABLED=True`. |
+| `GOOGLE_MODEL` | Default `gemini-2.5-flash` |
+| `GROQ_MODEL` | Default `openai/gpt-oss-120b` |
+| `GITHUB_MODELS_ENABLED` | Default `False`. GitHub retired GitHub Models on 2026-07-30 ([docs](https://docs.github.com/en/github-models)), so it stays out of the chain unless turned on. |
+| `GITHUB_MODELS_MODEL`, `GITHUB_MODELS_BASE_URL` | Defaults `openai/gpt-4o-mini` and `https://models.github.ai/inference`. Not verified against a live service. |
+| `LLM_HEALTH_CACHE_SECONDS` | Default `300`. How long FastAPI `/health` caches each provider's model listing. |
 | `LLM_FAILOVER_ENABLED` | Default `True`. When `False`, only the first provider in the chain is tried. |
+
+Defaults are pinned model IDs rather than `-latest` or `-preview` aliases, so a provider moving an alias can't silently change reviews. When a provider retires a model, requests to it return 404, which FastAPI logs as `llm.model_not_found`. Check the configured models against the providers with:
+
+```bash
+make providers-check    # runs on the host: cd backend/fastapi && uv run python -m scripts.providers_check
+# or, with the stack up:
+docker compose exec fastapi uv run python -m scripts.providers_check
+```
+
+For each provider with a key set, it lists the provider's models and sends one chat request of a few tokens, then prints the provider, model, whether the model is listed, the result (`ok`, or the HTTP status, with `model_not_found` for 404 and `rate_limited` for 429) and the latency. It never prints keys or response bodies. It exits 1 if no provider completes the chat request.
 
 There's no server-side OpenAI provider. OpenAI keys can be added per user through the BYOK settings.
 
@@ -324,7 +339,7 @@ See `apps/organizations/views.py` for methods and permissions.
 | `/scan/full` | POST | `X-Internal-Secret` | Start a background repository scan (202) |
 | `/scan/status/{scan_id}` | GET | `X-Internal-Secret` | Scan progress (in-process memory) |
 | `/scan/report/{scan_id}` | GET | `X-Internal-Secret` | Scan report |
-| `/health` | GET | none | DB, pgvector and provider reachability; 503 if DB or pgvector check fails |
+| `/health` | GET | none | DB, pgvector and, per server provider, the configured model and whether the provider lists it (`llm`; listings cached for `LLM_HEALTH_CACHE_SECONDS`); 503 if DB or pgvector check fails |
 | `/metrics` | GET | none | Prometheus instrumentator |
 | `/docs` | GET | none | OpenAPI UI (off when `SENTRY_ENVIRONMENT=production`) |
 
@@ -484,11 +499,14 @@ docker compose restart django fastapi celery_worker
 
 ### Review failed with "LLM providers rate limited (429)"
 
-FastAPI raised `AllProvidersDownError`: every provider in the chain returned 429, 5xx, a non-200 response or timed out, or no provider is configured. Check that at least one of `GOOGLE_AI_API_KEY`, `GROQ_API_KEY` or `GITHUB_TOKEN` is set, or that the user has an active BYOK config. Then look at:
+FastAPI raised `AllProvidersDownError`: every provider in the chain returned 429, 404, 5xx, another non-200 response or timed out, or no provider is configured. Check that at least one of `GOOGLE_AI_API_KEY` or `GROQ_API_KEY` is set, or that the user has an active BYOK config. Then look at:
 
 ```bash
 docker compose logs fastapi | grep "llm\."
+make providers-check
 ```
+
+Each `llm.failover` line has a `reason`: `rate_limited`, `model_not_found`, `timeout` or `unavailable`. `model_not_found` (also logged as `llm.model_not_found`) means the provider no longer serves the configured model; set `GOOGLE_MODEL` / `GROQ_MODEL` to a model that `make providers-check` shows as listed.
 
 ### Reviews complete but nothing appears on GitHub
 
