@@ -283,7 +283,8 @@ Each item is validated against `_LLMCommentSchema` (Pydantic), and unknown sever
 ### Retrieval (RAG) steps in `POST /review/analyze`
 
 ```
-parse_diff(diff)                       -> DiffChunk[] (file, language, added/removed/context lines)
+parse_diff(diff)                       -> DiffChunk[] (file, language, added/removed/context lines,
+                                          hunks with new-file line numbers)
 for up to 20 chunks:
     store_code_embedding(...)          -> Google text-embedding-004, task_type RETRIEVAL_DOCUMENT,
                                           768 dims, deduplicated by sha256 of the chunk text
@@ -292,7 +293,11 @@ search_similar(diff[:2000], repo, top_k=5, threshold=0.6)
 build_review_prompt(...)               -> 8192-token budget (tiktoken cl100k_base); diff first,
                                           then similar patterns, quality patterns, past reviews, conventions
 run_review_agent(...)
+anchor_comments(chunks, comments)      -> keep comments on added/context lines, move ones within
+                                          3 lines to the nearest such line, set the rest to line 0
 ```
+
+The prompt renders diff lines with their new-file numbers (`L42 + code`, `L41   code`); removed lines have no number. The anchoring counts are logged as `review.anchoring` and returned as `anchored`, `snapped` and `unanchored`.
 
 The handler runs these steps inside a `try`. A failure in embedding or search is logged as `review.rag_context_partial`, and the review continues without similar-code context. After the response is built, a background task also stores an embedding of the first 1000 characters of the diff.
 
@@ -424,7 +429,7 @@ flowchart LR
 `GitHubPoster` (`apps/reviews/services/github_poster.py`):
 
 - Comments with `line_number > 0` are posted inline (`line`, `side: RIGHT`), grouped by file and sent in batches of 50 per review.
-- Comments without a usable line number are folded into the review body.
+- Comments without a usable line number are folded into the review body. FastAPI sets `line_number` to 0 for any comment it could not anchor to a diff line.
 - If GitHub returns 422 for an inline batch, the poster retries the batch as a body-only review so the findings still appear.
 - Every review is posted with `event: COMMENT`, so DevMind never approves a PR or requests changes.
 

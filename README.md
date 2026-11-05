@@ -100,6 +100,12 @@ fetch_conventions -> [analyze_security | analyze_quality | analyze_tests] -> syn
 - `format_output` computes a confidence score from the number of findings relative to the diff size. If the score is below 0.7, the graph goes back to the start, up to 3 passes in total.
 - The LLM output parser handles several formats: bare JSON, JSON inside markdown fences, JSON wrapped in an object, and JSON with prose around it. Each comment is then validated with Pydantic.
 
+**Line-anchored comments** (`backend/fastapi/services/comment_anchoring.py`):
+
+- The diff parser records the new-file line number of every added and context line, and the prompt shows them (`L42 + code`), so the model reads line numbers instead of guessing them.
+- Before the response is built, each comment is checked against the diff. A comment on an added or context line stays inline. One within 3 lines of such a line is moved to the nearest one. Any other comment becomes a file-level note (`line_number` 0), which the GitHub poster puts in the review body.
+- `/review/analyze` logs and returns the `anchored`, `snapped` and `unanchored` counts.
+
 **LLM provider failover** (`backend/fastapi/services/llm_client.py`):
 
 - A user's own active provider configs are tried first, in priority order.
@@ -130,7 +136,7 @@ Measured locally on this branch:
 | Suite | Tests | Line coverage |
 |---|---|---|
 | Django | 244 passed | 83% |
-| FastAPI | 176 passed | 80% |
+| FastAPI | 193 passed | 82% |
 
 Coverage method: `pytest --cov`, then `coverage report --omit='*/tests/*,*/migrations/*,*conftest.py'`, so test files, migrations and conftest are excluded. Including the test files would give a higher figure.
 
