@@ -2,6 +2,10 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 
+// Django origin for the dev proxy. Compose sets this to http://django:8000;
+// on the host it defaults to localhost.
+const proxyTarget = process.env.API_PROXY_TARGET ?? 'http://localhost:8000'
+
 export default defineConfig({
   plugins: [react()],
   resolve: {
@@ -14,7 +18,7 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:8000',
+        target: proxyTarget,
         changeOrigin: true,
       },
     },

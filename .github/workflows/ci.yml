@@ -125,3 +125,23 @@ jobs:
         run: pnpm lint
       - name: Test
         run: pnpm test
+
+  compose:
+    name: Compose (profiles)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Use the env template
+        run: cp .env.example .env
+      - name: Ops tools run only under the ops profile
+        run: |
+          default=$(docker compose config --services | sort | tr '\n' ' ')
+          ops_only=$(comm -13 <(docker compose config --services | sort) \
+            <(docker compose --profile ops config --services | sort) | tr '\n' ' ')
+          echo "default: $default"
+          echo "ops only: $ops_only"
+          test "$(docker compose config --profiles)" = "ops"
+          test "$ops_only" = "flower grafana prometheus "
+          for svc in migrate django fastapi celery_worker frontend; do
+            echo "$default" | grep -qw "$svc"
+          done
