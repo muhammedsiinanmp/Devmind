@@ -453,7 +453,7 @@ The `core.0001_enable_pgvector` migration hasn't run against this database. Chec
 
 ```bash
 docker compose logs migrate
-docker compose run --rm migrate      # or: make migrate
+docker compose run --rm migrate
 ```
 
 ### Review stuck in `processing`
