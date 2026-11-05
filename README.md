@@ -23,7 +23,7 @@ flowchart LR
     User["DevMind user<br/>signs in, connects repositories,<br/>reads reviews, adds BYOK keys"]
     DM["DevMind<br/>React app, Django API, Celery worker,<br/>FastAPI AI service, Postgres, Redis"]
     GH["GitHub<br/>OAuth, repositories, webhooks,<br/>pull request reviews"]
-    LLM["LLM and embedding APIs<br/>server keys: Gemini, Groq, GitHub Models<br/>or the user's own keys"]
+    LLM["LLM and embedding APIs<br/>server keys: Gemini, Groq<br/>or the user's own keys"]
 
     Author -->|"push to a pull request"| GH
     User -->|"browser"| DM
@@ -38,7 +38,7 @@ flowchart LR
 flowchart LR
     subgraph External
         GH["GitHub"]
-        LLM["LLM providers<br/>Gemini / Groq / GitHub Models<br/>+ user BYOK"]
+        LLM["LLM providers<br/>Gemini / Groq<br/>+ user BYOK"]
     end
 
     FE["React app<br/>Vite dev server :5173"]
@@ -102,7 +102,7 @@ START -> [analyze_security | analyze_quality | analyze_tests] -> synthesize -> E
 **LLM provider failover** (`backend/fastapi/services/llm_client.py`):
 
 - A user's own active provider configs are tried first, in priority order.
-- After that come the server's providers: Google (`GOOGLE_MODEL`, default `gemini-2.5-flash`), then Groq (`GROQ_MODEL`, default `openai/gpt-oss-120b`), then GitHub Models (`GITHUB_MODELS_MODEL`). Any provider without a configured key is skipped. GitHub Models is also skipped unless `GITHUB_MODELS_ENABLED=True`, because GitHub retired the service on 2026-07-30.
+- After that come the server's providers: Google (`GOOGLE_MODEL`, default `gemini-2.5-flash`), then Groq (`GROQ_MODEL`, default `openai/gpt-oss-120b`). Any provider without a configured key is skipped. GitHub Models was retired on 2026-07-30 and was removed.
 - Any non-200 response (including 429 and 5xx) or a timeout moves the request to the next provider. A 404 is logged as `llm.model_not_found`, which usually means the configured model was retired.
 - `make providers-check` lists each keyed provider's models, sends one tiny chat request and prints provider, model, whether the model is listed, the result and latency. It never prints keys and exits non-zero if no provider works. FastAPI's `/health` also reports each provider's configured model and whether the provider lists it (cached for `LLM_HEALTH_CACHE_SECONDS`, default 300).
 - Per-provider requests-per-minute limits are enforced with a Redis counter (`services/rate_limiter.py`), so all FastAPI workers share one budget. If Redis is down, requests go through instead of being blocked.
@@ -218,8 +218,8 @@ All services read the root `.env` (template: [.env.example](.env.example)). Thes
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | Django | GitHub OAuth App |
 | `GITHUB_WEBHOOK_SECRET` | Django | Webhook HMAC key. Webhooks are rejected if it's empty. |
 | `DEVMIND_PUBLIC_URL` | Django | Base URL that installed GitHub webhooks point to |
-| `GOOGLE_AI_API_KEY`, `GROQ_API_KEY`, `GITHUB_TOKEN` | FastAPI | Server LLM providers. The Google key is also used for embeddings. `GITHUB_TOKEN` is only used when `GITHUB_MODELS_ENABLED=True`. |
-| `GOOGLE_MODEL`, `GROQ_MODEL`, `GITHUB_MODELS_MODEL`, `GITHUB_MODELS_BASE_URL`, `GITHUB_MODELS_ENABLED` | FastAPI | Model per server provider and the GitHub Models endpoint. Check with `make providers-check`. |
+| `GOOGLE_AI_API_KEY`, `GROQ_API_KEY` | FastAPI | Server LLM providers. The Google key is also used for embeddings. |
+| `GOOGLE_MODEL`, `GROQ_MODEL` | FastAPI | Model per server provider. Check with `make providers-check`. |
 | `DJANGO_BASE_URL` | FastAPI | Where FastAPI fetches BYOK configs from |
 
 [docs/ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md) lists every variable.

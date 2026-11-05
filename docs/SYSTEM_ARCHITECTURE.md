@@ -315,16 +315,15 @@ flowchart LR
     B --> C[User providers<br/>OpenAI-compatible chat/completions]
     C -->|429 / 404 / 5xx / non-200 / timeout| D[Google GOOGLE_MODEL<br/>default gemini-2.5-flash]
     D -->|fail| E[Groq GROQ_MODEL<br/>default openai/gpt-oss-120b]
-    E -->|fail| F[GitHub Models GITHUB_MODELS_MODEL<br/>only if GITHUB_MODELS_ENABLED]
-    F -->|fail| G[AllProvidersDownError<br/>FastAPI responds 429]
+    E -->|fail| G[AllProvidersDownError<br/>FastAPI responds 429]
 ```
 
-- A server provider is included only if its key (`GOOGLE_AI_API_KEY`, `GROQ_API_KEY`, `GITHUB_TOKEN`) is set. GitHub Models also needs `GITHUB_MODELS_ENABLED=True`; GitHub retired the service on 2026-07-30, so it's off by default.
+- A server provider is included only if its key (`GOOGLE_AI_API_KEY`, `GROQ_API_KEY`) is set. GitHub Models was retired on 2026-07-30 and was removed.
 - Model IDs come from settings (`core/config.py`). A 404 is logged as `llm.model_not_found` (a retired or misspelled model) and fails over like any other error; `make providers-check` shows which configured models each provider still serves. There is no server-side OpenAI provider; OpenAI is available only as a user BYOK provider.
-- BYOK providers are mapped to an OpenAI-compatible base URL: `openai`, `groq`, `mistral`, `google_vertex`, or `custom` with an explicit URL. `anthropic` isn't mapped, so Anthropic configs are skipped.
+- BYOK providers are mapped to an OpenAI-compatible base URL: `openai`, `groq`, `mistral`, `google_vertex`, or `custom` with an explicit URL. `anthropic` isn't mapped, so Anthropic configs are skipped with an `llm.byok_unsupported_provider` warning (Django's BYOK choices have no GitHub Models option).
 - `LLM_FAILOVER_ENABLED=False` uses only the first provider in the chain.
 
-**Rate limiting** (`services/rate_limiter.py`): a fixed one-minute window per provider, using the Redis key `ratelimit:{provider}:{minute}` with atomic `INCR` and a 60-second expiry. Default limits are Google 15 RPM, Groq 30 and GitHub Models 150; BYOK providers get 30. When a window is full, the call **sleeps until the next minute** rather than failing over. If Redis is unavailable, the limiter lets the request through.
+**Rate limiting** (`services/rate_limiter.py`): a fixed one-minute window per provider, using the Redis key `ratelimit:{provider}:{minute}` with atomic `INCR` and a 60-second expiry. Default limits are Google 15 RPM and Groq 30; BYOK providers get 30. When a window is full, the call **sleeps until the next minute** rather than failing over. If Redis is unavailable, the limiter lets the request through.
 
 ---
 
@@ -863,7 +862,7 @@ Each decision lists what the code does, why, and the trade-offs. Some also note 
 
 ### BYOK-first LLM failover with server providers as fallback
 
-**What:** For each LLM call, `LLMClient.generate` (`backend/fastapi/services/llm_client.py`) fetches the user's active BYOK configs from Django's internal endpoint, ordered by `priority`, and puts them ahead of the server chain: Google, Groq, GitHub Models, with models from settings (defaults `gemini-2.5-flash`, `openai/gpt-oss-120b`; GitHub Models is off unless `GITHUB_MODELS_ENABLED=True`). Each server provider is included only if its key is set. A 429, a 404 (logged as `model_not_found`), a 5xx, any other non-200 status or a timeout moves the call to the next entry. All entries are called through the OpenAI-compatible `/chat/completions` API.
+**What:** For each LLM call, `LLMClient.generate` (`backend/fastapi/services/llm_client.py`) fetches the user's active BYOK configs from Django's internal endpoint, ordered by `priority`, and puts them ahead of the server chain: Google, then Groq, with models from settings (defaults `gemini-2.5-flash`, `openai/gpt-oss-120b`). GitHub Models was retired on 2026-07-30 and was removed. Each server provider is included only if its key is set. A 429, a 404 (logged as `model_not_found`), a 5xx, any other non-200 status or a timeout moves the call to the next entry. All entries are called through the OpenAI-compatible `/chat/completions` API.
 
 **Why:** A user's own key is used whenever it works, and a review still runs when it doesn't, or when the user has none. One request format covers every provider, so adding a provider means adding a base URL.
 

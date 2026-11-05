@@ -51,13 +51,12 @@ There's no `FERNET_KEY` variable. The encryption key comes from `DJANGO_SECRET_K
 |---|---|
 | `GOOGLE_AI_API_KEY` | Google AI Studio key. Used for `GOOGLE_MODEL` (first server provider) and for `text-embedding-004` embeddings. |
 | `GROQ_API_KEY` | Groq key for `GROQ_MODEL` (second) |
-| `GITHUB_TOKEN` | GitHub token for GitHub Models, `GITHUB_MODELS_MODEL` (third). Only used when `GITHUB_MODELS_ENABLED=True`. |
 | `GOOGLE_MODEL` | Default `gemini-2.5-flash` |
 | `GROQ_MODEL` | Default `openai/gpt-oss-120b` |
-| `GITHUB_MODELS_ENABLED` | Default `False`. GitHub retired GitHub Models on 2026-07-30 ([docs](https://docs.github.com/en/github-models)), so it stays out of the chain unless turned on. |
-| `GITHUB_MODELS_MODEL`, `GITHUB_MODELS_BASE_URL` | Defaults `openai/gpt-4o-mini` and `https://models.github.ai/inference`. Not verified against a live service. |
 | `LLM_HEALTH_CACHE_SECONDS` | Default `300`. How long FastAPI `/health` caches each provider's model listing. |
 | `LLM_FAILOVER_ENABLED` | Default `True`. When `False`, only the first provider in the chain is tried. |
+
+GitHub Models was retired on 2026-07-30 ([GitHub docs](https://docs.github.com/en/github-models)) and was removed. `GITHUB_TOKEN` is no longer read; a leftover value in `.env` is ignored.
 
 Defaults are pinned model IDs rather than `-latest` or `-preview` aliases, so a provider moving an alias can't silently change reviews. When a provider retires a model, requests to it return 404, which FastAPI logs as `llm.model_not_found`. Check the configured models against the providers with:
 
