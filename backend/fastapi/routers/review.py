@@ -6,6 +6,7 @@ Wires: parse diff → similarity search per hunk → build prompt → review age
 
 import time
 import asyncio
+import hashlib
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -77,11 +78,16 @@ async def _prepare_rag_context(
         from services.vector_store import SimilarChunk, vector_store
 
         best: dict[str, SimilarChunk] = {}
+        # Embed every query in one batched call before opening a session, so
+        # no DB connection is held while waiting on the embedding API.
+        query_embeddings = await vector_store.generate_embeddings(
+            [text[:4000] for text in hunk_texts], task_type="RETRIEVAL_QUERY"
+        )
         async with AsyncSessionLocal() as session:
-            for text in hunk_texts:
-                results = await vector_store.search_similar(
+            for query_embedding in query_embeddings:
+                results = await vector_store.search_similar_by_embedding(
                     session=session,
-                    query_text=text[:4000],
+                    query_embedding=query_embedding,
                     repo_full_name=request.repo_full_name,
                     top_k=5,
                     threshold=0.6,
@@ -249,46 +255,70 @@ async def store_review_async(
     """Embed the reviewed PR's hunks, tagged with the PR's source_ref.
 
     Runs after the review so the PR's own chunks are never retrieved for it.
+    Chunks whose sha256 is already stored are skipped before embedding, the
+    rest are embedded in one batched call, and no DB connection is held
+    during that call.
     """
     try:
-        from sqlalchemy.exc import SQLAlchemyError
+        from sqlalchemy.exc import DataError, IntegrityError
 
-        from services.vector_store import vector_store, VectorStoreError
+        from services.vector_store import vector_store
         from core.database import AsyncSessionLocal
 
+        source_ref = _source_ref(pr_number)
+        pending: dict[str, tuple[DiffChunk, str]] = {}  # sha256 -> (chunk, text)
+        for chunk in chunks[:20]:
+            chunk_text = _chunk_text(chunk)
+            if not chunk_text:
+                continue
+            chunk_text = chunk_text[:4000]
+            text_hash = hashlib.sha256(chunk_text.encode()).hexdigest()
+            pending.setdefault(text_hash, (chunk, chunk_text))
+
+        if pending:
+            async with AsyncSessionLocal() as session:
+                existing = await vector_store.existing_hashes(session, list(pending))
+            for text_hash in existing:
+                pending.pop(text_hash, None)
+
         stored = 0
-        async with AsyncSessionLocal() as session:
-            for chunk in chunks[:20]:
-                chunk_text = _chunk_text(chunk)
-                if not chunk_text:
-                    continue
-                try:
-                    await vector_store.store_code_embedding(
-                        session=session,
-                        repo_full_name=repo_full_name,
-                        file_path=chunk.file_path or f"PR#{pr_number}",
-                        chunk_text=chunk_text[:4000],
-                        language=chunk.language or "unknown",
-                        chunk_type=chunk.chunk_type or "hunk",
-                        source_ref=_source_ref(pr_number),
-                    )
-                    stored += 1
-                except VectorStoreError:
-                    # Duplicate chunk or embedding failure: skip this chunk.
-                    continue
-                except SQLAlchemyError as exc:
-                    # e.g. a concurrent insert of the same sha256 between the
-                    # existence check and the commit. Reset the session so the
-                    # remaining chunks can still be stored.
-                    await session.rollback()
-                    logger.warning(
-                        "store_review.chunk_error repo=%s pr=%s file=%s error=%s",
-                        repo_full_name,
-                        pr_number,
-                        chunk.file_path,
-                        type(exc).__name__,
-                    )
-                    continue
+        if pending:
+            embeddings = await vector_store.generate_embeddings(
+                [text for _, text in pending.values()],
+                task_type="RETRIEVAL_DOCUMENT",
+            )
+            async with AsyncSessionLocal() as session:
+                for (text_hash, (chunk, chunk_text)), embedding in zip(
+                    pending.items(), embeddings
+                ):
+                    try:
+                        await vector_store.insert_code_embedding(
+                            session=session,
+                            repo_full_name=repo_full_name,
+                            file_path=chunk.file_path or f"PR#{pr_number}",
+                            chunk_text=chunk_text,
+                            embedding=embedding,
+                            sha256=text_hash,
+                            language=chunk.language or "unknown",
+                            chunk_type=chunk.chunk_type or "hunk",
+                            source_ref=source_ref,
+                        )
+                        stored += 1
+                    except (IntegrityError, DataError) as exc:
+                        # This row only, e.g. a concurrent insert of the same
+                        # sha256 or a value too long for its column. Reset the
+                        # session so the remaining chunks can still be stored.
+                        # Any other error (a missing column, a lost connection)
+                        # would hit every chunk, so it ends the task below.
+                        await session.rollback()
+                        logger.warning(
+                            "store_review.chunk_error repo=%s pr=%s file=%s error=%s",
+                            repo_full_name,
+                            pr_number,
+                            chunk.file_path,
+                            type(exc).__name__,
+                        )
+                        continue
         logger.info(
             "store_review.done repo=%s pr=%s stored=%d",
             repo_full_name,
