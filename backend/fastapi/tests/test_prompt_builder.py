@@ -2,6 +2,8 @@
 Tests for prompt builder service.
 """
 
+import re
+
 from services.prompt_builder import (
     PromptContext,
     REVIEW_SYSTEM_PROMPT,
@@ -203,3 +205,86 @@ class TestDiffLineNumbersInPrompt:
 
         assert "L41 + z = 4" in prompt
         assert "line_number" in prompt
+
+
+def _file_diff(path, lines, start=1):
+    """One-hunk diff; ``lines`` is a list of ("+" or " ", text)."""
+    added = sum(1 for kind, _ in lines if kind == "+")
+    old_count = len(lines) - added
+    body = "".join(f"{kind}{text}\n" for kind, text in lines)
+    return (
+        f"--- a/{path}\n+++ b/{path}\n"
+        f"@@ -{start},{old_count} +{start},{len(lines)} @@\n{body}"
+    )
+
+
+def _numbered_lines(text):
+    return [ln for ln in text.split("\n") if re.match(r"L\d+ ", ln)]
+
+
+class TestDiffBudget:
+    def test_hunk_is_capped_at_120_lines_with_marker(self):
+        from services.code_parser import parse_diff
+
+        diff = _file_diff("big.py", [("+", f"x{i} = {i}") for i in range(200)])
+
+        result = format_diff_chunks(parse_diff(diff))
+
+        assert len(_numbered_lines(result)) == 120
+        assert "... 80 lines omitted" in result
+
+    def test_context_lines_are_trimmed_before_added_lines(self):
+        from services.code_parser import parse_diff
+
+        lines = [(" ", f"ctx{i}") for i in range(75)]
+        lines += [("+", f"new{i}") for i in range(30)]
+        lines += [(" ", f"ctx{i}") for i in range(75, 150)]
+        result = format_diff_chunks(parse_diff(_file_diff("mid.py", lines)))
+
+        rendered = "\n".join(_numbered_lines(result))
+        assert all(f"+ new{i}" in rendered for i in range(30))
+        assert len(_numbered_lines(result)) == 120
+        # The context kept is the context next to the change.
+        assert "ctx74" in rendered and "ctx75" in rendered
+        assert "ctx0\n" not in rendered + "\n"
+
+    def test_files_over_the_total_budget_are_reported_as_omitted(self):
+        from services.code_parser import parse_diff
+
+        diff = "".join(
+            _file_diff(f"f{n}.py", [("+", f"v{i} = {i}") for i in range(100)])
+            for n in range(5)
+        )
+
+        result = format_diff_chunks(parse_diff(diff))
+
+        assert "File: f3.py" in result
+        assert "File: f4.py" not in result
+        assert "[1 files / 100 lines omitted from this diff]" in result
+
+    def test_medium_diff_keeps_similar_patterns_in_prompt(self):
+        from services.code_parser import parse_diff
+
+        diff = ""
+        for n in range(11):
+            lines = []
+            for i in range(40):
+                lines.append(
+                    (" ", f"    existing_{i} = load_record(record_id_{i}, cache)")
+                )
+                lines.append(
+                    ("+", f"    updated_{i} = transform_record(existing_{i}, opts)")
+                )
+            diff += _file_diff(f"pkg/module_{n}.py", lines, start=10)
+        context = PromptContext(
+            diff_chunks=parse_diff(diff),
+            similar_patterns=["PATTERN-MARKER: use parameterized queries"],
+        )
+
+        prompt = build_review_prompt(context)
+
+        assert count_tokens(prompt) <= 8192
+        assert "SIMILAR SECURITY PATTERNS" in prompt
+        assert "PATTERN-MARKER: use parameterized queries" in prompt
+        assert "more diff lines omitted to fit the prompt]" in prompt
+        assert "[6 files / 480 lines omitted from this diff]" in prompt

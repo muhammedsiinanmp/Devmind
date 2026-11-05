@@ -19,7 +19,13 @@ except ImportError:
 
 
 MAX_TOKENS = 8192
+# Diff rendering limits. The diff is rendered first and the retrieved patterns
+# only get the budget it leaves, so it must not take the whole prompt.
 MAX_HUNK_LINES = 120
+MAX_FILE_LINES = 200
+MAX_DIFF_LINES = 400
+MAX_LINE_CHARS = 300
+DIFF_TOKEN_BUDGET = 5000
 
 
 REVIEW_SYSTEM_PROMPT = """You are an expert code reviewer AI. Your task is to review code changes and provide constructive, actionable feedback.
@@ -137,7 +143,7 @@ def build_review_prompt(
     parts.append("\n\n=== CODE CHANGES ===\n")
 
     if context.diff_chunks:
-        diff_text = format_diff_chunks(context.diff_chunks)
+        diff_text = fit_diff_to_tokens(format_diff_chunks(context.diff_chunks))
         parts.append(diff_text)
 
     diff_tokens = count_tokens("\n".join(parts))
@@ -185,37 +191,108 @@ def build_review_prompt(
     return final_prompt
 
 
-def format_hunk_lines(hunk, max_lines: int = MAX_HUNK_LINES) -> list[str]:
+def _line_rank(lines: list, changed: list[int], index: int) -> tuple[int, int]:
+    """Lower ranks are kept first: added, removed, then context nearest a change."""
+    kind = lines[index].kind
+    if kind == "added":
+        return (0, index)
+    if kind == "removed":
+        return (1, index)
+    distance = min((abs(index - c) for c in changed), default=len(lines))
+    return (2 + distance, index)
+
+
+def select_hunk_lines(
+    hunks: list,
+    max_hunk_lines: int = MAX_HUNK_LINES,
+    max_file_lines: int = MAX_FILE_LINES,
+) -> list[set[int]]:
+    """
+    Pick which lines of a file's hunks fit the prompt.
+
+    Context lines farthest from a change are dropped first, then removed
+    lines, then added lines. Returns the kept line indices of each hunk.
+    """
+    ranked: list[tuple[tuple[int, int], int, int]] = []
+    for h, hunk in enumerate(hunks):
+        changed = [i for i, ln in enumerate(hunk.lines) if ln.kind != "context"]
+        ranks = sorted(
+            (_line_rank(hunk.lines, changed, i), h, i) for i in range(len(hunk.lines))
+        )
+        ranked.extend(ranks[:max_hunk_lines])
+    ranked.sort()
+    keep: list[set[int]] = [set() for _ in hunks]
+    for _, h, i in ranked[:max_file_lines]:
+        keep[h].add(i)
+    return keep
+
+
+def format_hunk_lines(hunk, keep: Optional[set[int]] = None) -> list[str]:
     """
     Render a hunk with new-file line numbers.
 
     Added lines render as ``L42 + code`` and context lines as ``L41   code``.
     Removed lines have no new-file number and render as ``      - code``.
+    Lines not in ``keep`` are replaced by ``... N lines omitted``.
     """
+    if keep is None:
+        keep = set(range(len(hunk.lines)))
     width = len(str(max((ln.new_line or 0 for ln in hunk.lines), default=0))) + 1
     rendered = []
-    for line in hunk.lines[:max_lines]:
+    skipped = 0
+    for i, line in enumerate(hunk.lines):
+        if i not in keep:
+            skipped += 1
+            continue
+        if skipped:
+            rendered.append(f"... {skipped} lines omitted")
+            skipped = 0
         marker = {"added": "+", "removed": "-"}.get(line.kind, " ")
         number = f"L{line.new_line}" if line.new_line is not None else ""
-        rendered.append(f"{number:<{width}} {marker} {line.content}")
-    if len(hunk.lines) > max_lines:
-        rendered.append(f"... {len(hunk.lines) - max_lines} more lines")
+        content = line.content
+        if len(content) > MAX_LINE_CHARS:
+            content = content[:MAX_LINE_CHARS] + " [line cut]"
+        rendered.append(f"{number:<{width}} {marker} {content}")
+    if skipped:
+        rendered.append(f"... {skipped} lines omitted")
     return rendered
 
 
-def format_diff_chunks(chunks: list) -> str:
-    """Format diff chunks for prompt."""
+def format_diff_chunks(chunks: list, max_lines: int = MAX_DIFF_LINES) -> str:
+    """
+    Format diff chunks for prompt.
+
+    At most MAX_HUNK_LINES per hunk, MAX_FILE_LINES per file and ``max_lines``
+    in total are rendered. Files past the total are left out, and a final
+    ``[N files / M lines omitted from this diff]`` line reports what was cut.
+    """
     lines = []
+    remaining = max_lines
+    omitted_files = 0
+    omitted_lines = 0
     for chunk in chunks:
-        lines.append(f"File: {chunk.file_path}")
-        lines.append(f"Language: {chunk.language}")
         hunks = getattr(chunk, "hunks", None)
         if hunks:
-            for hunk in hunks:
+            total = sum(len(hunk.lines) for hunk in hunks)
+            if remaining <= 0:
+                omitted_files += 1
+                omitted_lines += total
+                continue
+            keep = select_hunk_lines(
+                hunks, max_file_lines=min(MAX_FILE_LINES, remaining)
+            )
+            kept = sum(len(k) for k in keep)
+            remaining -= kept
+            omitted_lines += total - kept
+            lines.append(f"File: {chunk.file_path}")
+            lines.append(f"Language: {chunk.language}")
+            for hunk, hunk_keep in zip(hunks, keep):
                 lines.append(f"Hunk: {hunk.header}")
-                lines.extend(format_hunk_lines(hunk))
+                lines.extend(format_hunk_lines(hunk, hunk_keep))
             lines.append("")
             continue
+        lines.append(f"File: {chunk.file_path}")
+        lines.append(f"Language: {chunk.language}")
         if chunk.hunk_header:
             lines.append(f"Hunk: {chunk.hunk_header}")
         if chunk.added_lines:
@@ -225,7 +302,38 @@ def format_diff_chunks(chunks: list) -> str:
             lines.append("Removed:")
             lines.extend(chunk.removed_lines[:50])
         lines.append("")
+    if omitted_files or omitted_lines:
+        lines.append(
+            f"[{omitted_files} files / {omitted_lines} lines omitted from this diff]"
+        )
     return "\n".join(lines)
+
+
+def fit_diff_to_tokens(diff_text: str, max_tokens: int = DIFF_TOKEN_BUDGET) -> str:
+    """
+    Cut the rendered diff at a line boundary so it uses at most ``max_tokens``,
+    leaving room in the prompt for retrieved patterns and other context.
+    """
+    if count_tokens(diff_text) <= max_tokens:
+        return diff_text
+    marker_budget = 40
+    diff_lines = diff_text.split("\n")
+    summary = None
+    if diff_lines[-1].endswith("omitted from this diff]"):
+        summary = diff_lines.pop()
+    kept: list[str] = []
+    used = 0
+    for line in diff_lines:
+        cost = count_tokens(line) + 1
+        if used + cost > max_tokens - marker_budget:
+            break
+        kept.append(line)
+        used += cost
+    dropped = len(diff_lines) - len(kept)
+    kept.append(f"[{dropped} more diff lines omitted to fit the prompt]")
+    if summary:
+        kept.append(summary)
+    return "\n".join(kept)
 
 
 def format_patterns(patterns: list) -> str:
