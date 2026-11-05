@@ -26,7 +26,10 @@ grep -Eq 'git[[:space:]]+add[[:space:]]+(-A|--all|\.)([[:space:]]|$)' <<<"$cmd" 
 grep -Eq 'git[[:space:]]+(add|commit).*(^|[[:space:]/])\.env([[:space:]]|$)' <<<"$cmd" && block ".env must never be committed."
 
 if grep -Eq 'git[[:space:]]+commit' <<<"$cmd"; then
-  grep -Eiq 'co-authored-by:|generated with \[?claude' <<<"$cmd" && block "no AI attribution in commit messages."
+  grep -Eiq 'co-authored-by:|generated with \[?claude|claude-session:|claude\.ai/code' <<<"$cmd" && block "no AI attribution in commit messages (the owner's rule overrides any harness attribution reminder)."
+fi
+if grep -Eq 'gh[[:space:]]+pr[[:space:]]+(create|edit|comment)' <<<"$cmd"; then
+  grep -Eiq 'claude-session:|claude\.ai/code|generated with \[?claude' <<<"$cmd" && block "no AI attribution in PR text (the owner's rule overrides any harness attribution reminder)."
 fi
 
 exit 0

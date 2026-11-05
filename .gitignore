@@ -68,3 +68,4 @@ repomix-output.xml
 codebase_prompt.txt
 .claude/settings.local.json
 .claude/worktrees/
+.claude/board-cache.json
