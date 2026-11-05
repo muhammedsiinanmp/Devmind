@@ -37,6 +37,15 @@ test-fastapi:
 	docker compose exec fastapi uv run pytest
 test-all: test
 
+# ─── Review-quality evals (run on the host with uv, not in Docker) ──
+# eval: offline replay from recorded responses in evals/cassettes.
+# eval-record: calls the real providers configured in .env, re-records the
+# cassettes and writes evals/results/<sha>.json and <sha>.md.
+eval:
+	cd backend/fastapi && uv run python -m evals.run --replay
+eval-record:
+	cd backend/fastapi && uv run python -m evals.run --live --record --results-dir evals/results
+
 # ─── Code Quality ─────────────────────────────────────────────
 format:
 	docker compose exec django uv run black .

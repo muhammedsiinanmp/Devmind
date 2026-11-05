@@ -130,7 +130,7 @@ Measured locally on this branch:
 | Suite | Tests | Line coverage |
 |---|---|---|
 | Django | 244 passed | 83% |
-| FastAPI | 176 passed | 80% |
+| FastAPI | 261 passed | 84% |
 
 Coverage method: `pytest --cov`, then `coverage report --omit='*/tests/*,*/migrations/*,*conftest.py'`, so test files, migrations and conftest are excluded. Including the test files would give a higher figure.
 
@@ -214,6 +214,22 @@ pnpm exec tsc -p tsconfig.app.json --noEmit && pnpm build && pnpm lint
 make test
 ```
 
+## Evals
+
+`backend/fastapi/evals/` measures review quality. It runs `run_review_agent` on 27 hand-written synthetic diffs in `evals/cases/` (9 of them clean, with `expected: []`), skipping the database/RAG step, so no Postgres is needed. Each finding is matched to the labeled ones by file, line range, category and minimum severity.
+
+It reports precision, recall, the false-positive rate on clean diffs, the valid-line rate (findings that point at a line shown in the diff), latency, token counts, and cost when a price is set in `PRICES_PER_MTOK` in `evals/run.py`. No prices are set, so cost shows as "not priced".
+
+```bash
+make eval         # replay: offline and deterministic, uses evals/cassettes/, no keys needed
+make eval-record  # live: calls the providers configured in .env, re-records the
+                  # cassettes, writes evals/results/<sha>.json and <sha>.md
+```
+
+Cassettes store only the SHA-256 of each prompt, the response text, the model name and token counts. They don't store prompts, headers or keys, and recording stops if a configured key appears in a response. If the agent's prompts or a case's diff change, replay reports those cases as stale until you run `make eval-record` again.
+
+**The baseline hasn't been recorded yet.** `evals/cassettes/` and `evals/results/` are empty and `make eval` exits with a message saying so. The test suite checks the scoring against hand-written fixture responses in `backend/fastapi/tests/fixtures/evals/`. Those are test data, not model output.
+
 ## Configuration
 
 All services read the root `.env` (template: [.env.example](.env.example)). These are the main variables:
@@ -262,6 +278,7 @@ backend/
     tests/           end-to-end pipeline test
   fastapi/           AI service
     agents/          LangGraph review agent and state
+    evals/           review-quality eval cases, harness, cassettes, results
     routers/         /review, /embeddings, /scan, /health
     services/        LLM client, rate limiter, vector store, diff parser, prompt builder
 frontend/            React + Vite app
