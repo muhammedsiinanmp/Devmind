@@ -49,7 +49,7 @@ There's no `FERNET_KEY` variable. The encryption key comes from `DJANGO_SECRET_K
 
 | Variable | Description |
 |---|---|
-| `GOOGLE_AI_API_KEY` | Google AI Studio key. Used for `gemini-2.0-flash` (first server provider) and for `text-embedding-004` embeddings. |
+| `GOOGLE_AI_API_KEY` | Google AI Studio key. Used for `gemini-2.0-flash` (first server provider) and for `gemini-embedding-001` embeddings (`EMBEDDING_MODEL`). |
 | `GROQ_API_KEY` | Groq key for `llama-3.3-70b-versatile` (second) |
 | `GITHUB_TOKEN` | GitHub token with access to GitHub Models, for `gpt-4o-mini` (third) |
 | `LLM_FAILOVER_ENABLED` | Default `True`. When `False`, only the first provider in the chain is tried. |
@@ -546,7 +546,7 @@ These gaps are confirmed in the current code.
 
 ### Embedding tables are never created
 
-The `vector` extension is enabled by a Django migration, but nothing creates `code_embeddings` / `review_embeddings` (FastAPI never calls `create_all`, and no Django migration covers them). Until they exist, the retrieval steps log errors and reviews run without similar-code context. There's also no vector index defined.
+The `vector` extension is enabled by a Django migration, but nothing creates `code_embeddings` / `review_embeddings` (FastAPI never calls `create_all`, and no Django migration covers them). Until they exist, the retrieval steps log errors and reviews run without similar-code context. For a table created by hand, apply `backend/fastapi/migrations/sql/0001_code_embeddings_source_ref.sql` and `0002_code_embeddings_hnsw_index.sql` in order; the second adds the HNSW cosine index (`models/embeddings.py` declares the same index).
 
 ### `review_embeddings` is never written
 
