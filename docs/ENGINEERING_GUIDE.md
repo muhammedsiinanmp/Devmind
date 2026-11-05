@@ -60,7 +60,7 @@ There's no server-side OpenAI provider. OpenAI keys can be added per user throug
 
 | Variable | Default | Description |
 |---|---|---|
-| `REDIS_URL` | `redis://redis:6379/0` | Django cache (OAuth state), Channels layer, FastAPI rate limiter |
+| `REDIS_URL` | `redis://redis:6379/0` | Django cache (OAuth state, organization invite tokens, DRF throttle counters), Channels layer, FastAPI rate limiter |
 | `CELERY_BROKER_URL` | `redis://redis:6379/1` | Celery broker |
 | `CELERY_RESULT_BACKEND` | `redis://redis:6379/2` | Celery results |
 | `FASTAPI_BASE_URL` | `http://fastapi:8001` | Where the Celery worker reaches FastAPI |
@@ -551,6 +551,10 @@ The Channels consumers, routing and JWT query middleware exist and are tested. H
 ### pgvector schema is never created
 
 Nothing enables the `vector` extension or creates `code_embeddings` / `review_embeddings` (FastAPI never calls `create_all`, and no Django migration covers them). Until both exist, the retrieval steps log errors and reviews run without similar-code context. There's also no vector index defined.
+
+### `review_embeddings` is never written
+
+`VectorStore.store_review_embedding` is only called from tests, and `POST /review/analyze` receives no review ID. The table stays empty, and the "past reviews" part of the prompt is never filled.
 
 ### `fetch_conventions` is a placeholder
 
