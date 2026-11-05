@@ -82,7 +82,7 @@ A review moves through the system like this:
 
 1. GitHub sends a webhook to `POST /api/v1/webhooks/github/`. Django checks the signature (constant-time compare). It returns 403 if the signature is wrong or if `GITHUB_WEBHOOK_SECRET` isn't set. Valid requests get a Celery task queued.
 2. The Celery worker creates the `Review` row (one per repo, PR number and head SHA, so a redelivered webhook doesn't create a duplicate). It fetches the diff from GitHub and calls FastAPI.
-3. FastAPI parses the diff, embeds the chunks, searches pgvector for similar code, builds a prompt within a token budget and runs the LangGraph agent.
+3. FastAPI parses the diff and searches pgvector once per changed hunk for similar code elsewhere in the repository, leaving out the PR's own chunks. It builds a prompt within a token budget and runs the LangGraph agent. After it responds, a background task embeds the PR's hunks so later reviews can retrieve them.
 4. The worker saves the comments and a `ReviewRun` record, then queues a separate task that posts the comments to GitHub. If posting fails, that task can be retried without re-running the review.
 
 The full design, including [architectural decisions and their trade-offs](docs/SYSTEM_ARCHITECTURE.md#12-architectural-decisions), is in [docs/SYSTEM_ARCHITECTURE.md](docs/SYSTEM_ARCHITECTURE.md).

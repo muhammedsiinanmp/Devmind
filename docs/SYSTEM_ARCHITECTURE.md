@@ -166,9 +166,10 @@ sequenceDiagram
     CW->>PG: Review.status = processing
     CW->>GH: GET pull request diff (user's OAuth token)
     CW->>FA: POST /review/analyze {diff, repo_full_name, pr_number, user_id}
-    FA->>FA: parse diff, store chunk embeddings, similarity search
+    FA->>FA: parse diff, similarity search per hunk (excluding this PR)
     FA->>FA: build prompt (8192-token budget), run LangGraph agent
     FA-->>CW: {comments[], risk_score, model_used, provider, latency_ms}
+    FA->>FA: background task: embed this PR's hunks (source_ref PR#<n>)
 
     CW->>PG: INSERT ReviewRun (+ diff_text) and ReviewComment rows
     CW->>PG: Review.status = completed, risk_score, summary, completed_at
@@ -284,17 +285,28 @@ Each item is validated against `_LLMCommentSchema` (Pydantic), and unknown sever
 
 ```
 parse_diff(diff)                       -> DiffChunk[] (file, language, added/removed/context lines)
-for up to 20 chunks:
-    store_code_embedding(...)          -> Google text-embedding-004, task_type RETRIEVAL_DOCUMENT,
-                                          768 dims, deduplicated by sha256 of the chunk text
-search_similar(diff[:2000], repo, top_k=5, threshold=0.6)
-                                       -> task_type RETRIEVAL_QUERY, ordered by pgvector cosine distance
+for each of up to 20 chunks:
+    search_similar(hunk, repo, top_k=5, threshold=0.6, exclude_source_ref="PR#<n>")
+                                       -> Google text-embedding-004, task_type RETRIEVAL_QUERY,
+                                          ordered by pgvector cosine distance
+merge results                          -> drop untagged rows with file_path "PR#<n>",
+                                          drop results whose whitespace-normalized text equals a hunk
+                                          of this diff, dedupe by text (keep highest similarity),
+                                          keep the top 5
 build_review_prompt(...)               -> 8192-token budget (tiktoken cl100k_base); diff first,
                                           then similar patterns, quality patterns, past reviews, conventions
 run_review_agent(...)
+store_review_async(...)                -> background task after the response is built: for up to 20
+                                          chunks, store_code_embedding(..., source_ref="PR#<n>"),
+                                          task_type RETRIEVAL_DOCUMENT, 768 dims, skipped if the
+                                          sha256 of the chunk text already exists
 ```
 
-The handler runs these steps inside a `try`. A failure in embedding or search is logged as `review.rag_context_partial`, and the review continues without similar-code context. After the response is built, a background task also stores an embedding of the first 1000 characters of the diff.
+Nothing is stored before the search, and rows tagged with the current PR's `source_ref` are filtered out in SQL (`source_ref IS DISTINCT FROM 'PR#<n>'`, so untagged rows are kept). That keeps a review, including a re-review after a new push, from retrieving its own diff. When `pr_number` is 0, chunks are stored with no `source_ref` and nothing is excluded.
+
+Each retrieved chunk is logged as `review.rag_context.retrieved` with repo, PR number, file path and similarity. Chunk text and the query are not logged, and the SQLAlchemy engine sets `hide_parameters=True` so bound values stay out of database error messages.
+
+The handler runs the search inside a `try`. A failure in embedding or search is logged as `review.rag_context_partial`, and the review continues without similar-code context.
 
 Embeddings are cached in process by an LRU cache (`_BoundedCache`, max 1000 entries) keyed by `sha256(f"{task_type}:{text}")`.
 
@@ -610,6 +622,7 @@ erDiagram
         varchar chunk_type
         vector embedding "Vector(768)"
         varchar sha256 UK "dedupe key for the chunk text"
+        varchar source_ref "nullable, e.g. PR#12"
         timestamptz created_at
     }
     review_embeddings {
@@ -641,7 +654,7 @@ erDiagram
 
 The dotted lines are **logical references, not foreign keys**. Nothing enforces that the Django row exists, and deleting a Django repository or review leaves its embeddings in place.
 
-- `code_embeddings.repo_full_name` is the `repo_full_name` the Celery worker sends to `POST /review/analyze`. It holds a name, not an ID, so when `initial_sync` picks up a renamed repository, its older chunks stay under the old name. Each review writes up to 20 diff chunks here, plus one row for the first 1000 characters of the diff (`file_path` `PR#<number>`, `chunk_type` `pr`).
+- `code_embeddings.repo_full_name` is the `repo_full_name` the Celery worker sends to `POST /review/analyze`. It holds a name, not an ID, so when `initial_sync` picks up a renamed repository, its older chunks stay under the old name. After each review, a background task writes up to 20 diff chunks here with `source_ref` `PR#<number>` (none when `pr_number` is 0). Older versions also wrote one untagged row for the first 1000 characters of the diff (`file_path` `PR#<number>`, `chunk_type` `pr`); retrieval skips those rows for the PR being reviewed.
 - `review_embeddings.review_id` and `user_id` are meant to hold Django `Review` and `CustomUser` IDs, but nothing in the application writes this table today. `VectorStore.store_review_embedding` is only called from tests, and the `/review/analyze` request carries `user_id` but no review ID. As a result, the "past reviews" section of the prompt is always empty.
 
 There are B-tree indexes on `repo_full_name`, `language`, `review_id`, `user_id` and `code_hash`. There is no vector (HNSW or IVFFlat) index, so similarity search scans the table sequentially. As noted in section 5, nothing in the repo creates these tables yet.
