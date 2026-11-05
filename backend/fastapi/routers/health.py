@@ -5,7 +5,11 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 
 from core.database import AsyncSessionLocal
-from services.llm_client import MODEL_CHAIN, check_provider_health
+from services.llm_client import (
+    MODEL_CHAIN,
+    cached_model_listed,
+    server_provider_models,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +40,21 @@ async def health_check():
         checks["database"] = "error"
         checks["pgvector"] = "unknown"
 
-    # LLM providers — informational only, failover chain handles degradation
+    # LLM providers — informational only, failover chain handles degradation.
+    # "listed" is null when the provider has no key (or is disabled) or its
+    # model listing couldn't be fetched. Listings are cached for a few minutes.
+    llm: dict[str, dict[str, object]] = {
+        provider: {"model": model, "enabled": False, "listed": None}
+        for provider, model in server_provider_models().items()
+    }
     for config in MODEL_CHAIN:
-        provider, is_healthy = await check_provider_health(config)
-        checks[f"llm_{provider}"] = "ok" if is_healthy else "unreachable"
+        provider = config.provider.value
+        listed = await cached_model_listed(config)
+        llm[provider] = {"model": config.model, "enabled": True, "listed": listed}
+        if listed is None:
+            checks[f"llm_{provider}"] = "unreachable"
+        else:
+            checks[f"llm_{provider}"] = "ok" if listed else "model_not_listed"
 
     # DB down or pgvector missing → 503 so ECS/k8s stops routing traffic here
     critical_ok = checks.get("database") == "ok" and checks.get(
@@ -49,6 +64,6 @@ async def health_check():
     status_code = 200 if critical_ok else 503
 
     return JSONResponse(
-        {"status": overall, "checks": checks},
+        {"status": overall, "checks": checks, "llm": llm},
         status_code=status_code,
     )
