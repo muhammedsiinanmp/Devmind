@@ -23,6 +23,10 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/review", tags=["review"])
 
+# Strong references to fire-and-forget tasks; the event loop keeps only weak
+# ones, so an unreferenced task can be garbage-collected before it finishes.
+_background_tasks: set[asyncio.Task] = set()
+
 
 def _chunk_text(chunk: DiffChunk) -> str:
     lines = []
@@ -64,8 +68,10 @@ async def _prepare_rag_context(
     parsed_chunks = parse_diff(request.diff)
     similar_patterns: list[str] = []
 
-    hunk_texts = [text for text in map(_chunk_text, parsed_chunks[:20]) if text]
-    current_hunks = {_normalize(text[:4000]) for text in hunk_texts}
+    all_hunk_texts = [text for text in map(_chunk_text, parsed_chunks) if text]
+    # Queries are capped at 20 hunks; the duplicate filter covers the whole diff.
+    hunk_texts = all_hunk_texts[:20]
+    current_hunks = {_normalize(text[:4000]) for text in all_hunk_texts}
     legacy_pr_path = f"PR#{request.pr_number}"
 
     try:
@@ -195,13 +201,15 @@ async def analyze_review(
         model_used = result.get("model_used", "unknown")
 
         # Embed the PR's hunks after the review (fire-and-forget)
-        asyncio.create_task(
+        task = asyncio.create_task(
             store_review_async(
                 repo_full_name=request.repo_full_name,
                 pr_number=request.pr_number,
                 chunks=parsed_chunks,
             )
         )
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
 
         return ReviewResponse(
             repo_full_name=request.repo_full_name,
@@ -242,6 +250,8 @@ async def store_review_async(
     Runs after the review so the PR's own chunks are never retrieved for it.
     """
     try:
+        from sqlalchemy.exc import SQLAlchemyError
+
         from services.vector_store import vector_store, VectorStoreError
         from core.database import AsyncSessionLocal
 
@@ -264,6 +274,19 @@ async def store_review_async(
                     stored += 1
                 except VectorStoreError:
                     # Duplicate chunk or embedding failure: skip this chunk.
+                    continue
+                except SQLAlchemyError as exc:
+                    # e.g. a concurrent insert of the same sha256 between the
+                    # existence check and the commit. Reset the session so the
+                    # remaining chunks can still be stored.
+                    await session.rollback()
+                    logger.warning(
+                        "store_review.chunk_error repo=%s pr=%s file=%s error=%s",
+                        repo_full_name,
+                        pr_number,
+                        chunk.file_path,
+                        type(exc).__name__,
+                    )
                     continue
         logger.info(
             "store_review.done repo=%s pr=%s stored=%d",

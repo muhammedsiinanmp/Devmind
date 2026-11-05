@@ -5,7 +5,7 @@ AI pull-request reviewer: Django (API, webhooks, Celery) + FastAPI (LangGraph re
 ## Work tracking
 - Work is planned as vertical-slice issues (label `slice`) on the GitHub Project in `.claude/board.json`. Each issue is the spec: Outcome, Scope, Acceptance criteria, Blocked by.
 - `/next-slices` shows what's unblocked. `/ship-slice <n>` runs the `slice-implementer` agent in a worktree and reviews the PR.
-- Branches: `slice/<key>-<name>` off `dev`, PR into `dev`. Never push to `dev`/`main`, never merge without the owner.
+- Branches: `slice/<key>-<name>` off `dev`, PR into `dev`. Never push to `dev`/`main`. Only the main session merges into `dev`, after a verifier or ai-pipeline-reviewer PASS and green CI. Subagents never merge.
 
 ## Commands
 - FastAPI: `cd backend/fastapi && uv sync --frozen && uvx ruff@0.17.3 check . && uv run black --check . && uv run pytest`

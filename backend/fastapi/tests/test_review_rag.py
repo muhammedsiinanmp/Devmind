@@ -17,8 +17,10 @@ from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from models.review import ReviewRequest
+from routers import review as review_router
 from routers.review import analyze_review
 from services.vector_store import SimilarChunk, VectorStoreError
 
@@ -49,6 +51,9 @@ class FakeVectorStore:
 
     def __init__(self):
         self.rows: list[dict] = []
+        # file paths whose insert fails at commit (e.g. a concurrent insert of
+        # the same sha256 racing past the existence check)
+        self.integrity_error_paths: set[str] = set()
 
     async def store_code_embedding(
         self,
@@ -60,6 +65,8 @@ class FakeVectorStore:
         chunk_type="function",
         source_ref=None,
     ):
+        if file_path in self.integrity_error_paths:
+            raise IntegrityError("INSERT", {}, Exception("duplicate key"))
         sha = hashlib.sha256(chunk_text.encode()).hexdigest()
         if any(r["sha256"] == sha for r in self.rows):
             raise VectorStoreError(f"Embedding already exists: {sha[:8]}")
@@ -109,9 +116,22 @@ class FakeVectorStore:
         ]
 
 
+class FakeSession:
+    def __init__(self):
+        self.rollbacks = 0
+
+    async def rollback(self):
+        self.rollbacks += 1
+
+
+SESSIONS: list[FakeSession] = []
+
+
 @asynccontextmanager
 async def _fake_session():
-    yield object()
+    session = FakeSession()
+    SESSIONS.append(session)
+    yield session
 
 
 REPO = "owner/repo"
@@ -165,6 +185,7 @@ async def _review(diff: str, pr_number: int) -> list[str]:
 @pytest.fixture
 def fake_store():
     store = FakeVectorStore()
+    SESSIONS.clear()
     with (
         patch("services.vector_store.vector_store", store),
         patch("core.database.AsyncSessionLocal", _fake_session),
@@ -248,3 +269,58 @@ class TestRetrievalLogging:
             assert "fetch_user" not in message
             assert "fetch_order" not in message
             assert "SELECT * FROM" not in message
+
+
+def _file_diff(i: int) -> str:
+    return f"""diff --git a/pkg/mod{i}.py b/pkg/mod{i}.py
+--- a/pkg/mod{i}.py
++++ b/pkg/mod{i}.py
+@@ -1,1 +1,2 @@
+ import os
++value_{i} = os.environ.get("KEY_{i}")
+"""
+
+
+def _diff_with_files(count: int) -> str:
+    return "".join(_file_diff(i) for i in range(count))
+
+
+class TestStoreAfterReview:
+    @pytest.mark.asyncio
+    async def test_db_error_on_one_chunk_does_not_drop_later_chunks(self, fake_store):
+        fake_store.integrity_error_paths.add("pkg/mod0.py")
+
+        await _review(_diff_with_files(3), pr_number=7)
+
+        stored = sorted(r["file_path"] for r in fake_store.rows)
+        assert stored == ["pkg/mod1.py", "pkg/mod2.py"]
+        assert sum(s.rollbacks for s in SESSIONS) == 1
+
+    @pytest.mark.asyncio
+    async def test_background_store_task_is_referenced_until_done(self, fake_store):
+        agent = AsyncMock(
+            return_value={"synthesized_comments": [], "model_used": "x/y"}
+        )
+        before = set(review_router._background_tasks)
+        with patch("agents.review_agent.run_review_agent", agent):
+            await analyze_review(
+                ReviewRequest(diff=PR1_DIFF, repo_full_name=REPO, pr_number=1),
+                secret="unused",
+            )
+
+        tasks = set(review_router._background_tasks) - before
+        assert len(tasks) == 1
+        await asyncio.gather(*tasks)
+        assert not tasks & review_router._background_tasks
+        assert fake_store.rows
+
+
+class TestNearDuplicateFilterCoversWholeDiff:
+    @pytest.mark.asyncio
+    async def test_hunk_beyond_the_first_20_is_still_filtered(self, fake_store):
+        # Hunk 21 of the current diff was stored earlier under another PR.
+        await _review(_file_diff(20), pr_number=1)
+
+        patterns = await _review(_diff_with_files(21), pr_number=2)
+
+        assert not any("value_20" in p for p in patterns)
