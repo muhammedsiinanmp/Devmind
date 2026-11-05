@@ -1,14 +1,17 @@
 # ─── Infrastructure ───────────────────────────────────────────
+# up: app stack (migrations run first). up-ops: also Flower, Prometheus, Grafana.
 up:
 	docker compose up -d
+up-ops:
+	docker compose --profile ops up -d
 down:
-	docker compose down
+	docker compose --profile ops down
 build:
 	docker compose build
 logs:
 	docker compose logs -f
 reset:
-	docker compose down -v && docker compose up -d
+	docker compose --profile ops down -v && docker compose up -d
 
 # ─── Shell Access ──────────────────────────────────────────────
 shell-django:
