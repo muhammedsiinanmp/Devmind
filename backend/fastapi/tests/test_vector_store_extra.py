@@ -2,6 +2,8 @@
 Tests for vector store service - additional edge cases.
 """
 
+import logging
+
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -100,3 +102,28 @@ class TestVectorStoreEdgeCases:
                             file_path="src/foo.py",
                             chunk_text="test code",
                         )
+
+    @pytest.mark.asyncio
+    async def test_search_similar_does_not_log_query_text(self, caplog):
+        """The query is code from the diff under review; keep it out of logs."""
+        store = VectorStore()
+        mock_session = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.all.return_value = []
+        mock_session.execute = AsyncMock(return_value=mock_result)
+
+        with patch.object(
+            store, "generate_embedding", new_callable=AsyncMock
+        ) as mock_gen:
+            mock_gen.return_value = [0.1] * 768
+            with caplog.at_level(logging.DEBUG, logger="services.vector_store"):
+                await store.search_similar(
+                    session=mock_session,
+                    query_text="password = 'hunter2'",
+                    repo_full_name="owner/repo",
+                    exclude_source_ref="PR#2",
+                )
+
+        messages = [r.getMessage() for r in caplog.records]
+        assert any("vector_store.search" in m for m in messages)
+        assert not any("hunter2" in m for m in messages)
