@@ -8,10 +8,8 @@ from unittest.mock import AsyncMock, patch
 from agents.states import ReviewState
 from agents.review_agent import (
     create_system_message,
-    should_retry,
     _parse_llm_comments,
-    MAX_ITERATIONS,
-    CONFIDENCE_THRESHOLD,
+    MAX_PARSE_RETRIES,
 )
 
 
@@ -22,15 +20,12 @@ class TestReviewState:
             "repo_full_name": "owner/repo",
             "pr_number": 1,
             "user_id": 1,
-            "conventions": {},
             "security_comments": [],
             "quality_comments": [],
             "test_comments": [],
             "synthesized_comments": [],
-            "suggested_fixes": [],
+            "analyzer_runs": {},
             "model_used": "",
-            "confidence": 0.0,
-            "iteration": 0,
         }
         assert state["diff_text"] == "test diff"
         assert state["repo_full_name"] == "owner/repo"
@@ -53,36 +48,6 @@ class TestCreateSystemMessage:
     def test_create_default_message(self):
         msg = create_system_message("unknown")
         assert msg is not None
-
-
-class TestShouldRetry:
-    def test_should_retry_below_threshold(self):
-        state: ReviewState = {
-            "confidence": 0.5,
-            "iteration": 0,
-        }
-        assert should_retry(state) is True
-
-    def test_should_retry_above_threshold(self):
-        state: ReviewState = {
-            "confidence": 0.8,
-            "iteration": 0,
-        }
-        assert should_retry(state) is False
-
-    def test_should_retry_max_iterations(self):
-        state: ReviewState = {
-            "confidence": 0.5,
-            "iteration": MAX_ITERATIONS,
-        }
-        assert should_retry(state) is False
-
-    def test_should_not_retry_first_iteration(self):
-        state: ReviewState = {
-            "confidence": 0.6,
-            "iteration": 0,
-        }
-        assert should_retry(state) is True
 
 
 class TestParseLLMComments:
@@ -170,11 +135,8 @@ class TestParseLLMComments:
 
 
 class TestConstants:
-    def test_confidence_threshold(self):
-        assert CONFIDENCE_THRESHOLD == 0.7
-
-    def test_max_iterations(self):
-        assert MAX_ITERATIONS == 3
+    def test_unparseable_response_retried_once(self):
+        assert MAX_PARSE_RETRIES == 1
 
 
 class TestReviewGraph:
@@ -211,29 +173,6 @@ class TestReviewGraph:
 
 class TestNodes:
     @pytest.mark.asyncio
-    async def test_fetch_conventions_node(self):
-        from agents.review_agent import fetch_conventions
-
-        state: ReviewState = {
-            "diff_text": "test",
-            "repo_full_name": "owner/repo",
-            "pr_number": 1,
-            "user_id": 1,
-            "conventions": {},
-            "security_comments": [],
-            "quality_comments": [],
-            "test_comments": [],
-            "synthesized_comments": [],
-            "suggested_fixes": [],
-            "model_used": "",
-            "confidence": 0.0,
-            "iteration": 0,
-        }
-
-        result = await fetch_conventions(state)
-        assert "conventions" in result
-
-    @pytest.mark.asyncio
     async def test_synthesize_node(self):
         from agents.review_agent import synthesize
 
@@ -242,7 +181,6 @@ class TestNodes:
             "repo_full_name": "owner/repo",
             "pr_number": 1,
             "user_id": 1,
-            "conventions": {},
             "security_comments": [
                 {
                     "file_path": "a.py",
@@ -264,10 +202,8 @@ class TestNodes:
             "quality_comments": [],
             "test_comments": [],
             "synthesized_comments": [],
-            "suggested_fixes": [],
+            "analyzer_runs": {},
             "model_used": "",
-            "confidence": 0.0,
-            "iteration": 0,
         }
 
         result = await synthesize(state)
@@ -277,142 +213,154 @@ class TestNodes:
         assert len(comments) == 2
         assert comments[0]["severity"] == "critical"
 
-    @pytest.mark.asyncio
-    async def test_format_output_node(self):
-        from agents.review_agent import format_output
 
-        state: ReviewState = {
-            "diff_text": "test",
-            "repo_full_name": "owner/repo",
-            "pr_number": 1,
-            "user_id": 1,
-            "conventions": {},
-            "security_comments": [],
-            "quality_comments": [],
-            "test_comments": [],
-            "synthesized_comments": [
-                {
-                    "file_path": "a.py",
-                    "line_number": 10,
-                    "category": "security",
-                    "severity": "warning",
-                    "body": "Good comment",
-                    "suggested_fix": None,
-                },
-            ],
-            "suggested_fixes": [],
-            "model_used": "",
-            "confidence": 0.0,
-            "iteration": 0,
+def _llm_response(content: str, model: str = "test/model"):
+    from services.llm_client import LLMResponse
+
+    return LLMResponse(
+        content=content,
+        model_used=model,
+        provider="test",
+        prompt_tokens=11,
+        completion_tokens=7,
+    )
+
+
+def _analyzer_of(messages: list[dict]) -> str:
+    """Which analyzer sent this request (from its category system message)."""
+    focus = messages[0]["content"].splitlines()[-1].lower()
+    for name in ("security", "quality", "test"):
+        if name in focus:
+            return name
+    raise AssertionError(f"unknown analyzer: {focus}")
+
+
+_LARGE_DIFF = "--- a/big.py\n+++ b/big.py\n@@ -0,0 +1,200 @@\n" + "\n".join(
+    f"+x_{i} = {i}" for i in range(200)
+)
+
+
+class TestHonestGraph:
+    def test_graph_has_only_working_nodes(self):
+        from agents.review_agent import build_review_graph
+
+        nodes = set(build_review_graph().get_graph().nodes) - {
+            "__start__",
+            "__end__",
         }
-
-        result = await format_output(state)
-
-        assert "confidence" in result
-        assert result["confidence"] == 1.0
-
-    @pytest.mark.asyncio
-    async def test_format_output_zero_comments_large_diff(self):
-        """0 comments on a 200-line diff must produce confidence < 0.7."""
-        from agents.review_agent import format_output
-
-        large_diff = "\n".join(f"+line {i}" for i in range(200))
-        state: ReviewState = {
-            "diff_text": large_diff,
-            "repo_full_name": "owner/repo",
-            "pr_number": 1,
-            "user_id": 1,
-            "conventions": {},
-            "security_comments": [],
-            "quality_comments": [],
-            "test_comments": [],
-            "synthesized_comments": [],
-            "suggested_fixes": [],
-            "model_used": "",
-            "confidence": 0.0,
-            "iteration": 0,
+        assert nodes == {
+            "analyze_security",
+            "analyze_quality",
+            "analyze_tests",
+            "synthesize",
         }
-
-        result = await format_output(state)
-
-        assert result["confidence"] == 0.0
-        assert result["confidence"] < 0.7
 
     @pytest.mark.asyncio
-    async def test_format_output_small_diff_no_comments(self):
-        """Small diff (≤10 lines) with 0 comments is acceptable — confidence stays 1.0."""
-        from agents.review_agent import format_output
+    async def test_clean_large_diff_makes_exactly_three_llm_calls(self):
+        """A clean 200-line diff is reviewed once: one call per analyzer."""
+        from agents.review_agent import run_review_agent
 
-        state: ReviewState = {
-            "diff_text": "+one line change",
-            "repo_full_name": "owner/repo",
-            "pr_number": 1,
-            "user_id": 1,
-            "conventions": {},
-            "security_comments": [],
-            "quality_comments": [],
-            "test_comments": [],
-            "synthesized_comments": [],
-            "suggested_fixes": [],
-            "model_used": "",
-            "confidence": 0.0,
-            "iteration": 0,
-        }
+        with patch("agents.review_agent.llm_client") as mock_client:
+            mock_client.generate = AsyncMock(return_value=_llm_response("[]"))
 
-        result = await format_output(state)
+            result = await run_review_agent(
+                diff_text=_LARGE_DIFF, repo_full_name="owner/repo"
+            )
 
-        assert result["confidence"] == 1.0
+        assert mock_client.generate.await_count == 3
+        assert result["synthesized_comments"] == []
 
     @pytest.mark.asyncio
-    async def test_format_output_enough_comments_large_diff(self):
-        """Enough comments on a large diff must reach confidence >= 0.7."""
-        from agents.review_agent import format_output
+    async def test_unparseable_response_retries_only_that_analyzer_once(self):
+        from agents.review_agent import run_review_agent
 
-        large_diff = "\n".join(f"+line {i}" for i in range(200))
-        # 200 lines → expected_min = 4; 4 comments → confidence = 1.0
-        comments = [
-            {
-                "file_path": f"f{i}.py",
-                "line_number": i,
-                "category": "security",
-                "severity": "warning",
-                "body": f"Issue {i}",
-                "suggested_fix": None,
-            }
-            for i in range(4)
-        ]
-        state: ReviewState = {
-            "diff_text": large_diff,
-            "repo_full_name": "owner/repo",
-            "pr_number": 1,
-            "user_id": 1,
-            "conventions": {},
-            "security_comments": [],
-            "quality_comments": [],
-            "test_comments": [],
-            "synthesized_comments": comments,
-            "suggested_fixes": [],
-            "model_used": "",
-            "confidence": 0.0,
-            "iteration": 0,
+        async def fake_generate(messages, user_id=None):
+            if _analyzer_of(messages) == "security":
+                return _llm_response("I could not produce JSON, sorry.")
+            return _llm_response("[]")
+
+        with patch("agents.review_agent.llm_client") as mock_client:
+            mock_client.generate = AsyncMock(side_effect=fake_generate)
+
+            result = await run_review_agent(
+                diff_text=_LARGE_DIFF, repo_full_name="owner/repo"
+            )
+
+        # quality + tests once each, security twice (original + one retry)
+        assert mock_client.generate.await_count == 4
+        assert result["analyzer_runs"]["security"]["attempts"] == 2
+        assert result["analyzer_runs"]["quality"]["attempts"] == 1
+        assert result["analyzer_runs"]["tests"]["attempts"] == 1
+        assert result["synthesized_comments"] == []
+
+    @pytest.mark.asyncio
+    async def test_retry_recovers_findings_after_unparseable_response(self):
+        from agents.review_agent import run_review_agent
+
+        finding = (
+            '[{"file_path": "big.py", "line_number": 3, "category": "security",'
+            ' "severity": "critical", "body": "eval of input",'
+            ' "suggested_fix": null}]'
+        )
+        security_replies = iter(["not json", finding])
+
+        async def fake_generate(messages, user_id=None):
+            if _analyzer_of(messages) == "security":
+                return _llm_response(next(security_replies))
+            return _llm_response("[]")
+
+        with patch("agents.review_agent.llm_client") as mock_client:
+            mock_client.generate = AsyncMock(side_effect=fake_generate)
+
+            result = await run_review_agent(
+                diff_text=_LARGE_DIFF, repo_full_name="owner/repo"
+            )
+
+        assert [c["body"] for c in result["synthesized_comments"]] == ["eval of input"]
+
+    @pytest.mark.asyncio
+    async def test_analyzer_runs_recorded_per_analyzer(self):
+        from agents.review_agent import run_review_agent
+
+        with patch("agents.review_agent.llm_client") as mock_client:
+            mock_client.generate = AsyncMock(
+                return_value=_llm_response("[]", model="google/gemini-2.0-flash")
+            )
+
+            result = await run_review_agent(
+                diff_text=_LARGE_DIFF, repo_full_name="owner/repo"
+            )
+
+        runs = result["analyzer_runs"]
+        assert set(runs) == {"security", "quality", "tests"}
+        for run in runs.values():
+            assert run["model"] == "google/gemini-2.0-flash"
+            assert run["latency_ms"] >= 0
+            assert run["prompt_tokens"] == 11
+            assert run["completion_tokens"] == 7
+            assert run["attempts"] == 1
+        assert result["model_used"] == "google/gemini-2.0-flash"
+
+    @pytest.mark.asyncio
+    async def test_model_used_does_not_depend_on_branch_order(self):
+        """Each analyzer used a different model; model_used must be the
+        security analyzer's, not whichever parallel branch wrote last."""
+        from agents.review_agent import run_review_agent
+
+        models = {"security": "a/one", "quality": "b/two", "test": "c/three"}
+
+        async def fake_generate(messages, user_id=None):
+            return _llm_response("[]", model=models[_analyzer_of(messages)])
+
+        with patch("agents.review_agent.llm_client") as mock_client:
+            mock_client.generate = AsyncMock(side_effect=fake_generate)
+            result = await run_review_agent(
+                diff_text=_LARGE_DIFF, repo_full_name="owner/repo"
+            )
+
+        assert result["model_used"] == "a/one"
+        assert {k: v["model"] for k, v in result["analyzer_runs"].items()} == {
+            "security": "a/one",
+            "quality": "b/two",
+            "tests": "c/three",
         }
-
-        result = await format_output(state)
-
-        assert result["confidence"] >= 0.7
-
-    def test_should_retry_fires_when_confidence_zero(self):
-        """Retry must fire when confidence is 0.0 (0 comments on large diff)."""
-        state: ReviewState = {
-            "confidence": 0.0,
-            "iteration": 0,
-        }
-        assert should_retry(state) is True
-
-    def test_should_retry_stops_at_max_iterations(self):
-        """Retry must not fire past MAX_ITERATIONS even if confidence is low."""
-        state: ReviewState = {
-            "confidence": 0.0,
-            "iteration": MAX_ITERATIONS,
-        }
-        assert should_retry(state) is False

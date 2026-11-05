@@ -1,18 +1,21 @@
 """
-LangGraph Review Agent with 7 nodes.
+LangGraph Review Agent.
 
-Implements the full review workflow for analyzing code changes.
+Three analyzers (security, quality, tests) run in parallel, one LLM call each,
+then synthesize deduplicates and ranks their findings. An analyzer repeats its
+call once only when the model's response can't be parsed.
 """
 
 import json
 import logging
 import re
+import time
 from typing import Any
 
-from langgraph.graph import END, StateGraph
+from langgraph.graph import END, START, StateGraph
 from pydantic import BaseModel, field_validator
 
-from agents.states import ReviewState, ReviewComment
+from agents.states import AnalyzerRun, ReviewState, ReviewComment
 from services.code_parser import parse_diff
 from services.llm_client import llm_client
 from services.prompt_builder import (
@@ -23,8 +26,10 @@ from services.prompt_builder import (
 
 logger = logging.getLogger(__name__)
 
-CONFIDENCE_THRESHOLD = 0.7
-MAX_ITERATIONS = 3
+# Extra attempts an analyzer gets when its response can't be parsed.
+MAX_PARSE_RETRIES = 1
+# Fixed order used to pick model_used, so it doesn't depend on branch timing.
+ANALYZER_ORDER = ("security", "quality", "tests")
 SEVERITY_ORDER = {"critical": 0, "error": 1, "warning": 2, "info": 3}
 
 
@@ -38,130 +43,94 @@ def create_system_message(category: str) -> str:
     return messages.get(category, REVIEW_SYSTEM_PROMPT)
 
 
-async def fetch_conventions(state: ReviewState) -> dict[str, Any]:
+async def _run_analyzer(
+    state: ReviewState,
+    category: str,
+    context: PromptContext,
+    instruction: str,
+) -> tuple[list[ReviewComment], AnalyzerRun]:
     """
-    Node 1: Fetch repository conventions from database.
+    Call the LLM for one analyzer and parse its findings.
 
-    For now, returns empty dict (Phase 3 will populate from MongoDB).
+    If the response can't be parsed, the call is repeated up to
+    MAX_PARSE_RETRIES times. A parsed empty list is a valid result and is
+    never retried. Latency and token counts are summed over attempts.
     """
-    logger.info("fetch_conventions repo=%s", state["repo_full_name"])
+    prompt = state.get("prebuilt_prompt") or build_review_prompt(context)
+    messages = [
+        {"role": "system", "content": create_system_message(category)},
+        {
+            "role": "user",
+            "content": f"{prompt}\n\n{instruction} Return JSON list with: file_path, line_number, category, severity, body, suggested_fix.",
+        },
+    ]
 
-    conventions = {}
-
-    return {
-        "conventions": conventions,
+    run: AnalyzerRun = {
+        "model": "",
+        "latency_ms": 0,
+        "prompt_tokens": 0,
+        "completion_tokens": 0,
+        "attempts": 0,
     }
+    comments: list[ReviewComment] | None = None
+
+    while comments is None and run["attempts"] <= MAX_PARSE_RETRIES:
+        run["attempts"] += 1
+        started = time.perf_counter()
+        response = await llm_client.generate(messages, user_id=state.get("user_id"))
+        run["latency_ms"] += int((time.perf_counter() - started) * 1000)
+        run["model"] = response.model_used
+        run["prompt_tokens"] += response.prompt_tokens or 0
+        run["completion_tokens"] += response.completion_tokens or 0
+        comments = _parse_llm_comment_list(response.content, category)
+
+    logger.info(
+        "analyze_%s found=%d attempts=%d",
+        category,
+        len(comments or []),
+        run["attempts"],
+    )
+    return comments or [], run
 
 
 async def analyze_security(state: ReviewState) -> dict[str, Any]:
-    """
-    Node 2: Analyze code for security vulnerabilities.
-
-    Calls LLM to identify security issues.
-    """
+    """Analyze the diff for security vulnerabilities (one LLM call)."""
     logger.info("analyze_security repo=%s", state["repo_full_name"])
 
-    diff_chunks = state.get("diff_chunks") or parse_diff(state["diff_text"])
     context = PromptContext(
-        diff_chunks=diff_chunks,
-        similar_patterns=state.get("similar_patterns", [])
-        or state.get("conventions", {}).get("security_patterns", []),
+        diff_chunks=state.get("diff_chunks") or parse_diff(state["diff_text"]),
+        similar_patterns=state.get("similar_patterns", []),
     )
-
-    prompt = state.get("prebuilt_prompt") or build_review_prompt(context)
-    system_msg = create_system_message("security")
-
-    messages = [
-        {"role": "system", "content": system_msg},
-        {
-            "role": "user",
-            "content": f"{prompt}\n\nAnalyze for security vulnerabilities. Return JSON list with: file_path, line_number, category, severity, body, suggested_fix.",
-        },
-    ]
-
-    response = await llm_client.generate(messages, user_id=state.get("user_id"))
-
-    comments = _parse_llm_comments(response.content, "security")
-
-    logger.info("analyze_security found=%d", len(comments))
-
-    return {
-        "security_comments": comments,
-        "model_used": response.model_used,
-    }
+    comments, run = await _run_analyzer(
+        state, "security", context, "Analyze for security vulnerabilities."
+    )
+    return {"security_comments": comments, "analyzer_runs": {"security": run}}
 
 
 async def analyze_quality(state: ReviewState) -> dict[str, Any]:
-    """
-    Node 3: Analyze code for quality issues.
-
-    Calls LLM to identify code quality problems.
-    """
+    """Analyze the diff for code quality issues (one LLM call)."""
     logger.info("analyze_quality repo=%s", state["repo_full_name"])
 
-    diff_chunks = state.get("diff_chunks") or parse_diff(state["diff_text"])
     context = PromptContext(
-        diff_chunks=diff_chunks,
-        quality_patterns=state.get("conventions", {}).get("quality_patterns", []),
+        diff_chunks=state.get("diff_chunks") or parse_diff(state["diff_text"]),
     )
-
-    prompt = state.get("prebuilt_prompt") or build_review_prompt(context)
-    system_msg = create_system_message("quality")
-
-    messages = [
-        {"role": "system", "content": system_msg},
-        {
-            "role": "user",
-            "content": f"{prompt}\n\nAnalyze for quality issues. Return JSON list with: file_path, line_number, category, severity, body, suggested_fix.",
-        },
-    ]
-
-    response = await llm_client.generate(messages, user_id=state.get("user_id"))
-
-    comments = _parse_llm_comments(response.content, "quality")
-
-    logger.info("analyze_quality found=%d", len(comments))
-
-    return {
-        "quality_comments": comments,
-        "model_used": response.model_used,
-    }
+    comments, run = await _run_analyzer(
+        state, "quality", context, "Analyze for quality issues."
+    )
+    return {"quality_comments": comments, "analyzer_runs": {"quality": run}}
 
 
 async def analyze_tests(state: ReviewState) -> dict[str, Any]:
-    """
-    Node 4: Analyze code for test coverage.
-
-    Calls LLM to identify missing tests.
-    """
+    """Analyze the diff for missing tests (one LLM call)."""
     logger.info("analyze_tests repo=%s", state["repo_full_name"])
 
-    diff_chunks = state.get("diff_chunks") or parse_diff(state["diff_text"])
     context = PromptContext(
-        diff_chunks=diff_chunks,
+        diff_chunks=state.get("diff_chunks") or parse_diff(state["diff_text"]),
     )
-
-    prompt = state.get("prebuilt_prompt") or build_review_prompt(context)
-    system_msg = create_system_message("tests")
-
-    messages = [
-        {"role": "system", "content": system_msg},
-        {
-            "role": "user",
-            "content": f"{prompt}\n\nAnalyze test coverage. Return JSON list with: file_path, line_number, category, severity, body, suggested_fix.",
-        },
-    ]
-
-    response = await llm_client.generate(messages, user_id=state.get("user_id"))
-
-    comments = _parse_llm_comments(response.content, "tests")
-
-    logger.info("analyze_tests found=%d", len(comments))
-
-    return {
-        "test_comments": comments,
-        "model_used": response.model_used,
-    }
+    comments, run = await _run_analyzer(
+        state, "tests", context, "Analyze test coverage."
+    )
+    return {"test_comments": comments, "analyzer_runs": {"tests": run}}
 
 
 _SEVERITY_VALUES = {"critical", "error", "warning", "info"}
@@ -183,7 +152,14 @@ class _LLMCommentSchema(BaseModel):
 
 
 def _parse_llm_comments(content: str, default_category: str) -> list[ReviewComment]:
-    """Parse LLM response into ReviewComment list.
+    """Parse LLM response into ReviewComment list ([] if unparseable)."""
+    return _parse_llm_comment_list(content, default_category) or []
+
+
+def _parse_llm_comment_list(
+    content: str, default_category: str
+) -> list[ReviewComment] | None:
+    """Parse LLM response into ReviewComment list, or None if unparseable.
 
     Handles four real-world LLM output formats:
     - Bare JSON array:              [...]
@@ -192,7 +168,8 @@ def _parse_llm_comments(content: str, default_category: str) -> list[ReviewComme
     - Prefix text before array:     "Here are the issues: [...]"
     """
     if not content:
-        return []
+        logger.warning("llm_parse_failed category=%s empty response", default_category)
+        return None
 
     # Strip markdown code fences before attempting any parse
     cleaned = re.sub(r"```(?:json)?\s*", "", content).strip()
@@ -230,7 +207,7 @@ def _parse_llm_comments(content: str, default_category: str) -> list[ReviewComme
             default_category,
             content,
         )
-        return []
+        return None
 
     comments: list[ReviewComment] = []
     for item in raw_list:
@@ -265,9 +242,9 @@ def _parse_llm_comments(content: str, default_category: str) -> list[ReviewComme
 
 async def synthesize(state: ReviewState) -> dict[str, Any]:
     """
-    Node 5: Synthesize comments from all analyzers.
+    Merge findings from all analyzers.
 
-    Deduplicates and ranks by severity.
+    Deduplicates, ranks by severity and sets model_used from analyzer_runs.
     """
     logger.info("synthesize")
 
@@ -294,85 +271,20 @@ async def synthesize(state: ReviewState) -> dict[str, Any]:
 
     logger.info("synthesize unique=%d", len(unique_comments))
 
-    return {
-        "synthesized_comments": unique_comments,
-    }
-
-
-async def generate_fixes(state: ReviewState) -> dict[str, Any]:
-    """
-    Node 6: Generate suggested fixes.
-
-    Only generates fixes for critical/error severity.
-    """
-    logger.info("generate_fixes")
-
-    fixes = []
-
-    for comment in state.get("synthesized_comments", []):
-        severity = comment.get("severity", "")
-        if severity in ("critical", "error"):
-            fix = comment.get("suggested_fix", "")
-            if fix:
-                fixes.append(
-                    {
-                        "file_path": comment.get("file_path", ""),
-                        "line_number": comment.get("line_number", 0),
-                        "fix": fix,
-                    }
-                )
-
-    logger.info("generate_fixes count=%d", len(fixes))
-
-    return {
-        "suggested_fixes": fixes,
-    }
-
-
-async def format_output(state: ReviewState) -> dict[str, Any]:
-    """
-    Node 7: Format final output.
-
-    Computes confidence based on findings relative to diff size.
-    Small diffs (≤10 lines) always pass. Larger diffs need at least
-    1 comment per 50 diff lines to reach the confidence threshold.
-    """
-    comments = state.get("synthesized_comments", [])
-    total = len(comments)
-    diff_lines = len(state.get("diff_text", "").splitlines())
-
-    if diff_lines <= 10:
-        # Trivial diff — zero findings is acceptable
-        confidence = 1.0
-    elif total == 0:
-        # Non-trivial diff with no findings — suspicious, trigger retry
-        confidence = 0.0
-    else:
-        expected_min = max(1, diff_lines // 50)
-        confidence = min(1.0, total / expected_min)
-
-    iteration = state.get("iteration", 0)
-
-    logger.info(
-        "format_output confidence=%.2f iteration=%d comments=%d diff_lines=%d",
-        confidence,
-        iteration,
-        total,
-        diff_lines,
+    runs = state.get("analyzer_runs", {})
+    model_used = next(
+        (
+            runs[name]["model"]
+            for name in ANALYZER_ORDER
+            if runs.get(name, {}).get("model")
+        ),
+        "",
     )
 
     return {
-        "confidence": confidence,
-        "iteration": iteration + 1,
+        "synthesized_comments": unique_comments,
+        "model_used": model_used,
     }
-
-
-def should_retry(state: ReviewState) -> bool:
-    """Determine if retry is needed."""
-    confidence = state.get("confidence", 1.0)
-    iteration = state.get("iteration", 0)
-
-    return confidence < CONFIDENCE_THRESHOLD and iteration < MAX_ITERATIONS
 
 
 def build_review_graph():
@@ -383,39 +295,16 @@ def build_review_graph():
     """
     graph = StateGraph(ReviewState)
 
-    graph.add_node("fetch_conventions", fetch_conventions)
     graph.add_node("analyze_security", analyze_security)
     graph.add_node("analyze_quality", analyze_quality)
     graph.add_node("analyze_tests", analyze_tests)
     graph.add_node("synthesize", synthesize)
-    graph.add_node("generate_fixes", generate_fixes)
-    graph.add_node("format_output", format_output)
 
-    graph.set_entry_point("fetch_conventions")
+    for analyzer in ("analyze_security", "analyze_quality", "analyze_tests"):
+        graph.add_edge(START, analyzer)
+        graph.add_edge(analyzer, "synthesize")
 
-    graph.add_edge("fetch_conventions", "analyze_security")
-    graph.add_edge("fetch_conventions", "analyze_quality")
-    graph.add_edge("fetch_conventions", "analyze_tests")
-
-    graph.add_edge("analyze_security", "synthesize")
-    graph.add_edge("analyze_quality", "synthesize")
-    graph.add_edge("analyze_tests", "synthesize")
-
-    graph.add_edge("synthesize", "generate_fixes")
-    graph.add_edge("generate_fixes", "format_output")
-
-    def retry_condition(state: ReviewState) -> str:
-        if should_retry(state):
-            # Return to fetch_conventions so all three analysis nodes re-run,
-            # making new LLM calls. _extend_list reducers accumulate findings;
-            # synthesize deduplicates them across iterations.
-            return "fetch_conventions"
-        return END
-
-    graph.add_conditional_edges(
-        "format_output",
-        retry_condition,
-    )
+    graph.add_edge("synthesize", END)
 
     return graph.compile()
 
@@ -440,9 +329,13 @@ async def run_review_agent(
         repo_full_name: Repository full name (owner/repo)
         pr_number: PR number
         user_id: User ID
+        diff_chunks: Pre-parsed diff chunks (parsed from diff_text if empty)
+        similar_patterns: Retrieved similar code for the security prompt
+        prebuilt_prompt: Prompt built by the router; overrides per-node prompts
 
     Returns:
-        Final state with review results
+        Final state, including synthesized_comments, analyzer_runs and
+        model_used
     """
     initial_state: ReviewState = {
         "diff_text": diff_text,
@@ -452,15 +345,12 @@ async def run_review_agent(
         "diff_chunks": diff_chunks or [],
         "similar_patterns": similar_patterns or [],
         "prebuilt_prompt": prebuilt_prompt,
-        "conventions": {},
         "security_comments": [],
         "quality_comments": [],
         "test_comments": [],
         "synthesized_comments": [],
-        "suggested_fixes": [],
+        "analyzer_runs": {},
         "model_used": "",
-        "confidence": 0.0,
-        "iteration": 0,
     }
 
     result = await review_graph.ainvoke(initial_state)

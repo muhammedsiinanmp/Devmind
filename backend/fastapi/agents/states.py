@@ -13,9 +13,26 @@ def _extend_list(current: list, new_value: list) -> list:
     return current + new_value
 
 
-def reduce_model_used(current: str, new_value: str) -> str:
-    """Keep the most recent non-empty model string."""
-    return new_value or current
+def _merge_dict(current: dict, new_value: dict) -> dict:
+    """
+    Reducer that merges dicts. Used on analyzer_runs, which all three parallel
+    analyzer nodes write in the same step, each under its own key.
+    """
+    if not isinstance(current, dict):
+        current = {}
+    if not isinstance(new_value, dict):
+        return current
+    return {**current, **new_value}
+
+
+class AnalyzerRun(TypedDict, total=False):
+    """Telemetry for one analyzer node (summed over its attempts)."""
+
+    model: str
+    latency_ms: int
+    prompt_tokens: int
+    completion_tokens: int
+    attempts: int
 
 
 class ReviewComment(TypedDict):
@@ -41,9 +58,6 @@ class ReviewState(TypedDict):
     similar_patterns: list
     prebuilt_prompt: str
 
-    # ── intermediate ─────────────────────────────────────────────────────────
-    conventions: dict
-
     # ── FIX: Annotated with _extend_list so parallel branches accumulate ─────
     # Without this, last-write-wins and two of the three analyzers are silently
     # discarded.
@@ -53,11 +67,12 @@ class ReviewState(TypedDict):
 
     # ── outputs ──────────────────────────────────────────────────────────────
     synthesized_comments: list[ReviewComment]
-    suggested_fixes: list[dict]
 
-    model_used: Annotated[str, reduce_model_used]
-    confidence: float
-    iteration: int
+    # One entry per analyzer ("security", "quality", "tests").
+    analyzer_runs: Annotated[dict[str, AnalyzerRun], _merge_dict]
+    # Set once by synthesize from analyzer_runs, so it does not depend on
+    # which parallel branch finished last.
+    model_used: str
 
 
 class BugIntelComment(TypedDict):
