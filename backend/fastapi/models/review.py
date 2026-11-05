@@ -52,6 +52,11 @@ class ReviewResponse(BaseModel):
         default_factory=dict,
         description="Per-analyzer model, latency and token counts",
     )
+    anchored: int = Field(default=0, description="Comments already on a diff line")
+    snapped: int = Field(default=0, description="Comments moved to a nearby diff line")
+    unanchored: int = Field(
+        default=0, description="Comments turned into file-level notes (line 0)"
+    )
 
 
 class ReviewError(BaseModel):

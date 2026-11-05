@@ -99,6 +99,17 @@ START -> [analyze_security | analyze_quality | analyze_tests] -> synthesize -> E
 - The risk score is driven by the worst finding: a base for the highest severity (critical 70, error 45, warning 20, info 5) plus 3 for each other finding above info, at most +15, so the maximum is 85.
 - The LLM output parser handles several formats: bare JSON, JSON inside markdown fences, JSON wrapped in an object, and JSON with prose around it. Each comment is then validated with Pydantic.
 
+**Line-anchored comments** (`backend/fastapi/services/comment_anchoring.py`):
+
+- The diff parser records the new-file line number of every added and context line. The prompt shows each diff line with that number (`L42 + code`) and asks the model to use only numbers it was shown. No evaluation has measured how often the model follows this yet.
+- The rendered diff is capped at 120 lines per hunk and 200 per file, and the diff's token budget is whatever the retrieved-pattern sections leave. Added lines are kept before removed lines, then context, and each tier is shared evenly between files. Markers say how many lines and files were left out.
+- Before the response is built, each comment is checked against the diff:
+  - A comment on an added or context line stays inline.
+  - A comment within 3 lines of exactly one hunk moves to that hunk's nearest line, and its suggested fix goes into the body as plain text.
+  - Any other comment becomes a file-level note (`line_number` 0), which the GitHub poster puts in the review body.
+- Every inline comment therefore points at a line of the parsed diff.
+- `/review/analyze` logs and returns the `anchored`, `snapped` and `unanchored` counts.
+
 **LLM provider failover** (`backend/fastapi/services/llm_client.py`):
 
 - A user's own active provider configs are tried first, in priority order.
@@ -130,7 +141,7 @@ Measured locally on this branch:
 | Suite | Tests | Line coverage |
 |---|---|---|
 | Django | 243 passed | 83% |
-| FastAPI | 176 passed | 80% |
+| FastAPI | 227 passed | 83% |
 
 Coverage method: `pytest --cov`, then `coverage report --omit='*/tests/*,*/migrations/*,*conftest.py'`, so test files, migrations and conftest are excluded. Including the test files would give a higher figure.
 

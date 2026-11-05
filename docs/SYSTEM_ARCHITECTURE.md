@@ -276,7 +276,8 @@ Each item is validated against `_LLMCommentSchema` (Pydantic). Severities `high`
 ### Retrieval (RAG) steps in `POST /review/analyze`
 
 ```
-parse_diff(diff)                       -> DiffChunk[] (file, language, added/removed/context lines)
+parse_diff(diff)                       -> DiffChunk[] (file, language, added/removed/context lines,
+                                          hunks with new-file line numbers)
 for each of up to 20 chunks:
     search_similar(hunk, repo, top_k=5, threshold=0.6, exclude_source_ref="PR#<n>")
                                        -> Google text-embedding-004, task_type RETRIEVAL_QUERY,
@@ -288,6 +289,7 @@ merge results                          -> drop untagged rows with file_path "PR#
 build_review_prompt(...)               -> 8192-token budget (tiktoken cl100k_base); diff first,
                                           then similar patterns, quality patterns, past reviews, conventions
 run_review_agent(...)
+anchor_comments(chunks, comments)      -> keep comments on added/context lines; see "Comment anchoring"
 store_review_async(...)                -> background task after the response is built: for up to 20
                                           chunks, store_code_embedding(..., source_ref="PR#<n>"),
                                           task_type RETRIEVAL_DOCUMENT, 768 dims, skipped if the
@@ -302,6 +304,26 @@ Nothing is stored before the search, and rows tagged with the current PR's `sour
 Each retrieved chunk is logged as `review.rag_context.retrieved` with repo, PR number, file path and similarity. Chunk text and the query are not logged, and the SQLAlchemy engine sets `hide_parameters=True` so bound values stay out of database error messages.
 
 The handler runs the search inside a `try`. A failure in embedding or search is logged as `review.rag_context_partial`, and the review continues without similar-code context.
+
+### Diff rendering and comment anchoring
+
+`format_diff_chunks` (`services/prompt_builder.py`) renders each hunk line with its new-file number: `L42 + code` for added lines, `L41   code` for context lines, and `- code` with no number for removed lines. The system prompt asks the model to use only numbers shown in the diff.
+
+The rendered diff is trimmed to fit the prompt:
+
+- At most 120 lines per hunk, 200 per file and 600 in total are shown. Lines longer than 300 characters are cut.
+- The total is spent on added lines first, then removed lines, then context lines nearest a change. Each of those is shared evenly between files, so context lines in early files can't crowd out changes in later ones.
+- The token budget for the diff is what's left after the system prompt, the predicted size of the similar-pattern, quality-pattern, past-review and conventions sections, and a 200-token margin. It is never less than half the prompt.
+- If the rendering is over that budget, the line total is lowered and the diff is rendered again. If headers alone are too big, the text is cut at a line boundary with a marker.
+- Each gap is marked `... N lines omitted`, and a final `[N files / M lines omitted from this diff]` line says how much was left out.
+
+`anchor_comments` (`services/comment_anchoring.py`) runs on the agent's comments before the risk score is computed:
+
+- a comment on an added or context line of its file is kept as is (`anchored`);
+- a comment within 3 lines of exactly one hunk is moved to the nearest line of that hunk (`snapped`). Its `suggested_fix` is moved into the body as a plain code block, so GitHub doesn't offer it as a one-click suggestion on a different line;
+- any other comment, including one between two hunks that are both within 3 lines, gets `line_number` 0 (`unanchored`). The GitHub poster puts it in the review body.
+
+The counts are logged as `review.anchoring` and returned in the response as `anchored`, `snapped` and `unanchored`.
 
 Embeddings are cached in process by an LRU cache (`_BoundedCache`, max 1000 entries) keyed by `sha256(f"{task_type}:{text}")`.
 
@@ -423,7 +445,7 @@ flowchart LR
 `GitHubPoster` (`apps/reviews/services/github_poster.py`):
 
 - Comments with `line_number > 0` are posted inline (`line`, `side: RIGHT`), grouped by file and sent in batches of 50 per review.
-- Comments without a usable line number are folded into the review body.
+- Comments without a usable line number are folded into the review body. FastAPI sets `line_number` to 0 for any comment it could not anchor to a diff line.
 - If GitHub returns 422 for an inline batch, the poster retries the batch as a body-only review so the findings still appear.
 - Every review is posted with `event: COMMENT`, so DevMind never approves a PR or requests changes.
 
