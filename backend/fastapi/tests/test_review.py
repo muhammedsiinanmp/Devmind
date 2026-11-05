@@ -16,33 +16,48 @@ class TestCalculateRiskScore:
 
     def test_critical_severity(self):
         score = calculate_risk_score([{"severity": "critical"}])
-        assert score == 40
+        assert score == 70
 
     def test_error_severity(self):
         score = calculate_risk_score([{"severity": "error"}])
-        assert score == 25
+        assert score == 45
 
     def test_warning_severity(self):
         score = calculate_risk_score([{"severity": "warning"}])
-        assert score == 10
+        assert score == 20
 
     def test_info_severity(self):
         score = calculate_risk_score([{"severity": "info"}])
-        assert score == 2
+        assert score == 5
 
     def test_multiple_comments(self):
+        """Highest severity base (critical 70) + 3 per other finding above info."""
         comments = [
+            {"severity": "warning"},
             {"severity": "critical"},
             {"severity": "error"},
-            {"severity": "warning"},
+            {"severity": "info"},
         ]
         score = calculate_risk_score(comments)
-        assert score == 75
+        assert score == 76
 
-    def test_caps_at_100(self):
+    def test_extra_findings_add_at_most_15(self):
         comments = [{"severity": "critical"}] * 10
         score = calculate_risk_score(comments)
-        assert score == 100
+        assert score == 85
+
+    def test_unknown_severity_counts_as_info(self):
+        assert calculate_risk_score([{"severity": "blocker"}, {}]) == 5
+
+    def test_ten_info_notes_score_below_one_critical(self):
+        ten_info = calculate_risk_score([{"severity": "info"}] * 10)
+        one_critical = calculate_risk_score([{"severity": "critical"}])
+        assert ten_info < one_critical
+
+    def test_nitpicks_never_outscore_one_critical(self):
+        one_critical = calculate_risk_score([{"severity": "critical"}])
+        assert calculate_risk_score([{"severity": "info"}] * 50) < one_critical
+        assert calculate_risk_score([{"severity": "warning"}] * 50) < one_critical
 
 
 class TestReviewModels:
@@ -96,6 +111,53 @@ class TestAnalyzeEndpoint:
             assert response.pr_number == 1
             assert response.risk_score >= 0
             assert response.risk_score <= 100
+            assert set(response.analyzer_runs) == {"security", "quality", "tests"}
+            assert response.analyzer_runs["security"].model == "google/gemini"
+            assert response.analyzer_runs["security"].prompt_tokens == 10
+            assert response.analyzer_runs["security"].parsed is True
+
+    @pytest.mark.asyncio
+    async def test_analyze_reports_unparsed_analyzer(self):
+        """An analyzer whose replies never parse is reported as parsed=False
+        in the response, distinct from a clean analyzer."""
+        from services.llm_client import LLMResponse
+
+        request = ReviewRequest(
+            diff="--- a/app.py\n+++ b/app.py\n@@ -1 +1 @@\n+new line",
+            repo_full_name="owner/repo",
+            pr_number=1,
+        )
+
+        async def fake_generate(messages, user_id=None):
+            focus = messages[0]["content"].splitlines()[-1].lower()
+            content = "Looks fine to me." if "security" in focus else "[]"
+            return LLMResponse(
+                content=content,
+                model_used="google/gemini",
+                provider="google",
+                prompt_tokens=10,
+                completion_tokens=5,
+            )
+
+        with patch("agents.review_agent.llm_client") as mock_llm:
+            mock_llm.generate = AsyncMock(side_effect=fake_generate)
+
+            response = await analyze_review(request, secret="valid-secret")
+
+        runs = response.analyzer_runs
+        assert runs["security"].parsed is False
+        assert runs["security"].attempts == 2
+        assert runs["quality"].parsed is True
+        assert runs["tests"].parsed is True
+        assert response.comments == []
+
+    def test_analyzer_run_requires_parsed(self):
+        from pydantic import ValidationError
+
+        from models.review import AnalyzerRun
+
+        with pytest.raises(ValidationError):
+            AnalyzerRun(model="m", latency_ms=1)
 
     @pytest.mark.asyncio
     async def test_analyze_handles_error(self):

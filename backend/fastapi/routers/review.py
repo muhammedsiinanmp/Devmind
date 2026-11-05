@@ -122,24 +122,28 @@ async def _prepare_rag_context(
     return parsed_chunks, similar_patterns, prebuilt_prompt
 
 
+RISK_BASE_BY_SEVERITY = {"critical": 70, "error": 45, "warning": 20, "info": 5}
+
+
 def calculate_risk_score(comments: list[dict]) -> int:
-    """Calculate risk score from 0-100 based on comment severity."""
+    """
+    Calculate risk score from 0-100, driven by the worst finding.
+
+    Base score for the highest severity, plus 3 per other finding above
+    info (at most +15). The maximum is 70 + 15 = 85. Unknown severities
+    count as info.
+    """
     if not comments:
         return 0
 
-    severity_scores = {
-        "critical": 40,
-        "error": 25,
-        "warning": 10,
-        "info": 2,
-    }
+    bases = sorted(
+        (RISK_BASE_BY_SEVERITY.get(c.get("severity", "info"), 5) for c in comments),
+        reverse=True,
+    )
+    info_base = RISK_BASE_BY_SEVERITY["info"]
+    others_above_info = sum(1 for base in bases[1:] if base > info_base)
 
-    total = 0
-    for comment in comments:
-        severity = comment.get("severity", "info")
-        total += severity_scores.get(severity, 2)
-
-    return min(100, total)
+    return bases[0] + min(15, 3 * others_above_info)
 
 
 @router.post("/analyze", response_model=ReviewResponse)
@@ -216,6 +220,7 @@ async def analyze_review(
             model_used=model_used,
             provider=model_used.split("/")[0] if "/" in model_used else "unknown",
             latency_ms=latency_ms,
+            analyzer_runs=result.get("analyzer_runs", {}),
         )
 
     except AllProvidersDownError:

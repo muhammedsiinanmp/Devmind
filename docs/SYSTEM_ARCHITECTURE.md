@@ -166,7 +166,7 @@ sequenceDiagram
     CW->>FA: POST /review/analyze {diff, repo_full_name, pr_number, user_id}
     FA->>FA: parse diff, similarity search per hunk (excluding this PR)
     FA->>FA: build prompt (8192-token budget), run LangGraph agent
-    FA-->>CW: {comments[], risk_score, model_used, provider, latency_ms}
+    FA-->>CW: {comments[], risk_score, model_used, provider, latency_ms, analyzer_runs}
     FA->>FA: background task: embed this PR's hunks (source_ref PR#<n>)
 
     CW->>PG: INSERT ReviewRun (+ diff_text) and ReviewComment rows
@@ -236,48 +236,39 @@ What the code shows about this flow:
 
 ## 5. AI Review Pipeline
 
-### LangGraph agent: 7-node StateGraph
+### LangGraph agent: 4-node StateGraph
 
 Defined in `backend/fastapi/agents/review_agent.py`:
 
 ```mermaid
 flowchart TD
-    START([Start]) --> FC[fetch_conventions<br/>placeholder: returns empty dict]
-    FC --> AS[analyze_security<br/>LLM call]
-    FC --> AQ[analyze_quality<br/>LLM call]
-    FC --> AT[analyze_tests<br/>LLM call]
+    START([Start]) --> AS[analyze_security<br/>LLM call]
+    START --> AQ[analyze_quality<br/>LLM call]
+    START --> AT[analyze_tests<br/>LLM call]
     AS --> SY
     AQ --> SY
-    AT --> SY[synthesize<br/>dedupe by file + line + category<br/>sort by severity]
-    SY --> GF[generate_fixes<br/>collect suggested_fix of critical/error comments]
-    GF --> FO[format_output<br/>confidence score, iteration + 1]
-    FO --> CHK{confidence < 0.7<br/>and iteration < 3?}
-    CHK -->|yes| FC
-    CHK -->|no| END([Return state])
+    AT --> SY[synthesize<br/>dedupe by file + line + category<br/>sort by severity, set model_used]
+    SY --> END([Return state])
 ```
 
-**Parallel branches.** The three analyzer nodes write to `security_comments`, `quality_comments` and `test_comments`. These fields are annotated with the `_extend_list` reducer in `agents/states.py`, so results accumulate across branches and across retry passes. `synthesize` then deduplicates them.
+**One pass.** The graph has no loop. A review makes one LLM call per analyzer, so 3 calls in total whether or not anything is found, unless a response can't be parsed (below).
 
-**`generate_fixes` makes no LLM call.** It collects the `suggested_fix` the analyzers already returned for `critical` and `error` comments.
+**Retry on unparseable output only.** `REVIEW_SYSTEM_PROMPT` and each analyzer's instruction ask for only a JSON list, with severities `critical`, `error`, `warning` or `info`, and `[]` when there are no issues. If `_parse_llm_comment_list` can't find a JSON list in an analyzer's response (or the response is empty), that analyzer repeats its call once (`MAX_PARSE_RETRIES = 1`). The retry sends the original messages plus the model's reply as an assistant turn (left out when the reply was empty, since some OpenAI-compatible endpoints reject an empty assistant message) and a corrective user turn (`CORRECTIVE_PROMPT`: "Your previous reply was not a JSON list. Reply with only the JSON list, or [] if there are no issues."). The other analyzers are not re-run. A parsed empty list is a valid result, and so are `{}` and a known wrapper key set to null, such as `{"issues": null}`.
 
-**Confidence score** (in `format_output`):
+**Parallel branches.** The three analyzer nodes write to `security_comments`, `quality_comments` and `test_comments`, which use the `_extend_list` reducer in `agents/states.py`. All three also write `analyzer_runs` in the same step, each under its own key (`security`, `quality`, `tests`); the `_merge_dict` reducer combines them. `synthesize` then deduplicates the findings.
 
-```
-diff_lines <= 10        -> confidence = 1.0
-no findings             -> confidence = 0.0
-otherwise               -> confidence = min(1.0, findings / max(1, diff_lines // 50))
-```
+**`analyzer_runs`.** Each entry holds `model`, `latency_ms`, `prompt_tokens`, `completion_tokens`, `attempts` and `parsed`. Latency and token counts are summed over attempts; token counts stay `null` if the provider never reports them. `parsed` is false when every attempt was unparseable, which tells a failed analyzer apart from one that found nothing. `POST /review/analyze` returns it as `analyzer_runs`.
 
-If confidence is below `CONFIDENCE_THRESHOLD = 0.7` and fewer than `MAX_ITERATIONS = 3` passes have run, the graph returns to `fetch_conventions`.
+**`model_used`.** `synthesize` takes the model of the first analyzer in the order security, quality, tests that has one, so the value doesn't depend on which branch finished last.
 
-**LLM response parsing** (`_parse_llm_comments`):
+**LLM response parsing** (`_parse_llm_comment_list`):
 
 1. Strip markdown code fences, then `json.loads`. This handles a bare array or an object that wraps an array.
 2. If that fails, extract the outermost `[...]` and parse that.
 
-Each item is validated against `_LLMCommentSchema` (Pydantic), and unknown severities are normalized.
+Each item is validated against `_LLMCommentSchema` (Pydantic). Severities `high`, `medium` and `low` map to `error`, `warning` and `info`; any other unknown severity becomes `warning`.
 
-**Risk score** (`routers/review.py`): each comment adds critical 40, error 25, warning 10 or info 2. The total is capped at 100.
+**Risk score** (`calculate_risk_score` in `routers/review.py`): the base for the highest severity (critical 70, error 45, warning 20, info 5), plus 3 for each other finding above info, at most +15, so the maximum is 85. Unknown severities count as info. Many info or warning notes can't outscore one critical finding.
 
 ### Retrieval (RAG) steps in `POST /review/analyze`
 
@@ -826,7 +817,7 @@ Each decision lists what the code does, why, and the trade-offs. Some also note 
 
 ### LangGraph for the review agent
 
-**What:** The review is a `StateGraph` with typed state, parallel analyzer branches and a conditional retry edge.
+**What:** The review is a `StateGraph` with typed state and parallel analyzer branches that merge in one `synthesize` node.
 
 **Why:** The graph makes the pipeline explicit, so each node can be tested in isolation, and adding an analyzer means adding a node and two edges.
 

@@ -320,7 +320,7 @@ See `apps/organizations/views.py` for methods and permissions.
 
 | Endpoint | Method | Auth | Description |
 |---|---|---|---|
-| `/review/analyze` | POST | `X-Internal-Secret` | Run the retrieval steps and review agent. Returns comments, risk score, model, provider and latency. |
+| `/review/analyze` | POST | `X-Internal-Secret` | Run the retrieval steps and review agent. Returns comments, risk score, model, provider, latency and per-analyzer `analyzer_runs`. |
 | `/embeddings/store` | POST | `X-Internal-Secret` | Store a code embedding |
 | `/embeddings/search` | POST, GET | `X-Internal-Secret` | Similarity search |
 | `/scan/full` | POST | `X-Internal-Secret` | Start a background repository scan (202) |
@@ -551,9 +551,9 @@ Nothing enables the `vector` extension or creates `code_embeddings` / `review_em
 
 `VectorStore.store_review_embedding` is only called from tests, and `POST /review/analyze` receives no review ID. The table stays empty, and the "past reviews" part of the prompt is never filled.
 
-### `fetch_conventions` is a placeholder
+### Repository conventions aren't used
 
-The first agent node returns `{}`. Repository conventions never reach the prompt, even though `build_review_prompt` has a slot for them.
+Nothing loads repository conventions, so they never reach the prompt, even though `build_review_prompt` has a `repo_conventions` slot for them.
 
 ### GitHub token returned to the browser
 
@@ -565,7 +565,7 @@ The first agent node returns `{}`. Repository conventions never reach the prompt
 
 ### Token counts not reported
 
-`ReviewResponse` has no token fields, so `ReviewRun.prompt_tokens`, `completion_tokens` and `agent_iterations` keep their defaults.
+`ReviewResponse` has no top-level token fields. Token counts are returned only per analyzer in `analyzer_runs`, which Django doesn't read, so `ReviewRun.prompt_tokens`, `completion_tokens` and `agent_iterations` keep their defaults.
 
 ### BYOK provider coverage
 
