@@ -95,10 +95,10 @@ The full design, including [architectural decisions and their trade-offs](docs/S
 START -> [analyze_security | analyze_quality | analyze_tests] -> synthesize -> END
 ```
 
-- The three analyzers run as parallel branches, one LLM call each, so a review normally makes 3 LLM calls. An analyzer repeats its call once only if the model's response can't be parsed; an empty list of findings is a valid result and is not retried.
-- Each analyzer records its model, latency, token counts and attempts in `analyzer_runs` (merged by the `_merge_dict` reducer in `agents/states.py`), and `POST /review/analyze` returns it.
+- The three analyzers run as parallel branches, one LLM call each, so a review normally makes 3 LLM calls. The prompt asks for only a JSON list, and for `[]` when there are no issues. An analyzer repeats its call once only if the model's response can't be parsed, adding a turn that asks for only the JSON list. An empty list of findings (also `{}` or `{"issues": null}`) is a valid result and is not retried.
+- Each analyzer records its model, latency, token counts, attempts and whether its reply parsed in `analyzer_runs` (merged by the `_merge_dict` reducer in `agents/states.py`), and `POST /review/analyze` returns it.
 - `synthesize` removes duplicates (same file, line and category), sorts by severity and sets `model_used` from the security, quality and tests analyzers in that order, so it doesn't depend on which branch finished last.
-- The risk score is driven by the worst finding: a base for the highest severity (critical 70, error 45, warning 20, info 5) plus 3 for each other finding above info, at most +15.
+- The risk score is driven by the worst finding: a base for the highest severity (critical 70, error 45, warning 20, info 5) plus 3 for each other finding above info, at most +15, so the maximum is 85.
 - The LLM output parser handles several formats: bare JSON, JSON inside markdown fences, JSON wrapped in an object, and JSON with prose around it. Each comment is then validated with Pydantic.
 
 **LLM provider failover** (`backend/fastapi/services/llm_client.py`):

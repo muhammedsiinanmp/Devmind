@@ -254,11 +254,11 @@ flowchart TD
 
 **One pass.** The graph has no loop. A review makes one LLM call per analyzer, so 3 calls in total whether or not anything is found, unless a response can't be parsed (below).
 
-**Retry on unparseable output only.** If `_parse_llm_comment_list` can't find a JSON list in an analyzer's response (or the response is empty), that analyzer repeats its call once (`MAX_PARSE_RETRIES = 1`). The other analyzers are not re-run. A parsed empty list is a valid result.
+**Retry on unparseable output only.** `REVIEW_SYSTEM_PROMPT` and each analyzer's instruction ask for only a JSON list, with severities `critical`, `error`, `warning` or `info`, and `[]` when there are no issues. If `_parse_llm_comment_list` can't find a JSON list in an analyzer's response (or the response is empty), that analyzer repeats its call once (`MAX_PARSE_RETRIES = 1`). The retry sends the original messages plus the model's reply and a corrective user turn (`CORRECTIVE_PROMPT`: "Your previous reply was not a JSON list. Reply with only the JSON list, or [] if there are no issues."). The other analyzers are not re-run. A parsed empty list is a valid result, and so are `{}` and a known wrapper key set to null, such as `{"issues": null}`.
 
 **Parallel branches.** The three analyzer nodes write to `security_comments`, `quality_comments` and `test_comments`, which use the `_extend_list` reducer in `agents/states.py`. All three also write `analyzer_runs` in the same step, each under its own key (`security`, `quality`, `tests`); the `_merge_dict` reducer combines them. `synthesize` then deduplicates the findings.
 
-**`analyzer_runs`.** Each entry holds `model`, `latency_ms`, `prompt_tokens`, `completion_tokens` and `attempts`, summed over attempts. `POST /review/analyze` returns it as `analyzer_runs`.
+**`analyzer_runs`.** Each entry holds `model`, `latency_ms`, `prompt_tokens`, `completion_tokens`, `attempts` and `parsed`. Latency and token counts are summed over attempts; token counts stay `null` if the provider never reports them. `parsed` is false when every attempt was unparseable, which tells a failed analyzer apart from one that found nothing. `POST /review/analyze` returns it as `analyzer_runs`.
 
 **`model_used`.** `synthesize` takes the model of the first analyzer in the order security, quality, tests that has one, so the value doesn't depend on which branch finished last.
 
@@ -267,9 +267,9 @@ flowchart TD
 1. Strip markdown code fences, then `json.loads`. This handles a bare array or an object that wraps an array.
 2. If that fails, extract the outermost `[...]` and parse that.
 
-Each item is validated against `_LLMCommentSchema` (Pydantic), and unknown severities are normalized.
+Each item is validated against `_LLMCommentSchema` (Pydantic). Severities `high`, `medium` and `low` map to `error`, `warning` and `info`; any other unknown severity becomes `warning`.
 
-**Risk score** (`calculate_risk_score` in `routers/review.py`): the base for the highest severity (critical 70, error 45, warning 20, info 5), plus 3 for each other finding above info, at most +15, capped at 100. Unknown severities count as info. Many info or warning notes can't outscore one critical finding.
+**Risk score** (`calculate_risk_score` in `routers/review.py`): the base for the highest severity (critical 70, error 45, warning 20, info 5), plus 3 for each other finding above info, at most +15, so the maximum is 85. Unknown severities count as info. Many info or warning notes can't outscore one critical finding.
 
 ### Retrieval (RAG) steps in `POST /review/analyze`
 
