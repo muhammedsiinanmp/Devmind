@@ -317,10 +317,11 @@ The handler runs the search inside a `try`. A failure in embedding or search is 
 
 The rendered diff is trimmed to fit the prompt:
 
-- at most 120 lines per hunk, 200 per file and 400 in total; lines longer than 300 characters are cut;
-- when a hunk or file is over its limit, context lines farthest from a change are dropped first, then removed lines, then added lines;
-- each gap is marked `... N lines omitted`, and a final `[N files / M lines omitted from this diff]` line says how much was left out;
-- if the rendered diff is still over 5000 tokens, it is cut at a line boundary and a marker is added, so the similar-pattern and other context sections keep room.
+- At most 120 lines per hunk, 200 per file and 600 in total are shown. Lines longer than 300 characters are cut.
+- The total is spent on added lines first, then removed lines, then context lines nearest a change. Each of those is shared evenly between files, so context lines in early files can't crowd out changes in later ones.
+- The token budget for the diff is what's left after the system prompt, the predicted size of the similar-pattern, quality-pattern, past-review and conventions sections, and a 200-token margin. It is never less than half the prompt.
+- If the rendering is over that budget, the line total is lowered and the diff is rendered again. If headers alone are too big, the text is cut at a line boundary with a marker.
+- Each gap is marked `... N lines omitted`, and a final `[N files / M lines omitted from this diff]` line says how much was left out.
 
 `anchor_comments` (`services/comment_anchoring.py`) runs on the agent's comments before the risk score is computed:
 
