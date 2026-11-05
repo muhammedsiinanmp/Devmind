@@ -19,7 +19,8 @@ while IFS= read -r push; do
   grep -Eq '(^|[[:space:]:])(dev|main)([[:space:]]|$)' <<<"$push" && block "never push to dev or main; push your slice branch and open a PR."
 done < <(grep -Eo 'git[[:space:]]+push[^;&|]*' <<<"$cmd" || true)
 
-grep -Eq 'gh[[:space:]]+pr[[:space:]]+merge' <<<"$cmd" && block "merging PRs needs the owner's approval."
+# The owner lets the main session merge reviewed PRs into dev; never bypass branch protection.
+grep -Eq 'gh[[:space:]]+pr[[:space:]]+merge.*--admin' <<<"$cmd" && block "--admin bypasses branch protection."
 grep -Eq 'gh[[:space:]]+repo[[:space:]]+(delete|edit)' <<<"$cmd" && block "repo deletion or settings changes need the owner's approval."
 grep -Eq 'git[[:space:]]+add[[:space:]]+(-A|--all|\.)([[:space:]]|$)' <<<"$cmd" && block "stage specific files, not everything."
 grep -Eq 'git[[:space:]]+(add|commit).*(^|[[:space:]/])\.env([[:space:]]|$)' <<<"$cmd" && block ".env must never be committed."
