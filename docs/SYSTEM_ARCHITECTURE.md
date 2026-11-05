@@ -126,7 +126,7 @@ All values come from the defaults in `.env.example` and `devmind/settings/base.p
 
 | DB | Variable | Used by | What for (verified in code) |
 |---|---|---|---|
-| 0 | `REDIS_URL` | Django | Django cache (`django_redis`): OAuth `state` tokens (10 min, `apps/accounts/oauth.py`), organization invite tokens (72 h, `apps/organizations/views.py`) and DRF throttle counters (base settings only; development and test settings turn throttling off). `/health/` pings this connection. |
+| 0 | `REDIS_URL` | Django | Django cache (`django_redis`): OAuth `state` tokens (10 min, `apps/accounts/oauth.py`) and DRF throttle counters (base settings only; development and test settings turn throttling off). `/health/` pings this connection. |
 | 0 | `redis_url` | FastAPI | LLM rate-limit counters `ratelimit:{provider}:{minute}` (`services/rate_limiter.py`) |
 | 1 | `CELERY_BROKER_URL` | Django, Celery worker, Flower | Task broker |
 | 2 | `CELERY_RESULT_BACKEND` | Celery worker | Task results |
@@ -433,7 +433,7 @@ flowchart LR
 
 ### Django entities
 
-Fields are taken from the models in `apps/accounts`, `apps/repositories`, `apps/reviews` and `apps/organizations`. The diagram shows selected fields: timestamps (`created_at`, `updated_at`), auth bookkeeping (`password`, `last_login`, `is_superuser`) and descriptive text such as `Repository.description` are left out to keep it readable. `encrypted` marks an `EncryptedCharField`: a `varchar` column holding a Fernet token.
+Fields are taken from the models in `apps/accounts`, `apps/repositories` and `apps/reviews`. The diagram shows selected fields: timestamps (`created_at`, `updated_at`), auth bookkeeping (`password`, `last_login`, `is_superuser`) and descriptive text such as `Repository.description` are left out to keep it readable. `encrypted` marks an `EncryptedCharField`: a `varchar` column holding a Fernet token.
 
 ```mermaid
 erDiagram
@@ -532,38 +532,11 @@ erDiagram
         text summary
         timestamptz completed_at "nullable"
     }
-    Organization {
-        bigint id PK
-        varchar name
-        varchar slug UK
-        text description
-        bigint github_org_id UK "nullable"
-        bigint owner_id FK "on_delete PROTECT"
-    }
-    TeamMembership {
-        bigint id PK
-        bigint organization_id FK
-        bigint user_id FK
-        varchar role "owner, admin, member"
-        bool is_active
-    }
-    OrgRepository {
-        bigint id PK
-        bigint organization_id FK
-        bigint repository_id FK
-        bigint added_by_id FK "nullable, on_delete SET_NULL"
-    }
 
     CustomUser ||--o| GithubToken : has
     CustomUser ||--o{ UserLLMConfig : owns
     CustomUser ||--o{ Repository : owns
     CustomUser ||--o{ RepoScan : triggers
-    CustomUser ||--o{ Organization : owns
-    CustomUser ||--o{ TeamMembership : "belongs via"
-    CustomUser |o--o{ OrgRepository : "added"
-    Organization ||--o{ TeamMembership : has
-    Organization ||--o{ OrgRepository : links
-    Repository ||--o{ OrgRepository : "linked by"
     Repository ||--o{ Review : has
     Repository ||--o{ RepoScan : has
     Review ||--o| ReviewRun : produces
@@ -573,16 +546,9 @@ erDiagram
 Constraints the diagram can't show:
 
 - `UserLLMConfig`: unique on `(user, provider, model_name)`, default ordering `priority`, then newest first.
-- `TeamMembership`: unique on `(organization, user)`. `OrgRepository`: unique on `(organization, repository)`.
 - `Review` has no unique constraint on `(repository, pr_number, head_sha)`. Duplicate webhooks are filtered in `repositories.trigger_review` instead (see [Idempotency](#idempotency)).
 - `Repository.github_id` is unique, so a GitHub repository has exactly one DevMind owner. `initial_sync` upserts by `github_id` and sets `owner` to the syncing user, so a second user syncing the same repository takes it over.
-- Deleting a user cascades to their token, LLM configs, repositories (and so their reviews and scans) and memberships. A user who owns an organization can't be deleted (`PROTECT`).
-
-**Organizations and invites.** Organizations, memberships and org-repository links are stored in Postgres, but invites aren't. `POST organizations/<id>/invite/` stores `org_invite:<token>` -> `"<org_id>:<email>"` in the Django cache (Redis db 0) for 72 hours and queues an email task. Accepting the invite checks that the signed-in user's email matches, creates a `member` membership and deletes the key. Some limits of the current code:
-
-- `OrgRepository` rows can only be created in the Django admin. No API view creates or lists them.
-- Organization membership doesn't grant access to anything. Repository, review and scan views all filter by `Repository.owner`.
-- `sync_org_members_task` (GitHub org member sync) is defined but nothing calls it.
+- Deleting a user cascades to their token, LLM configs, repositories (and so their reviews and scans).
 
 ### Indexes
 
@@ -592,7 +558,6 @@ Constraints the diagram can't show:
 | `reviews_reviewcomment` | `(review, severity)`, `(review, file_path, line_number)` |
 | `reviews_reposcan` | `status` |
 | `repositories_repository` | `(owner, is_active)`, `(github_id)`, `full_name`, `is_active` |
-| `organizations_organization` | `slug` (unique), `github_org_id` (unique) |
 
 ### FastAPI tables (SQLAlchemy, `models/embeddings.py`)
 
@@ -653,7 +618,6 @@ There are B-tree indexes on `repo_full_name`, `language`, `review_id`, `user_id`
 - `ReviewComment.category`: `security`, `quality`, `tests`, `style`, `performance`
 - `UserLLMConfig.provider`: `openai`, `anthropic`, `google_vertex`, `mistral`, `custom`
 - `RepoScan.status`: `queued`, `scanning`, `completed`, `failed`
-- `TeamMembership.role`: `owner`, `admin`, `member`
 
 ---
 
@@ -697,7 +661,7 @@ Routes from `CELERY_TASK_ROUTES` in `base.py`:
 | Queue | Tasks |
 |---|---|
 | `review` | `repositories.trigger_review` |
-| `default` | `apps.reviews.tasks.trigger_review_task`, `post_github_comments_task`, `full_repo_scan_task`, `cleanup_old_reviews`, `repositories.initial_sync`, `install_webhook`, `remove_webhook`, organization tasks; also the default for unrouted tasks |
+| `default` | `apps.reviews.tasks.trigger_review_task`, `post_github_comments_task`, `full_repo_scan_task`, `cleanup_old_reviews`, `repositories.initial_sync`, `install_webhook`, `remove_webhook`; also the default for unrouted tasks |
 | `notifications` | Consumed by the worker; no task is currently routed to it |
 
 There is no Celery beat service, so `cleanup_old_reviews` runs only if someone calls it.
@@ -794,6 +758,7 @@ Each decision lists what the code does, why, and the trade-offs. Some also note 
 - [Redis-backed LLM rate limiter](#redis-backed-llm-rate-limiter)
 - [Storing the diff in `ReviewRun.diff_text`](#storing-the-diff-in-reviewrundiff_text)
 - [Removing Kafka instead of keeping it as unused infrastructure](#removing-kafka-instead-of-keeping-it-as-unused-infrastructure)
+- [Removing the organizations app](#removing-the-organizations-app)
 - [BYOK-first LLM failover with server providers as fallback](#byok-first-llm-failover-with-server-providers-as-fallback)
 - [Token encryption with Fernet and a key derived from SECRET_KEY](#token-encryption-with-fernet-and-a-key-derived-from-secret_key)
 - [JWTs in localStorage](#jwts-in-localstorage)
@@ -860,6 +825,14 @@ Each decision lists what the code does, why, and the trade-offs. Some also note 
 
 **What would change at larger scale:** If several independent consumers need the same events, a durable event stream could be worth reintroducing. With a single consumer per event, a Celery task covers the same need.
 
+### Removing the organizations app
+
+**What:** `apps.organizations` (organizations, team memberships, org-repository links, Redis-backed invites, and the `send_invite_email_task` and `sync_org_members_task` Celery tasks) was removed along with its `organizations/` routes. Migration `core.0002_drop_organizations_tables` drops its three tables if they exist, deletes its rows from `django_migrations`, and deletes its content types, which cascades to their permissions and any user or group grants of them.
+
+**Why:** No user flow reached it. The frontend never called its routes, no other app imported it, nothing called `sync_org_members_task`, and membership granted no access because repository, review and scan views all filter by `Repository.owner`.
+
+**Tradeoffs:** The migration's reverse is a no-op, so rolling back doesn't bring the tables or their data back. Any organization data on an existing database is deleted when the migration runs.
+
 ### BYOK-first LLM failover with server providers as fallback
 
 **What:** For each LLM call, `LLMClient.generate` (`backend/fastapi/services/llm_client.py`) fetches the user's active BYOK configs from Django's internal endpoint, ordered by `priority`, and puts them ahead of the server chain: Google `gemini-2.0-flash`, Groq `llama-3.3-70b-versatile`, GitHub Models `gpt-4o-mini`. Each server provider is included only if its key is set. A 429, a 5xx, any other non-200 status or a timeout moves the call to the next entry. All entries are called through the OpenAI-compatible `/chat/completions` API.
@@ -924,14 +897,13 @@ Each decision lists what the code does, why, and the trade-offs. Some also note 
 
 ### One Redis instance in several roles
 
-**What:** A single `redis:7-alpine` service is the Celery broker (db 1) and result backend (db 2), the Django cache for OAuth state, invite tokens and DRF throttle counters, and the FastAPI rate-limit store (all db 0). See [Redis usage by database](#redis-usage-by-database).
+**What:** A single `redis:7-alpine` service is the Celery broker (db 1) and result backend (db 2), the Django cache for OAuth state and DRF throttle counters, and the FastAPI rate-limit store (all db 0). See [Redis usage by database](#redis-usage-by-database).
 
 **Why:** It's one service to run, and every role needs short-lived keys or queues, which Redis handles well. Separate database numbers keep broker and result keys apart from cache keys.
 
 **Tradeoffs:** Redis is a single point of failure, and the failure behavior varies:
 - The webhook view doesn't catch errors from `.delay()`, so webhook deliveries fail with a server error and reviews aren't queued.
 - GitHub sign-in fails, because the OAuth state can't be stored or checked.
-- Pending invites live only in Redis, so losing the data loses the invites.
 - The FastAPI rate limiter fails open and lets requests through.
 - `/health/` reports `redis: error` but still answers 200.
 

@@ -232,7 +232,6 @@ All routes are under `/api/v1/` and need `Authorization: Bearer <access token>` 
 | Repositories | `GET repositories/`, `GET/PATCH repositories/<id>/`, `POST repositories/connect/` (queues a GitHub sync and webhook install), `POST repositories/<id>/scan/` |
 | Reviews | `GET reviews/` (filters `status`, `repository`; `search`; `ordering`), `GET reviews/<id>/`, `POST reviews/<id>/retrigger/`, `GET reviews/scans/<id>/` |
 | LLM settings (BYOK) | `GET/POST settings/llm/`, `GET/PATCH/DELETE settings/llm/<id>/`, `POST settings/llm/<id>/set_default/`, `POST settings/llm/test/` |
-| Organizations | `POST organizations/`, `organizations/<id>/`, `.../invite/`, `.../members/`, `organizations/invite/accept/` |
 | Webhooks | `POST webhooks/github/` (no JWT; HMAC signature required) |
 | Internal | `GET auth/internal/llm-configs/?user_id=` (`X-Internal-Secret` only) |
 
@@ -244,8 +243,7 @@ backend/
     apps/accounts/   GitHub OAuth, users, encrypted tokens, BYOK LLM configs
     apps/repositories/  repo sync, webhook install + receiver
     apps/reviews/    Review models, orchestrator, GitHub comment poster, scans
-    apps/organizations/ organizations, members, invites
-    apps/core/       structlog configuration
+    apps/core/       structlog configuration, database-level migrations (pgvector)
     tests/           end-to-end pipeline test
   fastapi/           AI service
     agents/          LangGraph review agent and state

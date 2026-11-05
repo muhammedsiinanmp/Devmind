@@ -60,14 +60,14 @@ There's no server-side OpenAI provider. OpenAI keys can be added per user throug
 
 | Variable | Default | Description |
 |---|---|---|
-| `REDIS_URL` | `redis://redis:6379/0` | Django cache (OAuth state, organization invite tokens, DRF throttle counters), FastAPI rate limiter |
+| `REDIS_URL` | `redis://redis:6379/0` | Django cache (OAuth state, DRF throttle counters), FastAPI rate limiter |
 | `CELERY_BROKER_URL` | `redis://redis:6379/1` | Celery broker |
 | `CELERY_RESULT_BACKEND` | `redis://redis:6379/2` | Celery results |
 | `FASTAPI_BASE_URL` | `http://fastapi:8001` | Where the Celery worker reaches FastAPI |
 | `FASTAPI_TIMEOUT_SECONDS` | `60` | HTTP timeout for worker-to-FastAPI calls |
 | `FASTAPI_DATABASE_URL` | `postgresql+asyncpg://devmind:devmind_secret@postgres:5432/devmind` | FastAPI's async database URL |
 | `DJANGO_BASE_URL` | `http://django:8000` | Where FastAPI fetches BYOK configs from |
-| `DEVMIND_PUBLIC_URL` | `http://localhost:8000` | Base for the webhook URL registered on GitHub (`<url>/api/v1/webhooks/github/`) and for organization invite links |
+| `DEVMIND_PUBLIC_URL` | `http://localhost:8000` | Base for the webhook URL registered on GitHub (`<url>/api/v1/webhooks/github/`) |
 | `FRONTEND_URL` | `http://localhost:5173` | Read into settings. No code uses it currently. The OAuth redirect is whatever callback URL the GitHub OAuth App has configured. |
 
 ### Django tunables
@@ -287,19 +287,6 @@ All Django routes need `Authorization: Bearer <access_jwt>` unless marked otherw
 | `settings/llm/<id>/` | GET, PATCH, DELETE | Manage one config |
 | `settings/llm/<id>/set_default/` | POST | Set priority 0 and bump the others (`POST settings/llm/<id>/` does the same) |
 
-### Organizations
-
-| Endpoint | Description |
-|---|---|
-| `organizations/` | Create an organization |
-| `organizations/<id>/` | Organization detail |
-| `organizations/<org_id>/invite/` | Invite a member (queues an invite email) |
-| `organizations/<org_id>/members/` | List members |
-| `organizations/<org_id>/members/<user_id>/` | Remove a member |
-| `organizations/invite/accept/` | Accept an invite |
-
-See `apps/organizations/views.py` for methods and permissions.
-
 ### Webhook and internal
 
 | Endpoint | Method | Auth | Description |
@@ -361,7 +348,7 @@ Test modules:
 | Accounts | `apps/accounts/tests/test_views.py`, `test_oauth.py`, `test_byok.py`, `test_base_url_ssrf.py`, `test_url_safety.py`, `test_models.py` |
 | Repositories | `apps/repositories/tests/test_webhooks.py`, `test_views.py`, `test_tasks.py`, `test_services.py`, `test_models.py`, `test_managers.py`, `test_admin.py` |
 | Reviews | `apps/reviews/tests/test_orchestrator.py`, `test_views.py`, `test_github_poster.py`, `test_models.py` |
-| Organizations | `apps/organizations/tests/test_views.py` |
+| Core (migrations) | `apps/core/tests/test_pgvector_migration.py`, `test_drop_organizations_migration.py` |
 | End to end | `tests/test_e2e.py` |
 
 ### FastAPI
