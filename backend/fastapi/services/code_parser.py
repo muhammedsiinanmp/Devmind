@@ -5,7 +5,8 @@ Parses unified diff format and extracts language, changes, and context.
 """
 
 import re
-from dataclasses import dataclass
+import sys
+from dataclasses import dataclass, field
 from typing import Optional
 
 
@@ -68,6 +69,25 @@ LANGUAGE_KEYWORDS = {
 
 
 @dataclass
+class DiffLine:
+    """One line of a hunk. ``new_line`` is None for removed lines."""
+
+    kind: str  # "added", "removed" or "context"
+    content: str
+    new_line: Optional[int] = None
+    old_line: Optional[int] = None
+
+
+@dataclass
+class DiffHunk:
+    """One ``@@`` hunk with its lines in diff order."""
+
+    header: str
+    new_start: int
+    lines: list[DiffLine] = field(default_factory=list)
+
+
+@dataclass
 class DiffChunk:
     """A parsed diff chunk for a single file/hunk."""
 
@@ -79,6 +99,7 @@ class DiffChunk:
     chunk_type: str
     hunk_header: str = ""
     old_path: Optional[str] = None
+    hunks: list[DiffHunk] = field(default_factory=list)
 
 
 def detect_language(file_path: str, content: str = "") -> str:
@@ -161,9 +182,25 @@ def chunk_into_functions(code: str, language: str) -> list[str]:
     return chunks if chunks else [code]
 
 
+HUNK_HEADER_RE = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@")
+
+
+def _header_path(line: str, prefix: str) -> Optional[str]:
+    """Path from a ``---``/``+++`` header line; None for /dev/null."""
+    path = line[4:].split("\t")[0].strip()
+    if path == "/dev/null":
+        return None
+    if path.startswith(prefix):
+        path = path[len(prefix) :]
+    return path
+
+
 def parse_diff(diff_text: str) -> list[DiffChunk]:
     """
     Parse unified diff format into structured chunks.
+
+    Produces one chunk per changed file. Each chunk keeps its hunks, and every
+    added and context line records its line number in the new file.
 
     Args:
         diff_text: Unified diff text (from GitHub API or git diff)
@@ -172,75 +209,119 @@ def parse_diff(diff_text: str) -> list[DiffChunk]:
         List of DiffChunk objects
     """
     chunks: list[DiffChunk] = []
-    current_file: Optional[str] = None
-    current_hunk: str = ""
-    added_lines: list[str] = []
-    removed_lines: list[str] = []
-    context_lines: list[str] = []
-    current_language: str = "unknown"
-    current_chunk_type: str = "file"
-    old_path: Optional[str] = None
+    current: Optional[DiffChunk] = None
+    hunk: Optional[DiffHunk] = None
+    old_no = new_no = 0
+    old_remaining = new_remaining = 0
+    numbered = False
 
-    for line in diff_text.split("\n"):
-        if not line:
+    def flush() -> None:
+        if (
+            current
+            and current.file_path
+            and (current.added_lines or current.removed_lines)
+        ):
+            chunks.append(current)
+
+    lines = diff_text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        in_hunk = hunk is not None and (old_remaining > 0 or new_remaining > 0)
+
+        if line.startswith("diff --git "):
+            flush()
+            current, hunk = None, None
+            i += 1
             continue
 
-        if line.startswith("+++") or line.startswith("---"):
-            if current_file and (added_lines or removed_lines):
-                chunks.append(
-                    DiffChunk(
-                        file_path=current_file,
-                        added_lines=added_lines,
-                        removed_lines=removed_lines,
-                        context_lines=context_lines,
-                        language=current_language,
-                        chunk_type=current_chunk_type,
-                        hunk_header=current_hunk,
-                        old_path=old_path,
-                    )
+        # "--- "/"+++ " can also be a removed "-- x" or added "++ y" line, so
+        # inside a hunk they only count as a file header when a hunk header
+        # follows and these two lines would not exactly finish the hunk.
+        next_line = lines[i + 1] if i + 1 < len(lines) else ""
+        if line.startswith("--- ") and next_line.startswith("+++ "):
+            after = lines[i + 2] if i + 2 < len(lines) else ""
+            if not in_hunk or (
+                after.startswith("@@")
+                and not (old_remaining == 1 and new_remaining == 1)
+            ):
+                flush()
+                old_path = _header_path(line, "a/")
+                file_path = _header_path(next_line, "b/") or old_path or ""
+                current = DiffChunk(
+                    file_path=file_path,
+                    added_lines=[],
+                    removed_lines=[],
+                    context_lines=[],
+                    language=detect_language(file_path),
+                    chunk_type="file",
+                    old_path=old_path,
                 )
-                added_lines = []
-                removed_lines = []
-                context_lines = []
-                current_hunk = ""
-
-            if line.startswith("+++ b/") or line.startswith("+++ "):
-                current_file = line.replace("+++ b/", "").replace("+++ ", "").strip()
-            elif line.startswith("--- a/") or line.startswith("--- "):
-                old_path = line.replace("--- a/", "").replace("--- ", "").strip()
-                if current_file is None:
-                    current_file = old_path
-                current_file = old_path
-
-            language = detect_language(current_file or "")
-            current_language = language
-            continue
+                hunk = None
+                i += 2
+                continue
 
         if line.startswith("@@"):
-            current_hunk = line
+            match = HUNK_HEADER_RE.match(line)
+            if match:
+                old_no, new_no = int(match.group(1)), int(match.group(3))
+                old_remaining = int(match.group(2) or 1)
+                new_remaining = int(match.group(4) or 1)
+                numbered = True
+            else:
+                old_no = new_no = 0
+                old_remaining = new_remaining = sys.maxsize
+                numbered = False
+            hunk = DiffHunk(header=line, new_start=new_no)
+            if current is not None:
+                current.hunks.append(hunk)
+                current.hunk_header = line
+            i += 1
+            continue
+
+        i += 1
+        if not in_hunk or current is None or hunk is None:
+            continue
+
+        if line.startswith("\\"):
+            # "\ No newline at end of file" describes the previous line.
             continue
 
         if line.startswith("+"):
-            added_lines.append(line[1:])
-        elif line.startswith("-"):
-            removed_lines.append(line[1:])
-        elif line.startswith(" ") or line.startswith("\t"):
-            context_lines.append(line[1:] if len(line) > 1 else "")
-
-    if current_file and (added_lines or removed_lines):
-        chunks.append(
-            DiffChunk(
-                file_path=current_file,
-                added_lines=added_lines,
-                removed_lines=removed_lines,
-                context_lines=context_lines,
-                language=current_language,
-                chunk_type=current_chunk_type,
-                hunk_header=current_hunk,
-                old_path=old_path,
+            hunk.lines.append(
+                DiffLine("added", line[1:], new_line=new_no if numbered else None)
             )
-        )
+            current.added_lines.append(line[1:])
+            new_no += 1
+            new_remaining -= 1
+        elif line.startswith("-"):
+            hunk.lines.append(
+                DiffLine("removed", line[1:], old_line=old_no if numbered else None)
+            )
+            current.removed_lines.append(line[1:])
+            old_no += 1
+            old_remaining -= 1
+        elif line.startswith(" ") or line == "":
+            hunk.lines.append(
+                DiffLine(
+                    "context",
+                    line[1:],
+                    new_line=new_no if numbered else None,
+                    old_line=old_no if numbered else None,
+                )
+            )
+            current.context_lines.append(line[1:])
+            new_no += 1
+            old_no += 1
+            new_remaining -= 1
+            old_remaining -= 1
+        else:
+            hunk = None
 
+    flush()
     return chunks
 
 
