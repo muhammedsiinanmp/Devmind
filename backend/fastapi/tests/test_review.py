@@ -117,6 +117,49 @@ class TestAnalyzeEndpoint:
             assert response.analyzer_runs["security"].parsed is True
 
     @pytest.mark.asyncio
+    async def test_analyze_reports_unparsed_analyzer(self):
+        """An analyzer whose replies never parse is reported as parsed=False
+        in the response, distinct from a clean analyzer."""
+        from services.llm_client import LLMResponse
+
+        request = ReviewRequest(
+            diff="--- a/app.py\n+++ b/app.py\n@@ -1 +1 @@\n+new line",
+            repo_full_name="owner/repo",
+            pr_number=1,
+        )
+
+        async def fake_generate(messages, user_id=None):
+            focus = messages[0]["content"].splitlines()[-1].lower()
+            content = "Looks fine to me." if "security" in focus else "[]"
+            return LLMResponse(
+                content=content,
+                model_used="google/gemini",
+                provider="google",
+                prompt_tokens=10,
+                completion_tokens=5,
+            )
+
+        with patch("agents.review_agent.llm_client") as mock_llm:
+            mock_llm.generate = AsyncMock(side_effect=fake_generate)
+
+            response = await analyze_review(request, secret="valid-secret")
+
+        runs = response.analyzer_runs
+        assert runs["security"].parsed is False
+        assert runs["security"].attempts == 2
+        assert runs["quality"].parsed is True
+        assert runs["tests"].parsed is True
+        assert response.comments == []
+
+    def test_analyzer_run_requires_parsed(self):
+        from pydantic import ValidationError
+
+        from models.review import AnalyzerRun
+
+        with pytest.raises(ValidationError):
+            AnalyzerRun(model="m", latency_ms=1)
+
+    @pytest.mark.asyncio
     async def test_analyze_handles_error(self):
         request = ReviewRequest(
             diff="test diff",

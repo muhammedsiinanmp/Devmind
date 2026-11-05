@@ -34,7 +34,6 @@ class AnalyzerRun(BaseModel):
     completion_tokens: int | None = None
     attempts: int = 1
     parsed: bool = Field(
-        default=True,
         description="False if every attempt returned an unparseable reply",
     )
 
