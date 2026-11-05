@@ -51,7 +51,7 @@ There's no `FERNET_KEY` variable. The encryption key comes from `DJANGO_SECRET_K
 |---|---|
 | `GOOGLE_AI_API_KEY` | Google AI Studio key. Used for `GOOGLE_MODEL` (first server provider) and for `text-embedding-004` embeddings. |
 | `GROQ_API_KEY` | Groq key for `GROQ_MODEL` (second) |
-| `GOOGLE_MODEL` | Default `gemini-2.5-flash` |
+| `GOOGLE_MODEL` | Default `gemini-3.5-flash` |
 | `GROQ_MODEL` | Default `openai/gpt-oss-120b` |
 | `LLM_HEALTH_CACHE_SECONDS` | Default `300`. How long FastAPI `/health` caches each provider's model listing. |
 | `LLM_FAILOVER_ENABLED` | Default `True`. When `False`, only the first provider in the chain is tried. |
@@ -66,7 +66,9 @@ make providers-check    # runs on the host: cd backend/fastapi && uv run python 
 docker compose exec fastapi uv run python -m scripts.providers_check
 ```
 
-For each provider with a key set, it lists the provider's models and sends one chat request of a few tokens, then prints the provider, model, whether the model is listed, the result (`ok`, or the HTTP status, with `model_not_found` for 404 and `rate_limited` for 429) and the latency. It never prints keys or response bodies. It exits 1 if no provider completes the chat request.
+For each provider with a key set, it lists the provider's models and sends one chat request of a few tokens, then prints the provider, model, whether the model is listed, the result (`ok`, or the HTTP status, with `model_not_found` for 404 and `rate_limited` for 429) and the latency. On a 404 it also prints the first 150 characters of the provider's error message, with keys redacted before truncation. It never prints keys or other response bodies. It exits 1 if no provider completes the chat request.
+
+**"Listed" doesn't mean usable.** Google lists models that are closed to new keys. For example, `gemini-2.5-flash` is listed but a newer key gets a 404 ("no longer available to new users"). The chat request in `make providers-check` is the authoritative check. The `listed` field in `/health` only shows that the provider still publishes the model ID.
 
 There's no server-side OpenAI provider. OpenAI keys can be added per user through the BYOK settings.
 
@@ -338,7 +340,7 @@ See `apps/organizations/views.py` for methods and permissions.
 | `/scan/full` | POST | `X-Internal-Secret` | Start a background repository scan (202) |
 | `/scan/status/{scan_id}` | GET | `X-Internal-Secret` | Scan progress (in-process memory) |
 | `/scan/report/{scan_id}` | GET | `X-Internal-Secret` | Scan report |
-| `/health` | GET | none | DB, pgvector and, per server provider, the configured model and whether the provider lists it (`llm`; listings cached for `LLM_HEALTH_CACHE_SECONDS`); 503 if DB or pgvector check fails |
+| `/health` | GET | none | DB, pgvector and, per server provider, the configured model and whether the provider lists it (`llm`; listings cached for `LLM_HEALTH_CACHE_SECONDS`). Listed doesn't mean usable; use `make providers-check` for that. 503 if DB or pgvector check fails |
 | `/metrics` | GET | none | Prometheus instrumentator |
 | `/docs` | GET | none | OpenAPI UI (off when `SENTRY_ENVIRONMENT=production`) |
 
@@ -505,7 +507,7 @@ docker compose logs fastapi | grep "llm\."
 make providers-check
 ```
 
-Each `llm.failover` line has a `reason`: `rate_limited`, `model_not_found`, `timeout` or `unavailable`. `model_not_found` (also logged as `llm.model_not_found`) means the provider no longer serves the configured model; set `GOOGLE_MODEL` / `GROQ_MODEL` to a model that `make providers-check` shows as listed.
+Each `llm.failover` line has a `reason`: `rate_limited`, `model_not_found`, `timeout` or `unavailable`. `model_not_found` (also logged as `llm.model_not_found`) means the provider won't serve the configured model to this key. `make providers-check` prints the provider's reason under that provider's row. Set `GOOGLE_MODEL` / `GROQ_MODEL` to a model whose chat result in `make providers-check` is `ok`. Being listed isn't enough.
 
 ### Reviews complete but nothing appears on GitHub
 

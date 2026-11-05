@@ -313,13 +313,13 @@ Embeddings are cached in process by an LRU cache (`_BoundedCache`, max 1000 entr
 flowchart LR
     A[generate] --> B[GET Django internal BYOK endpoint<br/>user's active configs, by priority]
     B --> C[User providers<br/>OpenAI-compatible chat/completions]
-    C -->|429 / 404 / 5xx / non-200 / timeout| D[Google GOOGLE_MODEL<br/>default gemini-2.5-flash]
+    C -->|429 / 404 / 5xx / non-200 / timeout| D[Google GOOGLE_MODEL<br/>default gemini-3.5-flash]
     D -->|fail| E[Groq GROQ_MODEL<br/>default openai/gpt-oss-120b]
     E -->|fail| G[AllProvidersDownError<br/>FastAPI responds 429]
 ```
 
 - A server provider is included only if its key (`GOOGLE_AI_API_KEY`, `GROQ_API_KEY`) is set. GitHub Models was retired on 2026-07-30 and was removed.
-- Model IDs come from settings (`core/config.py`). A 404 is logged as `llm.model_not_found` (a retired or misspelled model) and fails over like any other error; `make providers-check` shows which configured models each provider still serves. There is no server-side OpenAI provider; OpenAI is available only as a user BYOK provider.
+- Model IDs come from settings (`core/config.py`). A 404 is logged as `llm.model_not_found` and fails over like any other error. The cause is a retired or misspelled model, or one closed to new keys. `make providers-check` sends a real chat request to each configured model, which makes it the authoritative check. A model that appears in a provider's `/models` listing (as `/health` reports) may still be unusable. There is no server-side OpenAI provider; OpenAI is available only as a user BYOK provider.
 - BYOK providers are mapped to an OpenAI-compatible base URL: `openai`, `groq`, `mistral`, `google_vertex`, or `custom` with an explicit URL. `anthropic` isn't mapped, so Anthropic configs are skipped with an `llm.byok_unsupported_provider` warning (Django's BYOK choices have no GitHub Models option).
 - `LLM_FAILOVER_ENABLED=False` uses only the first provider in the chain.
 
@@ -862,7 +862,7 @@ Each decision lists what the code does, why, and the trade-offs. Some also note 
 
 ### BYOK-first LLM failover with server providers as fallback
 
-**What:** For each LLM call, `LLMClient.generate` (`backend/fastapi/services/llm_client.py`) fetches the user's active BYOK configs from Django's internal endpoint, ordered by `priority`, and puts them ahead of the server chain: Google, then Groq, with models from settings (defaults `gemini-2.5-flash`, `openai/gpt-oss-120b`). GitHub Models was retired on 2026-07-30 and was removed. Each server provider is included only if its key is set. A 429, a 404 (logged as `model_not_found`), a 5xx, any other non-200 status or a timeout moves the call to the next entry. All entries are called through the OpenAI-compatible `/chat/completions` API.
+**What:** For each LLM call, `LLMClient.generate` (`backend/fastapi/services/llm_client.py`) fetches the user's active BYOK configs from Django's internal endpoint, ordered by `priority`, and puts them ahead of the server chain: Google, then Groq, with models from settings (defaults `gemini-3.5-flash`, `openai/gpt-oss-120b`). GitHub Models was retired on 2026-07-30 and was removed. Each server provider is included only if its key is set. A 429, a 404 (logged as `model_not_found`), a 5xx, any other non-200 status or a timeout moves the call to the next entry. All entries are called through the OpenAI-compatible `/chat/completions` API.
 
 **Why:** A user's own key is used whenever it works, and a review still runs when it doesn't, or when the user has none. One request format covers every provider, so adding a provider means adding a base URL.
 

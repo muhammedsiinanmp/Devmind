@@ -102,9 +102,9 @@ START -> [analyze_security | analyze_quality | analyze_tests] -> synthesize -> E
 **LLM provider failover** (`backend/fastapi/services/llm_client.py`):
 
 - A user's own active provider configs are tried first, in priority order.
-- After that come the server's providers: Google (`GOOGLE_MODEL`, default `gemini-2.5-flash`), then Groq (`GROQ_MODEL`, default `openai/gpt-oss-120b`). Any provider without a configured key is skipped. GitHub Models was retired on 2026-07-30 and was removed.
+- After that come the server's providers: Google (`GOOGLE_MODEL`, default `gemini-3.5-flash`), then Groq (`GROQ_MODEL`, default `openai/gpt-oss-120b`). Any provider without a configured key is skipped. GitHub Models was retired on 2026-07-30 and was removed.
 - Any non-200 response (including 429 and 5xx) or a timeout moves the request to the next provider. A 404 is logged as `llm.model_not_found`, which usually means the configured model was retired.
-- `make providers-check` lists each keyed provider's models, sends one tiny chat request and prints provider, model, whether the model is listed, the result and latency. It never prints keys and exits non-zero if no provider works. FastAPI's `/health` also reports each provider's configured model and whether the provider lists it (cached for `LLM_HEALTH_CACHE_SECONDS`, default 300).
+- `make providers-check` lists each keyed provider's models, sends one tiny chat request and prints provider, model, whether the model is listed, the result and latency. On a 404 it also prints the provider's error message, truncated and with keys redacted. It never prints keys and exits non-zero if no provider works. FastAPI's `/health` also reports each provider's configured model and whether the provider lists it (cached for `LLM_HEALTH_CACHE_SECONDS`, default 300). Listed doesn't mean usable, because Google lists models that are closed to new keys. The chat request in `make providers-check` is the authoritative check.
 - Per-provider requests-per-minute limits are enforced with a Redis counter (`services/rate_limiter.py`), so all FastAPI workers share one budget. If Redis is down, requests go through instead of being blocked.
 
 **Security hardening**:

@@ -41,8 +41,10 @@ async def health_check():
         checks["pgvector"] = "unknown"
 
     # LLM providers — informational only, failover chain handles degradation.
-    # "listed" is null when the provider has no key or its
-    # model listing couldn't be fetched. Listings are cached for a few minutes.
+    # "listed" is null when the provider has no key or its model listing
+    # couldn't be fetched. Listings are cached for a few minutes. Listed does
+    # NOT mean usable: Google lists models that are closed to new keys. Only a
+    # real chat call (`make providers-check`) shows that a model works.
     llm: dict[str, dict[str, object]] = {
         provider: {"model": model, "enabled": False, "listed": None}
         for provider, model in server_provider_models().items()
@@ -54,7 +56,7 @@ async def health_check():
         if listed is None:
             checks[f"llm_{provider}"] = "unreachable"
         else:
-            checks[f"llm_{provider}"] = "ok" if listed else "model_not_listed"
+            checks[f"llm_{provider}"] = "listed" if listed else "model_not_listed"
 
     # DB down or pgvector missing → 503 so ECS/k8s stops routing traffic here
     critical_ok = checks.get("database") == "ok" and checks.get(
