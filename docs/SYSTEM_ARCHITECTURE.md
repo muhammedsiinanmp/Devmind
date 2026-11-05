@@ -41,17 +41,19 @@ Services defined in `docker-compose.yml`:
 
 | Service | Image / build | Host port | Role |
 |---|---|---|---|
+| `migrate` | same image as Django | - | One-shot `manage.py migrate --noinput` (includes enabling pgvector); Django, FastAPI and the worker start after it exits successfully |
 | `nginx` | `./nginx` | 80 | Reverse proxy: `/metrics` and `/` to Django, `/fastapi-metrics` to FastAPI |
 | `django` | `backend/django` (dev target, `runserver`) | 8000 | REST API, OAuth, webhook receiver |
 | `fastapi` | `backend/fastapi` (dev target, `uvicorn --reload`) | 8001 | AI service |
 | `celery_worker` | same image as Django | - | Consumes queues `default`, `review`, `notifications` |
-| `flower` | `mher/flower:2.0` | 5555 | Celery monitor UI, on the same `CELERY_BROKER_URL` as the worker |
-| `postgres` | `pgvector/pgvector:pg16` | 5432 | Primary datastore; pgvector extension available |
+| `frontend` | `frontend` (dev target, Vite) | 5173 | Vite dev server; proxies `/api` to `django:8000` |
+| `flower` | `mher/flower:2.0` | 5555 | `ops` profile. Celery monitor UI, on the same `CELERY_BROKER_URL` as the worker |
+| `postgres` | `pgvector/pgvector:pg16` | 5432 | Primary datastore; the `core.0001_enable_pgvector` migration enables the `vector` extension |
 | `redis` | `redis:7-alpine` | 6379 | Cache, Celery broker/results, LLM rate limiter |
-| `prometheus` | `prom/prometheus:latest` | 9090 | Scrapes Django and FastAPI via Nginx; 15-day retention |
-| `grafana` | `grafana/grafana:latest` | 3000 | Provisioned Prometheus datasource and `devmind-overview` dashboard |
+| `prometheus` | `prom/prometheus:latest` | 9090 | `ops` profile. Scrapes Django and FastAPI via Nginx; 15-day retention |
+| `grafana` | `grafana/grafana:latest` | 3000 | `ops` profile. Provisioned Prometheus datasource and `devmind-overview` dashboard |
 
-The frontend isn't a compose service. Run it with `pnpm dev` (port 5173). `frontend/Dockerfile` exists but compose doesn't use it.
+`make up` starts every service except the three in the `ops` profile (`flower`, `prometheus`, `grafana`); `make up-ops` adds them. The `frontend` service builds the `dev` target of `frontend/Dockerfile`.
 
 Redis database allocation (db 0 for cache and rate limiter; db 1 broker; db 2 results) is broken down in [Redis usage by database](#redis-usage-by-database). Flower reads `CELERY_BROKER_URL` too, so it watches the same broker database as the worker.
 
@@ -61,29 +63,29 @@ Redis database allocation (db 0 for cache and rate limiter; db 1 broker; db 2 re
 
 ### Deployment diagram (docker-compose.yml)
 
-The only deployment definition in the repo is `docker-compose.yml`, which builds the `dev` targets of both backend images. Ports in the labels are published to the host. All nine services share the default compose network and reach each other by service name.
+The only deployment definition in the repo is `docker-compose.yml`, which builds the `dev` targets of the backend and frontend images. Ports in the labels are published to the host. All eleven services (eight by default, three more with the `ops` profile) share the default compose network and reach each other by service name.
 
 ```mermaid
 flowchart TB
     Browser["Browser"]
     GH["GitHub<br/>webhooks and REST API"]
     LLM["LLM providers<br/>and Google embeddings API"]
-    VITE["Vite dev server :5173<br/>not part of compose"]
-
     subgraph compose["docker-compose.yml, default network"]
+        VITE["frontend :5173<br/>Vite dev server"]
+        MIG["migrate<br/>one-shot, exits"]
         NGX["nginx :80"]
         DJ["django :8000<br/>runserver, dev settings"]
         CW["celery_worker<br/>queues default, review, notifications"]
         FA["fastapi :8001<br/>uvicorn --reload"]
-        FL["flower :5555"]
+        FL["flower :5555<br/>ops profile"]
         PG[("postgres :5432<br/>pgvector/pgvector:pg16")]
         RD[("redis :6379<br/>db 0, db 1, db 2")]
-        PROM["prometheus :9090"]
-        GRAF["grafana :3000"]
+        PROM["prometheus :9090<br/>ops profile"]
+        GRAF["grafana :3000<br/>ops profile"]
     end
 
     Browser --> VITE
-    VITE -->|"proxies /api to localhost:8000"| DJ
+    VITE -->|"proxies /api to django:8000"| DJ
     GH -->|"webhook POST, HMAC-SHA256<br/>via DEVMIND_PUBLIC_URL"| DJ
     NGX -->|"/ and /health/ and /metrics"| DJ
     NGX -->|"/fastapi-metrics to /metrics"| FA
@@ -96,6 +98,7 @@ flowchart TB
     DJ -->|"cache db 0"| RD
     FA -->|"rate-limit counters, db 0"| RD
 
+    MIG -->|"migrate, CREATE EXTENSION vector"| PG
     DJ --> PG
     CW --> PG
     FA -->|"asyncpg, pgvector"| PG
@@ -114,7 +117,7 @@ Notes on the diagram:
 - **Nginx routes** (`nginx/nginx.conf`): `/metrics` goes to `django:8000/metrics`, `/fastapi-metrics` to `fastapi:8001/metrics`, and `/health/` and `/` to Django. Nginx has no WebSocket upgrade block and doesn't route `/api` anywhere other than Django.
 - **Published ports.** Django (8000) and FastAPI (8001) are published directly as well as sitting behind Nginx. Postgres (5432) and Redis (6379) are published too, which suits local development only.
 - **Webhooks.** GitHub calls whatever URL `DEVMIND_PUBLIC_URL` points to. The `make ngrok` target tunnels to port 8000, so in local development webhooks reach Django directly. Nginx's `/` route would also forward them to Django.
-- **Vite** runs on the host with `pnpm dev`. Its proxy (`frontend/vite.config.ts`) forwards `/api` to `localhost:8000`.
+- **Vite** runs in the `frontend` service. Its proxy (`frontend/vite.config.ts`) forwards `/api` to `API_PROXY_TARGET`, which compose sets to `http://django:8000` (it defaults to `http://localhost:8000` when Vite runs on the host with `pnpm dev`).
 - **Prometheus** scrapes both apps through `nginx:80` (`prometheus/prometheus.yml`), and Grafana reads from Prometheus with a provisioned datasource.
 
 ### Redis usage by database
@@ -324,7 +327,7 @@ The counts are logged as `review.anchoring` and returned in the response as `anc
 
 Embeddings are cached in process by an LRU cache (`_BoundedCache`, max 1000 entries) keyed by `sha256(f"{task_type}:{text}")`.
 
-**Setup gap:** no migration or startup hook creates the `vector` extension or the `code_embeddings` / `review_embeddings` tables (`models/embeddings.py` defines them; nothing calls `create_all`). On a fresh database the retrieval steps fail and get logged, and reviews run without retrieved context.
+**Setup gap:** the `core.0001_enable_pgvector` migration enables the `vector` extension, but nothing creates the `code_embeddings` / `review_embeddings` tables (`models/embeddings.py` defines them; nothing calls `create_all`). On a fresh database the retrieval steps fail and get logged, and reviews run without retrieved context.
 
 ### LLM provider failover
 
