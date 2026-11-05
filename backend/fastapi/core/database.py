@@ -10,6 +10,8 @@ engine = create_async_engine(
     pool_pre_ping=True,
     pool_size=10,
     max_overflow=20,
+    # Keep bound values (e.g. code chunk text) out of error messages and logs.
+    hide_parameters=True,
 )
 
 AsyncSessionLocal = async_sessionmaker(
