@@ -13,6 +13,12 @@ AI pull-request reviewer: Django (API, webhooks, Celery) + FastAPI (LangGraph re
 - Frontend: `cd frontend && pnpm install --frozen-lockfile && pnpm build && pnpm lint`
 - Evals (after E1): `make eval`
 
+## Tools
+- **graphify:** read `graphify-out/GRAPH_REPORT.md` first, then `graphify query|path|explain` before searching by hand. Open the source before stating a fact. Never commit `graphify-out/`.
+- **ast-grep:** use for structural search and codemods (`ast-grep -p 'from channels.$X import $Y' -l python`) instead of regex when removing or renaming code.
+- **Context7 MCP:** check current docs for LangGraph, Django 5, React 19, Vite 8 and Tailwind 4 before using an API you're unsure of.
+- **Playwright MCP:** verify frontend changes in a real browser (`pnpm dev`, then navigate). The frontend has no automated tests, so this is the UI check for verifiers.
+
 ## Rules
 - Bug-fix tests must fail before the fix. Never skip or weaken a test.
 - Quality claims (README, PRs) must come from eval output or a committed results file.
