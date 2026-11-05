@@ -103,7 +103,7 @@ class TestHealthCheck:
         session = _session_with_pgvector("0.7.0")
         google = LLMConfig(
             provider=LLMProvider.GOOGLE,
-            model="gemini-2.5-flash",
+            model="gemini-3.5-flash",
             api_key="health-test-key-value",
             base_url="https://google.example",
             max_tokens=10,
@@ -129,10 +129,11 @@ class TestHealthCheck:
 
         assert response.status_code == 200
         body = response.json()
-        assert body["checks"]["llm_google"] == "ok"
+        # "listed", not "ok": a listed model can still be closed to new keys
+        assert body["checks"]["llm_google"] == "listed"
         assert body["checks"]["llm_groq"] == "model_not_listed"
         assert body["llm"]["google"] == {
-            "model": "gemini-2.5-flash",
+            "model": "gemini-3.5-flash",
             "enabled": True,
             "listed": True,
         }

@@ -32,7 +32,7 @@ def _transport(chat_status: dict[str, int], seen: list[httpx.Request]):
                 200,
                 json={
                     "data": [
-                        {"id": "models/gemini-2.5-flash"},
+                        {"id": "models/gemini-3.5-flash"},
                         {"id": "openai/gpt-oss-120b"},
                     ]
                 },
@@ -53,13 +53,13 @@ def test_reports_each_provider_and_exits_zero_when_one_works(capsys):
     out = capsys.readouterr().out
 
     assert code == 0
-    assert "google" in out and "gemini-2.5-flash" in out
+    assert "google" in out and "gemini-3.5-flash" in out
     assert "groq" in out and "openai/gpt-oss-120b" in out
     assert "model_not_found" in out
     assert "Working: google" in out
     # It sent the configured model to each provider
     chat_bodies = [r.content for r in seen if r.url.path.endswith("/chat/completions")]
-    assert any(b"gemini-2.5-flash" in b for b in chat_bodies)
+    assert any(b"gemini-3.5-flash" in b for b in chat_bodies)
     assert any(b"openai/gpt-oss-120b" in b for b in chat_bodies)
 
 
@@ -111,3 +111,57 @@ def test_github_models_is_not_checked(capsys):
         "api.groq.com",
     }
     assert "github" not in capsys.readouterr().out
+
+
+def _google_404(message: str) -> httpx.MockTransport:
+    """Google lists its model but rejects the chat with a 404 and `message`."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/models"):
+            return httpx.Response(
+                200, json={"data": [{"id": "models/gemini-3.5-flash"}]}
+            )
+        if request.url.host == "generativelanguage.googleapis.com":
+            # Google's OpenAI-compatible endpoint wraps the error in a list
+            return httpx.Response(
+                404, json=[{"error": {"code": 404, "message": message}}]
+            )
+        return httpx.Response(200, json={"choices": []})
+
+    return httpx.MockTransport(handler)
+
+
+def test_404_prints_the_providers_error_message(capsys):
+    message = (
+        "This model models/gemini-3.5-flash is no longer available to new "
+        "users. Please update your code to use a newer model."
+    )
+
+    providers_check.main(transport=_google_404(message))
+    out = capsys.readouterr().out
+
+    google_line = next(line for line in out.splitlines() if "listed" not in line)
+    assert "yes" in google_line  # listed, yet the chat fails
+    assert "model_not_found" in google_line
+    assert f"google error: {message}" in out
+
+
+def test_404_error_message_is_truncated(capsys):
+    providers_check.main(transport=_google_404("x" * 400))
+    out = capsys.readouterr().out
+
+    detail = next(line for line in out.splitlines() if "google error:" in line)
+    assert detail.endswith("x" * 150 + "...")
+    assert "x" * 151 not in detail
+
+
+def test_404_error_message_never_shows_a_key(capsys):
+    # The key straddles the truncation limit, so redaction must come first
+    prefix = "y" * (150 - len(GOOGLE_KEY) // 2)
+
+    providers_check.main(transport=_google_404(f"{prefix}{GOOGLE_KEY} tail"))
+    out = capsys.readouterr().out
+
+    assert "google error:" in out
+    assert GOOGLE_KEY not in out
+    assert GOOGLE_KEY[: len(GOOGLE_KEY) // 2] not in out

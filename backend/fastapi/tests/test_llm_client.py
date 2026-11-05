@@ -296,7 +296,7 @@ class TestModelSettings:
         from core.config import Settings
 
         defaults = Settings(_env_file=None)
-        assert defaults.google_model == "gemini-2.5-flash"
+        assert defaults.google_model == "gemini-3.5-flash"
         assert defaults.groq_model == "openai/gpt-oss-120b"
 
     def test_github_token_does_not_add_a_provider(self, monkeypatch):
@@ -405,9 +405,9 @@ class TestModelListing:
         from services.llm_client import model_ids
 
         payload = {
-            "data": [{"id": "models/gemini-2.5-flash"}, {"id": "openai/gpt-oss-120b"}]
+            "data": [{"id": "models/gemini-3.5-flash"}, {"id": "openai/gpt-oss-120b"}]
         }
-        assert model_ids(payload) == {"gemini-2.5-flash", "openai/gpt-oss-120b"}
+        assert model_ids(payload) == {"gemini-3.5-flash", "openai/gpt-oss-120b"}
 
     @pytest.mark.asyncio
     async def test_check_model_listed(self):

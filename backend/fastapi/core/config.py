@@ -25,7 +25,7 @@ class Settings(BaseSettings):
 
     # Server provider models. Pinned stable IDs rather than "-latest" aliases,
     # so a provider-side alias change can't silently change review output.
-    google_model: str = "gemini-2.5-flash"
+    google_model: str = "gemini-3.5-flash"
     groq_model: str = "openai/gpt-oss-120b"
     # Seconds /health caches each provider's model listing
     llm_health_cache_seconds: int = 300
