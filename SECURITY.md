@@ -25,4 +25,4 @@ The design is described in the [Security Model](docs/SYSTEM_ARCHITECTURE.md#11-s
 - GitHub OAuth tokens and BYOK API keys are encrypted at rest with Fernet, using a key derived from `DJANGO_SECRET_KEY`.
 - A user-supplied BYOK `base_url` must be https and resolve only to public addresses.
 
-Known gaps are listed in the README under [Known limitations](README.md#known-limitations) and in the architecture docs. They include JWTs kept in `localStorage`, an endpoint that returns the user's decrypted GitHub token to the browser, and a WebSocket consumer that doesn't check review ownership (WebSockets aren't served today). The trade-offs behind these choices are discussed in [Architectural Decisions](docs/SYSTEM_ARCHITECTURE.md#12-architectural-decisions).
+Known gaps are listed in the README under [Known limitations](README.md#known-limitations) and in the architecture docs. They include JWTs kept in `localStorage` and an endpoint that returns the user's decrypted GitHub token to the browser. The trade-offs behind these choices are discussed in [Architectural Decisions](docs/SYSTEM_ARCHITECTURE.md#12-architectural-decisions).
