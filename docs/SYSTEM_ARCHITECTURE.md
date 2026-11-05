@@ -743,6 +743,8 @@ Each service calls `sentry_sdk.init` when its DSN (`SENTRY_DSN_DJANGO` / `SENTRY
 
 ## 11. Security Model
 
+To report a vulnerability, follow [SECURITY.md](../SECURITY.md).
+
 ### Trust boundaries
 
 ```
