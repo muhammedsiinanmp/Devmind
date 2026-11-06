@@ -193,10 +193,14 @@ class VectorStore:
                     {
                         "model": model,
                         "content": {"parts": [{"text": text}]},
-                        "taskType": task_type,
-                        # gemini-embedding-001 returns 3072 values by default;
-                        # ask for 768 to fit the Vector(768) column.
-                        "outputDimensionality": self.embedding_dims,
+                        # The v1beta API deprecates top-level taskType and
+                        # outputDimensionality in favour of embedContentConfig.
+                        "embedContentConfig": {
+                            "taskType": task_type,
+                            # gemini-embedding-001 returns 3072 values by
+                            # default; ask for 768 to fit the Vector(768) column.
+                            "outputDimensionality": self.embedding_dims,
+                        },
                     }
                     for text in texts
                 ]
@@ -250,7 +254,7 @@ class VectorStore:
         text_hash = hashlib.sha256(chunk_text.encode()).hexdigest()
 
         # Check for a duplicate before paying for an embedding call.
-        if await self.existing_hashes(session, [text_hash]):
+        if await self.existing_hashes(session, repo_full_name, [text_hash]):
             raise VectorStoreError(f"Embedding already exists: {text_hash[:8]}")
 
         embedding = await self.generate_embedding(chunk_text)
@@ -268,13 +272,23 @@ class VectorStore:
         )
 
     async def existing_hashes(
-        self, session: AsyncSession, hashes: list[str]
+        self, session: AsyncSession, repo_full_name: str, hashes: list[str]
     ) -> set[str]:
-        """Return the subset of the given sha256 values already stored."""
+        """Return the subset of the given sha256 values already stored for
+        this repository with the configured embedding model.
+
+        Rows are unique per (repo_full_name, sha256, embedding_model), so a
+        chunk stored for another repository, or with another model, doesn't
+        count: it is embedded and stored again for this one.
+        """
         if not hashes:
             return set()
         result = await session.execute(
-            select(CodeEmbedding.sha256).where(CodeEmbedding.sha256.in_(hashes))
+            select(CodeEmbedding.sha256).where(
+                CodeEmbedding.repo_full_name == repo_full_name,
+                CodeEmbedding.embedding_model == self.embedding_model,
+                CodeEmbedding.sha256.in_(hashes),
+            )
         )
         return set(result.scalars().all())
 
@@ -290,7 +304,8 @@ class VectorStore:
         chunk_type: str = "function",
         source_ref: Optional[str] = None,
     ) -> CodeEmbedding:
-        """Insert and commit one already-embedded code chunk."""
+        """Insert and commit one already-embedded code chunk, tagged with the
+        configured embedding model (the model ``embedding`` must come from)."""
         code_embedding = CodeEmbedding(
             repo_full_name=repo_full_name,
             file_path=file_path,
@@ -298,6 +313,7 @@ class VectorStore:
             language=language,
             chunk_type=chunk_type,
             embedding=embedding,
+            embedding_model=self.embedding_model,
             sha256=sha256,
             source_ref=source_ref,
         )
@@ -362,16 +378,19 @@ class VectorStore:
     ) -> list[SimilarChunk]:
         """Search with a precomputed RETRIEVAL_QUERY embedding.
 
-        Ordered by cosine distance, which the HNSW index on
-        code_embeddings.embedding (vector_cosine_ops) serves. Call
-        enable_iterative_scan on the session first.
+        Only rows embedded with the configured model are searched: vectors
+        from another model aren't comparable with the query's. Ordered by
+        cosine distance, which the HNSW index on code_embeddings.embedding
+        (vector_cosine_ops) serves. Call enable_iterative_scan on the session
+        first.
         """
         distance_col = CodeEmbedding.embedding.cosine_distance(query_embedding).label(
             "distance"
         )
 
         stmt = select(CodeEmbedding, distance_col).where(
-            CodeEmbedding.repo_full_name == repo_full_name
+            CodeEmbedding.repo_full_name == repo_full_name,
+            CodeEmbedding.embedding_model == self.embedding_model,
         )
         if exclude_source_ref is not None:
             stmt = stmt.where(
