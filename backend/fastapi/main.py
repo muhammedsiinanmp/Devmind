@@ -26,6 +26,9 @@ if settings.sentry_dsn_fastapi:
 async def lifespan(app: FastAPI):
     configure_logging()
     yield
+    from services.vector_store import vector_store
+
+    await vector_store.aclose()
 
 
 app = FastAPI(

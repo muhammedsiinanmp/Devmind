@@ -238,10 +238,11 @@ Each item is validated against `ReviewFinding` (Pydantic); items that fail valid
 ```
 parse_diff(diff)                       -> DiffChunk[] (file, language, added/removed/context lines,
                                           hunks with new-file line numbers)
-for each of up to 20 chunks:
-    search_similar(hunk, repo, top_k=5, threshold=0.6, exclude_source_ref="PR#<n>")
-                                       -> Google text-embedding-004, task_type RETRIEVAL_QUERY,
-                                          ordered by pgvector cosine distance
+generate_embeddings(up to 20 hunks)  -> one batchEmbedContents call, Google gemini-embedding-001,
+                                          task_type RETRIEVAL_QUERY, outputDimensionality 768
+for each query embedding:
+    search_similar_by_embedding(..., repo, top_k=5, threshold=0.6, exclude_source_ref="PR#<n>")
+                                       -> ordered by pgvector cosine distance (HNSW index)
 merge results                          -> drop untagged rows with file_path "PR#<n>",
                                           drop results whose whitespace-normalized text equals a hunk
                                           of this diff, dedupe by text (keep highest similarity),
@@ -252,11 +253,13 @@ build_review_prompt(...)               -> user message, 8192-token budget (tikto
                                           each in untrusted-data delimiters
 run_review_agent(...)
 anchor_comments(chunks, comments)      -> keep comments on added/context lines; see "Comment anchoring"
-store_review_async(...)                -> background task after the response is built: for up to 20
-                                          chunks, store_code_embedding(..., source_ref="PR#<n>"),
-                                          task_type RETRIEVAL_DOCUMENT, 768 dims, skipped if the
-                                          sha256 of the chunk text already exists; a database error
-                                          on one chunk is rolled back and the rest are still stored
+store_review_async(...)                -> background task after the response is built: of up to 20
+                                          chunks, drop those whose sha256 is already stored, embed
+                                          the rest in one batchEmbedContents call (RETRIEVAL_DOCUMENT,
+                                          768 dims), insert each with source_ref="PR#<n>"; an
+                                          IntegrityError or DataError on one chunk is rolled back and
+                                          the rest are still stored, any other database error stops
+                                          the task
 ```
 
 Nothing is stored before the search, and rows tagged with the current PR's `source_ref` are filtered out in SQL (`source_ref IS DISTINCT FROM 'PR#<n>'`, so untagged rows are kept). That keeps a review, including a re-review after a new push, from retrieving its own diff. When `pr_number` is 0, chunks are stored with no `source_ref` and nothing is excluded. The duplicate check compares against every hunk in the diff, even though only the first 20 are used as queries.
@@ -288,7 +291,9 @@ The rendered diff is trimmed to fit the prompt:
 
 The counts are logged as `review.anchoring` and returned in the response as `anchored`, `snapped` and `unanchored`.
 
-Embeddings are cached in process by an LRU cache (`_BoundedCache`, max 1000 entries) keyed by `sha256(f"{task_type}:{text}")`.
+Embeddings are cached in process by an LRU cache (`_BoundedCache`, max 1000 entries) keyed by `sha256(f"{task_type}:{text}")`; only texts not in the cache are sent. All embedding calls share one `httpx.AsyncClient` (30 s timeout), closed on app shutdown. No database session is open while an embedding call is in flight: queries are embedded before the search session opens, and the store task closes its duplicate-check session before embedding.
+
+**Embedding model change:** the default `EMBEDDING_MODEL` is `gemini-embedding-001` (Google retired `text-embedding-004`), requested with `outputDimensionality` 768 to fit `Vector(768)`. Vectors from the two models aren't comparable, so `code_embeddings` rows written before the switch should be deleted or re-embedded; nothing does this automatically. `gemini-embedding-001` vectors below 3072 dimensions aren't normalized, which doesn't affect cosine distance.
 
 **Setup gap:** the `core.0001_enable_pgvector` migration enables the `vector` extension, but nothing creates the `code_embeddings` / `review_embeddings` tables (`models/embeddings.py` defines them; nothing calls `create_all`). On a fresh database the retrieval steps fail and get logged, and reviews run without retrieved context.
 
@@ -574,7 +579,7 @@ The dotted lines are **logical references, not foreign keys**. Nothing enforces 
 - `code_embeddings.repo_full_name` is the `repo_full_name` the Celery worker sends to `POST /review/analyze`. It holds a name, not an ID, so when `initial_sync` picks up a renamed repository, its older chunks stay under the old name. After each review, a background task writes up to 20 diff chunks here with `source_ref` `PR#<number>` (none when `pr_number` is 0). Older versions also wrote one untagged row for the first 1000 characters of the diff (`file_path` `PR#<number>`, `chunk_type` `pr`); retrieval skips those rows for the PR being reviewed.
 - `review_embeddings.review_id` and `user_id` are meant to hold Django `Review` and `CustomUser` IDs, but nothing in the application writes this table today. `VectorStore.store_review_embedding` is only called from tests, and the `/review/analyze` request carries `user_id` but no review ID. As a result, the "past reviews" section of the prompt is always empty.
 
-There are B-tree indexes on `repo_full_name`, `language`, `review_id`, `user_id` and `code_hash`. There is no vector (HNSW or IVFFlat) index, so similarity search scans the table sequentially. As noted in section 5, nothing in the repo creates these tables yet. For a table created by hand before `source_ref` existed, `backend/fastapi/migrations/sql/0001_code_embeddings_source_ref.sql` adds the column. It is idempotent and must be applied by hand.
+There are B-tree indexes on `repo_full_name`, `language`, `review_id`, `user_id` and `code_hash`. `code_embeddings.embedding` has an HNSW index with `vector_cosine_ops` (`ix_code_embeddings_embedding_hnsw`) for the cosine-distance `ORDER BY ... LIMIT` in similarity search. The planner still picks a sequential or `repo_full_name` scan when it estimates that to be cheaper, which it did on a local 20,000-row table. Each search session runs `SET LOCAL hnsw.iterative_scan = relaxed_order` (pgvector 0.8+), so when the index is used it keeps scanning until enough rows pass the repository and `source_ref` filters; results are re-sorted by similarity in Python because `relaxed_order` can return them slightly out of order. On an older pgvector the `SET` fails, is logged once as `vector_store.iterative_scan_unavailable`, and search runs without it. As noted in section 5, nothing in the repo creates these tables yet. For a table created by hand, apply `backend/fastapi/migrations/sql/0001_code_embeddings_source_ref.sql` (adds `source_ref`) and `0002_code_embeddings_hnsw_index.sql` (adds the HNSW index) in order. Both are idempotent and must be applied by hand.
 
 ### Enum values
 
@@ -761,7 +766,7 @@ Each decision lists what the code does, why, and the trade-offs. Some also note 
 
 **Why:** It avoids a second datastore to run, back up and secure. The interface is contained in `services/vector_store.py`.
 
-**Tradeoffs:** shared connection pool; no vector index is defined yet, so search cost grows linearly with stored chunks.
+**Tradeoffs:** shared connection pool; the HNSW index is approximate, and the repository and `source_ref` filters are applied to the rows it returns. Iterative scans (pgvector 0.8+) make up for filtered-out rows up to pgvector's `hnsw.max_scan_tuples` limit; without them a filtered search can return fewer than `top_k` rows when most near neighbours belong to other repositories.
 
 ### Redis-backed LLM rate limiter
 

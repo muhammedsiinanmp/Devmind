@@ -1,14 +1,16 @@
 """
 Integration-style tests for the review RAG flow.
 
-The pgvector store is replaced by an in-memory fake with a deterministic
-bag-of-words embedder, so these run without Postgres or an embedding API.
-Everything else (diff parsing, the review router, the background store task)
-is the real code.
+The pgvector tables are replaced by in-memory rows, and the Google embedding
+API by an httpx.MockTransport that answers batchEmbedContents with a
+deterministic hashed bag-of-words vector and counts requests. The real
+VectorStore embedding code, diff parsing, review router and background store
+task all run, so these need neither Postgres nor an embedding API.
 """
 
 import asyncio
 import hashlib
+import json
 import logging
 import math
 import re
@@ -16,60 +18,108 @@ from collections import Counter
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, ProgrammingError
 
 from models.review import ReviewRequest
 from routers import review as review_router
 from routers.review import analyze_review
-from services.vector_store import SimilarChunk, VectorStoreError
+from services.vector_store import SimilarChunk, VectorStore
 
 
 _DIFF_SYNTAX = ("diff --git", "---", "+++", "@@", "Added:", "Removed:", "Context:")
 
 
-def _fake_embed(text: str) -> Counter:
-    """Bag of code identifiers. Diff headers and section labels are ignored,
-    so a raw diff and its parsed hunk embed close together, as they would with
-    a real embedding model."""
+def _fake_embed(text: str) -> list[float]:
+    """Bag of code identifiers hashed into 768 dims. Diff headers and section
+    labels are ignored, so a raw diff and its parsed hunk embed close
+    together, as they would with a real embedding model."""
     code_lines = [
         line for line in text.splitlines() if not line.startswith(_DIFF_SYNTAX)
     ]
-    return Counter(re.findall(r"[a-z_]+", "\n".join(code_lines).lower()))
+    words = Counter(re.findall(r"[a-z_]+", "\n".join(code_lines).lower()))
+    vector = [0.0] * 768
+    for word, count in words.items():
+        vector[int(hashlib.md5(word.encode()).hexdigest(), 16) % 768] += count
+    return vector
 
 
-def _cosine(a: Counter, b: Counter) -> float:
-    dot = sum(a[k] * b[k] for k in a)
-    norm = math.sqrt(sum(v * v for v in a.values())) * math.sqrt(
-        sum(v * v for v in b.values())
-    )
+def _cosine(a: list[float], b: list[float]) -> float:
+    dot = sum(x * y for x, y in zip(a, b))
+    norm = math.sqrt(sum(x * x for x in a)) * math.sqrt(sum(y * y for y in b))
     return dot / norm if norm else 0.0
 
 
-class FakeVectorStore:
-    """In-memory stand-in for services.vector_store.VectorStore."""
+class FakeEmbeddingAPI:
+    """Counting stand-in for Google's batchEmbedContents endpoint."""
 
     def __init__(self):
+        self.requests: list[dict] = []
+        # set by the fake_store fixture; checked on every embedding call
+        self.open_sessions = lambda: 0
+        self.sessions_open_during_calls: list[int] = []
+
+    def handler(self, request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith(":batchEmbedContents")
+        body = json.loads(request.content)
+        self.requests.append(body)
+        self.sessions_open_during_calls.append(self.open_sessions())
+        return httpx.Response(
+            200,
+            json={
+                "embeddings": [
+                    {"values": _fake_embed(r["content"]["parts"][0]["text"])}
+                    for r in body["requests"]
+                ]
+            },
+        )
+
+    def calls(self, task_type: str | None = None) -> int:
+        return sum(
+            1
+            for body in self.requests
+            if task_type is None or body["requests"][0]["taskType"] == task_type
+        )
+
+
+class FakeVectorStore(VectorStore):
+    """The real VectorStore with its database methods kept in memory."""
+
+    def __init__(self, api: FakeEmbeddingAPI):
+        super().__init__()
+        self._client = httpx.AsyncClient(transport=httpx.MockTransport(api.handler))
         self.rows: list[dict] = []
         # file paths whose insert fails at commit (e.g. a concurrent insert of
         # the same sha256 racing past the existence check)
         self.integrity_error_paths: set[str] = set()
+        # when set, every insert fails with this error (e.g. a missing column)
+        self.insert_error: Exception | None = None
+        self.insert_attempts = 0
 
-    async def store_code_embedding(
+    async def existing_hashes(self, session, hashes):
+        stored = {r["sha256"] for r in self.rows}
+        return {h for h in hashes if h in stored}
+
+    async def insert_code_embedding(
         self,
         session,
         repo_full_name,
         file_path,
         chunk_text,
+        embedding,
+        sha256,
         language="python",
         chunk_type="function",
         source_ref=None,
     ):
+        self.insert_attempts += 1
+        if self.insert_error is not None:
+            raise self.insert_error
         if file_path in self.integrity_error_paths:
             raise IntegrityError("INSERT", {}, Exception("duplicate key"))
-        sha = hashlib.sha256(chunk_text.encode()).hexdigest()
-        if any(r["sha256"] == sha for r in self.rows):
-            raise VectorStoreError(f"Embedding already exists: {sha[:8]}")
+        if any(r["sha256"] == sha256 for r in self.rows):
+            raise IntegrityError("INSERT", {}, Exception("duplicate key"))
         self.rows.append(
             {
                 "repo_full_name": repo_full_name,
@@ -78,21 +128,20 @@ class FakeVectorStore:
                 "language": language,
                 "chunk_type": chunk_type,
                 "source_ref": source_ref,
-                "sha256": sha,
-                "embedding": _fake_embed(chunk_text),
+                "sha256": sha256,
+                "embedding": embedding,
             }
         )
 
-    async def search_similar(
+    async def search_similar_by_embedding(
         self,
         session,
-        query_text,
+        query_embedding,
         repo_full_name,
         top_k=5,
         threshold=0.6,
         exclude_source_ref=None,
     ):
-        query = _fake_embed(query_text)
         scored = []
         for row in self.rows:
             if row["repo_full_name"] != repo_full_name:
@@ -101,7 +150,7 @@ class FakeVectorStore:
                 exclude_source_ref
             ):
                 continue
-            scored.append((_cosine(query, row["embedding"]), row))
+            scored.append((_cosine(query_embedding, row["embedding"]), row))
         scored.sort(key=lambda pair: pair[0], reverse=True)
         return [
             SimilarChunk(
@@ -119,19 +168,30 @@ class FakeVectorStore:
 class FakeSession:
     def __init__(self):
         self.rollbacks = 0
+        # SQL text of statements executed directly on the session (the fake
+        # store's own methods don't use it)
+        self.statements: list[str] = []
+
+    async def execute(self, statement):
+        self.statements.append(str(statement))
 
     async def rollback(self):
         self.rollbacks += 1
 
 
 SESSIONS: list[FakeSession] = []
+OPEN_SESSIONS: list[FakeSession] = []
 
 
 @asynccontextmanager
 async def _fake_session():
     session = FakeSession()
     SESSIONS.append(session)
-    yield session
+    OPEN_SESSIONS.append(session)
+    try:
+        yield session
+    finally:
+        OPEN_SESSIONS.remove(session)
 
 
 REPO = "owner/repo"
@@ -183,9 +243,17 @@ async def _review(diff: str, pr_number: int) -> list[str]:
 
 
 @pytest.fixture
-def fake_store():
-    store = FakeVectorStore()
+def embedding_api():
+    api = FakeEmbeddingAPI()
+    api.open_sessions = lambda: len(OPEN_SESSIONS)
+    return api
+
+
+@pytest.fixture
+def fake_store(embedding_api):
+    store = FakeVectorStore(embedding_api)
     SESSIONS.clear()
+    OPEN_SESSIONS.clear()
     with (
         patch("services.vector_store.vector_store", store),
         patch("core.database.AsyncSessionLocal", _fake_session),
@@ -324,3 +392,116 @@ class TestNearDuplicateFilterCoversWholeDiff:
         patterns = await _review(_diff_with_files(21), pr_number=2)
 
         assert not any("value_20" in p for p in patterns)
+
+
+def _clear_embedding_cache(store: VectorStore) -> None:
+    """Empty the in-process embedding cache, as after a restart."""
+    store._cache = type(store._cache)(maxsize=1000)
+
+
+class TestBatchedEmbeddingCalls:
+    @pytest.mark.asyncio
+    async def test_20_hunk_review_makes_at_most_2_embedding_calls(
+        self, fake_store, embedding_api
+    ):
+        await _review(_diff_with_files(20), pr_number=3)
+
+        assert len(embedding_api.requests) <= 2
+        assert embedding_api.calls("RETRIEVAL_QUERY") == 1
+        assert embedding_api.calls("RETRIEVAL_DOCUMENT") == 1
+        assert all(len(body["requests"]) == 20 for body in embedding_api.requests)
+        assert len(fake_store.rows) == 20
+
+    @pytest.mark.asyncio
+    async def test_re_review_of_unchanged_diff_embeds_and_stores_nothing_new(
+        self, fake_store, embedding_api
+    ):
+        await _review(_diff_with_files(20), pr_number=3)
+        assert len(fake_store.rows) == 20
+        rows_after_first = list(fake_store.rows)
+        document_calls_after_first = embedding_api.calls("RETRIEVAL_DOCUMENT")
+        assert document_calls_after_first == 1
+        # A new process (or an evicted cache) must still skip stored chunks:
+        # only the sha256 check may prevent the document-embedding call.
+        _clear_embedding_cache(fake_store)
+
+        await _review(_diff_with_files(20), pr_number=3)
+
+        assert fake_store.rows == rows_after_first
+        assert embedding_api.calls("RETRIEVAL_DOCUMENT") == document_calls_after_first
+
+    @pytest.mark.asyncio
+    async def test_only_chunks_not_yet_stored_are_embedded(
+        self, fake_store, embedding_api
+    ):
+        await _review(_diff_with_files(2), pr_number=3)
+        assert len(fake_store.rows) == 2
+        embedding_api.requests.clear()
+        _clear_embedding_cache(fake_store)
+
+        await _review(_diff_with_files(3), pr_number=3)
+
+        documents = [
+            r["content"]["parts"][0]["text"]
+            for body in embedding_api.requests
+            if body["requests"][0]["taskType"] == "RETRIEVAL_DOCUMENT"
+            for r in body["requests"]
+        ]
+        assert len(documents) == 1
+        assert "value_2" in documents[0]
+
+    @pytest.mark.asyncio
+    async def test_no_db_session_is_open_during_embedding_calls(
+        self, fake_store, embedding_api
+    ):
+        await _review(PR1_DIFF, pr_number=1)
+        await _review(PR2_DIFF, pr_number=2)
+
+        assert embedding_api.calls("RETRIEVAL_QUERY") == 2
+        assert embedding_api.calls("RETRIEVAL_DOCUMENT") == 2
+        assert embedding_api.sessions_open_during_calls == [0, 0, 0, 0]
+
+
+class TestIterativeScan:
+    @pytest.mark.asyncio
+    async def test_search_session_enables_hnsw_iterative_scan_once(self, fake_store):
+        await _review(_diff_with_files(3), pr_number=3)
+
+        executed = [s.statements for s in SESSIONS]
+        assert executed.count(["SET LOCAL hnsw.iterative_scan = relaxed_order"]) == 1
+
+
+class TestStoreStopsOnSystemicDbErrors:
+    @pytest.mark.asyncio
+    async def test_error_that_hits_every_insert_stops_after_the_first(
+        self, fake_store, embedding_api
+    ):
+        # e.g. source_ref missing because 0001 wasn't applied. The sha256
+        # lookup selects only sha256, so it succeeds; the batch is embedded
+        # once and the first insert fails.
+        fake_store.insert_error = ProgrammingError(
+            "INSERT", {}, Exception("column source_ref does not exist")
+        )
+
+        await _review(_diff_with_files(5), pr_number=7)
+
+        assert embedding_api.calls("RETRIEVAL_DOCUMENT") == 1
+        assert fake_store.insert_attempts == 1
+        assert fake_store.rows == []
+
+    @pytest.mark.asyncio
+    async def test_failed_duplicate_check_makes_no_document_embedding_call(
+        self, fake_store, embedding_api
+    ):
+        # e.g. the table doesn't exist yet, or the database is unreachable.
+        async def missing_table(session, hashes):
+            raise ProgrammingError(
+                "SELECT", {}, Exception('relation "code_embeddings" does not exist')
+            )
+
+        fake_store.existing_hashes = missing_table
+
+        await _review(_diff_with_files(5), pr_number=7)
+
+        assert embedding_api.calls("RETRIEVAL_DOCUMENT") == 0
+        assert fake_store.insert_attempts == 0

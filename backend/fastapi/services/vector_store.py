@@ -12,6 +12,8 @@ from typing import Optional
 
 import httpx
 from sqlalchemy import select
+from sqlalchemy import text as sql_text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import get_settings
@@ -64,10 +66,55 @@ class SimilarChunk:
 class VectorStore:
     """Vector store using pgvector for embeddings."""
 
+    # Texts per batchEmbedContents request. Reviews send at most 20.
+    MAX_BATCH_SIZE = 100
+
     def __init__(self):
         self.embedding_dims = 768
         self.embedding_model = settings.embedding_model
         self._cache = _BoundedCache(maxsize=1000)
+        self._client: Optional[httpx.AsyncClient] = None
+        self._closed = False
+        self._iterative_scan_warned = False
+
+    def _get_client(self) -> httpx.AsyncClient:
+        """One HTTP client shared by every embedding call, so its connection
+        pool is reused instead of opening a new client per call."""
+        if self._closed:
+            # After aclose() (app shutdown) a new client would never be closed.
+            raise VectorStoreError("Vector store is closed")
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=30.0)
+        return self._client
+
+    async def aclose(self) -> None:
+        """Close the shared HTTP client. Later embedding calls raise."""
+        self._closed = True
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
+        self._client = None
+
+    async def enable_iterative_scan(self, session: AsyncSession) -> None:
+        """Let the HNSW index keep scanning until enough rows pass the
+        repository and source_ref filters (pgvector 0.8+). Without it, a
+        filtered search can return fewer than top_k rows.
+
+        Lasts until the session's transaction ends. On a pgvector without
+        the setting, the error is logged once and search runs without it.
+        """
+        try:
+            await session.execute(
+                sql_text("SET LOCAL hnsw.iterative_scan = relaxed_order")
+            )
+        except DBAPIError as exc:
+            # The failed SET aborts the transaction; start a clean one.
+            await session.rollback()
+            if not self._iterative_scan_warned:
+                self._iterative_scan_warned = True
+                logger.warning(
+                    "vector_store.iterative_scan_unavailable error=%s",
+                    type(exc).__name__,
+                )
 
     async def generate_embedding(
         self,
@@ -76,7 +123,7 @@ class VectorStore:
         task_type: str = "RETRIEVAL_DOCUMENT",
     ) -> list[float]:
         """
-        Generate embedding using Google AI.
+        Generate one embedding using Google AI.
 
         Args:
             text: Text to embed
@@ -87,47 +134,93 @@ class VectorStore:
         Returns:
             768-dimensional embedding vector
         """
+        embeddings = await self.generate_embeddings(
+            [text], use_cache=use_cache, task_type=task_type
+        )
+        return embeddings[0]
+
+    async def generate_embeddings(
+        self,
+        texts: list[str],
+        use_cache: bool = True,
+        task_type: str = "RETRIEVAL_DOCUMENT",
+    ) -> list[list[float]]:
+        """
+        Embed several texts with Google AI's batchEmbedContents.
+
+        Texts not in the cache are sent in one request (or one per
+        MAX_BATCH_SIZE texts). Returns one 768-dimensional vector per input
+        text, in input order.
+        """
         # Include task_type in the cache key — the same text produces different
         # embeddings depending on task type, so they must be cached separately.
-        cache_key = hashlib.sha256(f"{task_type}:{text}".encode()).hexdigest()
+        keys = [hashlib.sha256(f"{task_type}:{t}".encode()).hexdigest() for t in texts]
+        results: dict[str, list[float]] = {}
+        missing: dict[str, str] = {}  # cache key -> text, deduplicated
+        for key, text in zip(keys, texts):
+            if use_cache and key in self._cache:
+                logger.info("vector_store.cache_hit hash=%s", key[:8])
+                results[key] = self._cache[key]
+            else:
+                missing.setdefault(key, text)
 
-        if use_cache and cache_key in self._cache:
-            logger.info("vector_store.cache_hit hash=%s", cache_key[:8])
-            return self._cache[cache_key]
+        if missing:
+            if not settings.google_ai_api_key:
+                raise VectorStoreError("Google AI API key not configured")
 
-        if not settings.google_ai_api_key:
-            raise VectorStoreError("Google AI API key not configured")
+            pending = list(missing.items())
+            for start in range(0, len(pending), self.MAX_BATCH_SIZE):
+                batch = pending[start : start + self.MAX_BATCH_SIZE]
+                vectors = await self._batch_embed([t for _, t in batch], task_type)
+                for (key, _), vector in zip(batch, vectors):
+                    results[key] = vector
+                    if use_cache:
+                        self._cache[key] = vector
 
-        async with httpx.AsyncClient(timeout=30.0) as client:
-            response = await client.post(
-                f"https://generativelanguage.googleapis.com/v1beta/models/{self.embedding_model}:embedContent",
-                headers={
-                    "x-goog-api-key": settings.google_ai_api_key,
-                    "Content-Type": "application/json",
-                },
-                json={
-                    "content": {"parts": [{"text": text}]},
-                    "taskType": task_type,
-                },
+        return [results[key] for key in keys]
+
+    async def _batch_embed(self, texts: list[str], task_type: str) -> list[list[float]]:
+        """One POST to models/{model}:batchEmbedContents."""
+        model = f"models/{self.embedding_model}"
+        response = await self._get_client().post(
+            f"https://generativelanguage.googleapis.com/v1beta/{model}:batchEmbedContents",
+            headers={
+                "x-goog-api-key": settings.google_ai_api_key,
+                "Content-Type": "application/json",
+            },
+            json={
+                "requests": [
+                    {
+                        "model": model,
+                        "content": {"parts": [{"text": text}]},
+                        "taskType": task_type,
+                        # gemini-embedding-001 returns 3072 values by default;
+                        # ask for 768 to fit the Vector(768) column.
+                        "outputDimensionality": self.embedding_dims,
+                    }
+                    for text in texts
+                ]
+            },
+        )
+
+        if response.status_code != 200:
+            raise VectorStoreError(
+                f"Failed to generate embedding: {response.status_code} {response.text[:200]}"
             )
 
-            if response.status_code != 200:
-                raise VectorStoreError(
-                    f"Failed to generate embedding: {response.status_code} {response.text[:200]}"
-                )
+        embeddings = response.json().get("embeddings", [])
+        if len(embeddings) != len(texts):
+            raise VectorStoreError(
+                f"Expected {len(texts)} embeddings, got {len(embeddings)}"
+            )
 
-            data = response.json()
-            embedding_values = data.get("embedding", {}).get("values", [])
-
-            if len(embedding_values) != self.embedding_dims:
-                raise VectorStoreError(
-                    f"Invalid embedding dimension: {len(embedding_values)}"
-                )
-
-            if use_cache:
-                self._cache[cache_key] = embedding_values
-
-            return embedding_values
+        vectors = []
+        for item in embeddings:
+            values = item.get("values", [])
+            if len(values) != self.embedding_dims:
+                raise VectorStoreError(f"Invalid embedding dimension: {len(values)}")
+            vectors.append(values)
+        return vectors
 
     async def store_code_embedding(
         self,
@@ -154,15 +247,50 @@ class VectorStore:
         Returns:
             Created CodeEmbedding
         """
-        embedding = await self.generate_embedding(chunk_text)
         text_hash = hashlib.sha256(chunk_text.encode()).hexdigest()
 
-        existing = await session.execute(
-            select(CodeEmbedding).where(CodeEmbedding.sha256 == text_hash)
-        )
-        if existing.scalar_one_or_none():
+        # Check for a duplicate before paying for an embedding call.
+        if await self.existing_hashes(session, [text_hash]):
             raise VectorStoreError(f"Embedding already exists: {text_hash[:8]}")
 
+        embedding = await self.generate_embedding(chunk_text)
+
+        return await self.insert_code_embedding(
+            session=session,
+            repo_full_name=repo_full_name,
+            file_path=file_path,
+            chunk_text=chunk_text,
+            embedding=embedding,
+            sha256=text_hash,
+            language=language,
+            chunk_type=chunk_type,
+            source_ref=source_ref,
+        )
+
+    async def existing_hashes(
+        self, session: AsyncSession, hashes: list[str]
+    ) -> set[str]:
+        """Return the subset of the given sha256 values already stored."""
+        if not hashes:
+            return set()
+        result = await session.execute(
+            select(CodeEmbedding.sha256).where(CodeEmbedding.sha256.in_(hashes))
+        )
+        return set(result.scalars().all())
+
+    async def insert_code_embedding(
+        self,
+        session: AsyncSession,
+        repo_full_name: str,
+        file_path: str,
+        chunk_text: str,
+        embedding: list[float],
+        sha256: str,
+        language: str = "python",
+        chunk_type: str = "function",
+        source_ref: Optional[str] = None,
+    ) -> CodeEmbedding:
+        """Insert and commit one already-embedded code chunk."""
         code_embedding = CodeEmbedding(
             repo_full_name=repo_full_name,
             file_path=file_path,
@@ -170,7 +298,7 @@ class VectorStore:
             language=language,
             chunk_type=chunk_type,
             embedding=embedding,
-            sha256=text_hash,
+            sha256=sha256,
             source_ref=source_ref,
         )
 
@@ -213,7 +341,31 @@ class VectorStore:
         query_embedding = await self.generate_embedding(
             query_text, task_type="RETRIEVAL_QUERY"
         )
+        await self.enable_iterative_scan(session)
+        return await self.search_similar_by_embedding(
+            session=session,
+            query_embedding=query_embedding,
+            repo_full_name=repo_full_name,
+            top_k=top_k,
+            threshold=threshold,
+            exclude_source_ref=exclude_source_ref,
+        )
 
+    async def search_similar_by_embedding(
+        self,
+        session: AsyncSession,
+        query_embedding: list[float],
+        repo_full_name: str,
+        top_k: int = 5,
+        threshold: float = 0.6,
+        exclude_source_ref: Optional[str] = None,
+    ) -> list[SimilarChunk]:
+        """Search with a precomputed RETRIEVAL_QUERY embedding.
+
+        Ordered by cosine distance, which the HNSW index on
+        code_embeddings.embedding (vector_cosine_ops) serves. Call
+        enable_iterative_scan on the session first.
+        """
         distance_col = CodeEmbedding.embedding.cosine_distance(query_embedding).label(
             "distance"
         )
@@ -246,6 +398,9 @@ class VectorStore:
                         chunk_type=emb.chunk_type,
                     )
                 )
+
+        # relaxed_order iterative scans can return rows slightly out of order.
+        results.sort(key=lambda chunk: -chunk.similarity)
 
         # No query text here: it is code from the diff being reviewed.
         logger.info(

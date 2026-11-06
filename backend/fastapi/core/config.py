@@ -35,7 +35,7 @@ class Settings(BaseSettings):
     review_temperature: float = Field(default=0.1, ge=0.0, le=2.0)
 
     # Embeddings
-    embedding_model: str = "text-embedding-004"
+    embedding_model: str = "gemini-embedding-001"
 
     # Security
     fastapi_internal_secret: str = ""
