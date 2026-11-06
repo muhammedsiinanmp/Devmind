@@ -202,6 +202,7 @@ Each host port can be changed with an environment variable read by compose inter
 | `psql` / `redis-flush` | Postgres shell / `FLUSHDB` |
 | `migrate` / `makemigrations` / `createsuperuser` | Django management commands in the container |
 | `test` (`test-all`) / `test-django` / `test-fastapi` | Backend test suites in the containers |
+| `eval` / `eval-record` | Review-quality evals on the host: replay from the committed cassettes (no keys); live run that re-records the cassettes and writes results (keys in `.env`; on free tiers `EVAL_ARGS="--provider groq --pause 75"`) |
 | `format` | `black .` in the Django container |
 | `frontend-dev` | `cd frontend && pnpm dev` (host alternative to the `frontend` service) |
 | `grafana-open` / `prometheus-open` / `prometheus-targets` | Observability helpers |
@@ -408,8 +409,24 @@ These were measured locally on this branch. Coverage method: `pytest --cov`, the
 - **Django (pytest):** Postgres (`pgvector/pgvector:pg16`) and Redis service containers; `ruff check`, `black --check`, `makemigrations --check --dry-run`, `pytest --cov`
 - **FastAPI (pytest):** `ruff check`, `black --check`, `pytest`
 - **Frontend (typecheck, build, lint):** pnpm 9 and Node 20; `tsc`, `pnpm build`, `pnpm lint`, `pnpm test`
+- **Compose (profiles):** `docker compose config` with `.env.example`; Flower, Prometheus and Grafana appear only under the `ops` profile
+- **Evals (replay):** pull requests only. The job runs when the PR changes `backend/fastapi/{agents,services,models,routers,core,evals}/**` or `backend/fastapi/scripts/eval_compare.py`; otherwise it finishes after the path check. It runs `make eval` against the committed cassettes in `backend/fastapi/evals/cassettes/` and compares the result with `evals/results/after-fixes.json` (`uv run python -m scripts.eval_compare`). It then posts one PR comment marked `<!-- devmind-eval-report -->` and updates it on later pushes. The job has `pull-requests: write` and uses only `GITHUB_TOKEN`. On fork PRs it writes the report to the job summary and doesn't comment. Eval results never fail it.
 
 CI doesn't enforce a coverage threshold.
+
+### Eval report on a PR
+
+The eval comment shows one of three results:
+
+- **No metric changed:** the replayed scores equal `after-fixes.json`.
+- **N metric(s) changed:** the change affects scoring, labels or post-processing but not prompts, and the table shows each change.
+- **Prompt changed: replay can't measure this PR:** at least one prompt (or case diff) has no recording, so nothing is scored. Re-record on a machine with provider keys in `.env`:
+
+```bash
+make eval-record EVAL_ARGS="--provider groq --pause 75"   # writes evals/results/<sha>.json/.md
+```
+
+Commit the re-recorded `evals/cassettes/*.json` and the new results file. If the new run becomes the reference, copy it over `evals/results/after-fixes.json` (and `.md`) and update the README "Review quality" table: `tests/test_eval_compare.py` checks that table against the results files. `make eval` replays the committed cassettes and needs no keys.
 
 ---
 
