@@ -125,12 +125,19 @@ class TestProviderTemperatureInRequests:
         ]
 
     @pytest.mark.asyncio
-    async def test_byok_configs_use_the_callers_temperature(self):
-        from services.llm_client import LLMClient
+    async def test_byok_gemini_omits_temperature_and_others_use_the_callers(self):
+        from services.llm_client import LLMClient, _request_body
 
+        providers = ["google_vertex", "openai", "groq", "mistral"]
         response = MagicMock(status_code=200)
         response.json.return_value = [
-            {"provider": "google_vertex", "model_name": "m", "api_key": "k"}
+            {
+                "provider": name,
+                "model_name": "m",
+                "api_key": "k",
+                "base_url": "" if name != "custom" else "https://x.invalid",
+            }
+            for name in providers + ["custom"]
         ]
         settings = MagicMock(
             django_base_url="http://django", fastapi_internal_secret="s"
@@ -142,9 +149,22 @@ class TestProviderTemperatureInRequests:
             client.return_value.__aenter__.return_value.get = AsyncMock(
                 return_value=response
             )
-            (config,) = await LLMClient().get_user_llm_configs(1)
+            configs = await LLMClient().get_user_llm_configs(1)
 
-        assert config.temperature is None
+        messages = [{"role": "user", "content": "x"}]
+        sent = {
+            c.provider.value: _request_body(c, messages, {"temperature": 0.1}).get(
+                "temperature"
+            )
+            for c in configs
+        }
+        assert sent == {
+            "google_vertex": None,
+            "openai": 0.1,
+            "groq": 0.1,
+            "mistral": 0.1,
+            "custom": 0.1,
+        }
 
 
 # ── per-review delimiter tag ─────────────────────────────────────────────────
