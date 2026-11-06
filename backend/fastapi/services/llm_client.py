@@ -106,7 +106,8 @@ def _init_model_chain() -> list[LLMConfig]:
         chain.append(
             LLMConfig(
                 provider=LLMProvider.GOOGLE,
-                model="gemini-2.0-flash",
+                # Baseline only: the original gemini-2.0-flash is retired.
+                model="gemini-3.5-flash",
                 api_key=settings.google_ai_api_key,
                 base_url="https://generativelanguage.googleapis.com/v1beta/openai",
                 max_tokens=8192,
@@ -118,7 +119,8 @@ def _init_model_chain() -> list[LLMConfig]:
         chain.append(
             LLMConfig(
                 provider=LLMProvider.GROQ,
-                model="llama-3.3-70b-versatile",
+                # Baseline only: the original llama-3.3-70b-versatile is retired.
+                model="openai/gpt-oss-120b",
                 api_key=settings.groq_api_key,
                 base_url="https://api.groq.com/openai/v1",
                 max_tokens=4096,
@@ -126,7 +128,8 @@ def _init_model_chain() -> list[LLMConfig]:
             )
         )
 
-    if settings.github_token:
+    # Baseline only: GitHub Models was retired on 2026-07-30.
+    if False:
         chain.append(
             LLMConfig(
                 provider=LLMProvider.GITHUB,
