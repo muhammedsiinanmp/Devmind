@@ -7,6 +7,7 @@ import json
 import httpx
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+from sqlalchemy.dialects import postgresql
 
 from services.vector_store import (
     VectorStore,
@@ -85,6 +86,26 @@ class TestVectorStore:
         assert request["content"] == {"parts": [{"text": "test text"}]}
 
     @pytest.mark.asyncio
+    async def test_request_sends_task_type_and_dimensions_at_the_top_level(self):
+        """Top-level taskType and outputDimensionality, not embedContentConfig:
+        on 2026-11-06 the live API ignored embedContentConfig's
+        outputDimensionality and returned 3072 values."""
+        store, requests = _store_with_fake_api()
+
+        await store.generate_embeddings(["a"], task_type="RETRIEVAL_QUERY")
+
+        assert _body(requests[0]) == {
+            "requests": [
+                {
+                    "model": "models/gemini-embedding-001",
+                    "content": {"parts": [{"text": "a"}]},
+                    "taskType": "RETRIEVAL_QUERY",
+                    "outputDimensionality": 768,
+                }
+            ]
+        }
+
+    @pytest.mark.asyncio
     async def test_generate_embedding_retrieval_query_task_type(self):
         """search_similar should send taskType: RETRIEVAL_QUERY."""
         store, requests = _store_with_fake_api()
@@ -94,7 +115,8 @@ class TestVectorStore:
         )
 
         assert len(embedding) == 768
-        assert _body(requests[0])["requests"][0]["taskType"] == "RETRIEVAL_QUERY"
+        [request] = _body(requests[0])["requests"]
+        assert request["taskType"] == "RETRIEVAL_QUERY"
 
     @pytest.mark.asyncio
     async def test_request_asks_for_768_dimensions_from_the_configured_model(self):
@@ -300,3 +322,89 @@ class TestModels:
         )
         assert emb.review_id == 1
         assert emb.user_id == 1
+
+
+class _StatementSession:
+    """Records the statements a VectorStore method executes."""
+
+    def __init__(self):
+        self.statements = []
+        self.added = []
+
+    async def execute(self, statement):
+        self.statements.append(statement)
+        result = MagicMock()
+        result.all.return_value = []
+        result.scalars.return_value.all.return_value = []
+        return result
+
+    def add(self, obj):
+        self.added.append(obj)
+
+    async def commit(self):
+        pass
+
+    async def refresh(self, obj):
+        pass
+
+
+def _where(statement) -> tuple[str, list]:
+    """SQL text after WHERE, and the bound values, as Postgres would get them."""
+    compiled = statement.compile(dialect=postgresql.dialect())
+    return str(compiled).split("WHERE", 1)[1], list(compiled.params.values())
+
+
+class TestEmbeddingModelTag:
+    """Rows are tagged with the model that embedded them; vectors from another
+    model are never compared with the configured model's. The queries also
+    run against real pgvector in test_vector_store_pgvector.py (opt-in)."""
+
+    @pytest.mark.asyncio
+    async def test_search_only_reads_rows_of_the_configured_model(self):
+        store = VectorStore()
+        session = _StatementSession()
+
+        await store.search_similar_by_embedding(session, [0.1] * 768, "owner/repo")
+
+        [statement] = session.statements
+        where, values = _where(statement)
+        assert "code_embeddings.embedding_model = " in where
+        assert "gemini-embedding-001" in values
+        assert "owner/repo" in values
+
+    @pytest.mark.asyncio
+    async def test_duplicate_check_is_per_repository_and_model(self):
+        store = VectorStore()
+        session = _StatementSession()
+
+        await store.existing_hashes(session, "owner/repo", ["abc"])
+
+        [statement] = session.statements
+        where, values = _where(statement)
+        assert "code_embeddings.repo_full_name = " in where
+        assert "code_embeddings.embedding_model = " in where
+        assert "owner/repo" in values
+        assert "gemini-embedding-001" in values
+
+    @pytest.mark.asyncio
+    async def test_inserted_row_records_the_configured_model(self):
+        with patch("services.vector_store.settings") as mock_settings:
+            mock_settings.embedding_model = "some-other-model"
+            store = VectorStore()
+        session = _StatementSession()
+
+        row = await store.insert_code_embedding(
+            session, "owner/repo", "a.py", "x = 1", [0.1] * 768, "abc"
+        )
+
+        assert session.added == [row]
+        assert row.embedding_model == "some-other-model"
+
+    def test_sha256_is_unique_per_repository_and_model_not_globally(self):
+        table = CodeEmbedding.__table__
+        assert not table.c.sha256.unique
+        unique_column_sets = [
+            [c.name for c in index.columns] for index in table.indexes if index.unique
+        ]
+        assert unique_column_sets == [["repo_full_name", "sha256", "embedding_model"]]
+        assert not table.c.embedding_model.nullable

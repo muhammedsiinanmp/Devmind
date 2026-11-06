@@ -30,7 +30,12 @@ class CodeEmbedding(Base):
         String(20), nullable=False, default="function"
     )
     embedding: Mapped[list[float]] = mapped_column(Vector(768), nullable=False)
-    sha256: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    # Model that produced `embedding`. Vectors from different models aren't
+    # comparable, so searches and the duplicate check only use rows with the
+    # configured model (migrations/sql/0003_code_embeddings_model_tag.sql).
+    embedding_model: Mapped[str] = mapped_column(String(100), nullable=False)
+    # sha256 of chunk_text. Unique per repository and model, not globally.
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
     # Where the chunk came from, e.g. "PR#12". Retrieval for a PR excludes rows
     # with that PR's source_ref so a review never retrieves its own diff.
     source_ref: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
@@ -39,6 +44,14 @@ class CodeEmbedding(Base):
     )
 
     __table_args__ = (
+        # Also created by migrations/sql/0003_code_embeddings_model_tag.sql.
+        Index(
+            "ux_code_embeddings_repo_sha256_model",
+            "repo_full_name",
+            "sha256",
+            "embedding_model",
+            unique=True,
+        ),
         Index(
             "ix_code_embeddings_repo",
             "repo_full_name",

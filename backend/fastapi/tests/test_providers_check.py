@@ -24,12 +24,26 @@ def fake_keys(monkeypatch):
     monkeypatch.setattr(llm_client.settings, "groq_api_key", GROQ_KEY)
 
 
-def _transport(chat_status: dict[str, int], seen: list[httpx.Request]):
-    """Google lists its model and answers; Groq answers per chat_status."""
+def _embed_response(request: httpx.Request, dims: int) -> httpx.Response:
+    import json
+
+    texts = json.loads(request.content)["requests"]
+    return httpx.Response(
+        200, json={"embeddings": [{"values": [0.1] * dims} for _ in texts]}
+    )
+
+
+def _transport(
+    chat_status: dict[str, int], seen: list[httpx.Request], embed_dims: int = 768
+):
+    """Google lists its model and answers; Groq answers per chat_status.
+    batchEmbedContents returns vectors of embed_dims values."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request)
         host = request.url.host
+        if request.url.path.endswith(":batchEmbedContents"):
+            return _embed_response(request, embed_dims)
         if request.url.path.endswith("/models"):
             return httpx.Response(
                 200,
@@ -97,8 +111,15 @@ def test_never_prints_keys(capsys, caplog):
     captured = capsys.readouterr()
     output = captured.out + captured.err + caplog.text
 
-    # The keys really were sent, so their absence from output is meaningful
-    sent = " ".join(r.headers["authorization"] for r in seen)
+    # The keys really were sent, so their absence from output is meaningful.
+    # The embedding call sends the Google key in x-goog-api-key.
+    sent = " ".join(r.headers.get("authorization", "") for r in seen)
+    embed_keys = [
+        r.headers["x-goog-api-key"]
+        for r in seen
+        if r.url.path.endswith(":batchEmbedContents")
+    ]
+    assert embed_keys == [GOOGLE_KEY]
     for key in (GOOGLE_KEY, GROQ_KEY):
         assert key in sent
         assert key not in output
@@ -120,6 +141,8 @@ def _google_404(message: str) -> httpx.MockTransport:
     """Google lists its model but rejects the chat with a 404 and `message`."""
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith(":batchEmbedContents"):
+            return _embed_response(request, 768)
         if request.url.path.endswith("/models"):
             return httpx.Response(
                 200, json={"data": [{"id": "models/gemini-3.6-flash"}]}
@@ -174,6 +197,8 @@ def _google_replies(choice: dict) -> httpx.MockTransport:
     """Google answers the chat 200 with ``choice``; Groq is down."""
 
     def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith(":batchEmbedContents"):
+            return _embed_response(request, 768)
         if request.url.path.endswith("/models"):
             return httpx.Response(
                 200, json={"data": [{"id": "models/gemini-3.6-flash"}]}
@@ -221,3 +246,75 @@ def test_chat_probe_leaves_room_for_reasoning_tokens():
     assert chats
     for request in chats:
         assert json.loads(request.content)["max_tokens"] == 256
+
+
+def _embedding_lines(out: str) -> list[str]:
+    lines = out.splitlines()
+    start = next(i for i, line in enumerate(lines) if "embedding model" in line)
+    return lines[start : start + 3]
+
+
+def test_embedding_check_reports_768_dimensions_as_ok(capsys):
+    seen: list[httpx.Request] = []
+
+    code = providers_check.main(transport=_transport({}, seen))
+    out = capsys.readouterr().out
+
+    assert code == 0
+    model, _, status, dims, latency, unit, result = _embedding_lines(out)[1].split()
+    assert (model, status, dims, unit, result) == (
+        "gemini-embedding-001",
+        "200",
+        "768/768",
+        "ms",
+        "ok",
+    )
+    assert latency.isdigit()
+    assert "EMBEDDING CHECK FAILED" not in out
+    # One request, through VectorStore's batchEmbedContents call
+    [embed] = [r for r in seen if r.url.path.endswith(":batchEmbedContents")]
+    assert embed.url.path == "/v1beta/models/gemini-embedding-001:batchEmbedContents"
+
+
+def test_embedding_dimension_mismatch_fails_the_check(capsys):
+    # e.g. the API ignoring outputDimensionality and returning 3072 values
+    code = providers_check.main(transport=_transport({}, [], embed_dims=3072))
+    out = capsys.readouterr().out
+
+    assert code == 1
+    row = _embedding_lines(out)[1]
+    assert "http 200" in row
+    assert "3072/768" in row
+    assert row.endswith("dimension mismatch")
+    assert "EMBEDDING CHECK FAILED: dimension mismatch (got 3072" in out
+    # The chat providers still worked; only the embedding check failed
+    assert "Working: google, groq" in out
+
+
+def test_embedding_http_error_fails_the_check(capsys):
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith(":batchEmbedContents"):
+            return httpx.Response(400, json={"error": {"message": GOOGLE_KEY}})
+        return _transport({}, []).handler(request)
+
+    code = providers_check.main(transport=httpx.MockTransport(handler))
+    out = capsys.readouterr().out
+
+    assert code == 1
+    assert "http 400" in _embedding_lines(out)[1]
+    assert "EMBEDDING CHECK FAILED: failed (http 400)." in out
+    assert GOOGLE_KEY not in out
+
+
+def test_embedding_check_is_skipped_without_a_google_key(monkeypatch, capsys):
+    from services import llm_client
+
+    monkeypatch.setattr(llm_client.settings, "google_ai_api_key", "")
+    seen: list[httpx.Request] = []
+
+    code = providers_check.main(transport=_transport({}, seen))
+    out = capsys.readouterr().out
+
+    assert code == 0
+    assert "Embedding check skipped: GOOGLE_AI_API_KEY is not set." in out
+    assert not any(r.url.path.endswith(":batchEmbedContents") for r in seen)
