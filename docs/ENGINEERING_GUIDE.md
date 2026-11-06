@@ -55,6 +55,7 @@ There's no `FERNET_KEY` variable. The encryption key comes from `DJANGO_SECRET_K
 | `GROQ_MODEL` | Default `openai/gpt-oss-120b` |
 | `LLM_HEALTH_CACHE_SECONDS` | Default `300`. How long FastAPI `/health` caches each provider's model listing. |
 | `LLM_FAILOVER_ENABLED` | Default `True`. When `False`, only the first provider in the chain is tried. |
+| `REVIEW_TEMPERATURE` | Default `0.1`. Sampling temperature for the review analyzers' LLM calls (0.0 to 2.0). |
 
 GitHub Models was retired on 2026-07-30 ([GitHub docs](https://docs.github.com/en/github-models)) and was removed. `GITHUB_TOKEN` is no longer read; a leftover value in `.env` is ignored.
 

@@ -174,7 +174,7 @@ class TestPromptContract:
             await analyze_quality({"diff_text": _LARGE_DIFF, "repo_full_name": "o/r"})
 
         messages = mock_client.generate.await_args.args[0]
-        assert "If there are no issues, return an empty JSON list: []" in (
+        assert 'If there are no issues, reply with {"findings": []}' in (
             messages[-1]["content"]
         )
 
@@ -319,7 +319,7 @@ class TestHonestGraph:
     async def test_unparseable_response_retries_only_that_analyzer_once(self):
         from agents.review_agent import run_review_agent
 
-        async def fake_generate(messages, user_id=None):
+        async def fake_generate(messages, user_id=None, **kwargs):
             if _analyzer_of(messages) == "security":
                 return _llm_response("I could not produce JSON, sorry.")
             return _llm_response("[]")
@@ -353,7 +353,7 @@ class TestHonestGraph:
         )
         security_replies = iter(["not json", finding])
 
-        async def fake_generate(messages, user_id=None):
+        async def fake_generate(messages, user_id=None, **kwargs):
             if _analyzer_of(messages) == "security":
                 return _llm_response(next(security_replies))
             return _llm_response("[]")
@@ -398,7 +398,7 @@ class TestHonestGraph:
 
         models = {"security": "a/one", "quality": "b/two", "test": "c/three"}
 
-        async def fake_generate(messages, user_id=None):
+        async def fake_generate(messages, user_id=None, **kwargs):
             return _llm_response("[]", model=models[_analyzer_of(messages)])
 
         with patch("agents.review_agent.llm_client") as mock_client:
@@ -423,7 +423,7 @@ class TestHonestGraph:
         security_replies = iter(["No issues found.", "[]"])
         security_calls: list[list[dict]] = []
 
-        async def fake_generate(messages, user_id=None):
+        async def fake_generate(messages, user_id=None, **kwargs):
             if _analyzer_of(messages) == "security":
                 security_calls.append(list(messages))
                 return _llm_response(next(security_replies))
@@ -443,8 +443,9 @@ class TestHonestGraph:
         assert second[: len(first)] == first
         assert second[-1] == {"role": "user", "content": CORRECTIVE_PROMPT}
         assert CORRECTIVE_PROMPT == (
-            "Your previous reply was not a JSON list. "
-            "Reply with only the JSON list, or [] if there are no issues."
+            "Your previous reply was not the JSON object described in the output "
+            'format. Reply with only that JSON object, or {"findings": []} if there '
+            "are no issues."
         )
 
     @pytest.mark.asyncio
@@ -459,7 +460,7 @@ class TestHonestGraph:
         security_replies = iter([empty_reply, "[]"])
         security_calls: list[list[dict]] = []
 
-        async def fake_generate(messages, user_id=None):
+        async def fake_generate(messages, user_id=None, **kwargs):
             if _analyzer_of(messages) == "security":
                 security_calls.append(list(messages))
                 return _llm_response(next(security_replies))

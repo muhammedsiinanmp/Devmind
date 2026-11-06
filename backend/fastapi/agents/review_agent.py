@@ -6,6 +6,7 @@ then synthesize deduplicates and ranks their findings. An analyzer repeats its
 call once only when the model's response can't be parsed.
 """
 
+import hashlib
 import json
 import logging
 import re
@@ -13,9 +14,10 @@ import time
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
-from pydantic import BaseModel, field_validator
 
 from agents.states import AnalyzerRun, ReviewState, ReviewComment
+from core.config import get_settings
+from models.review import ReviewFinding, ReviewFindings, Severity
 from services.code_parser import parse_diff
 from services.llm_client import llm_client
 from services.prompt_builder import (
@@ -28,14 +30,17 @@ logger = logging.getLogger(__name__)
 
 # Extra attempts an analyzer gets when its response can't be parsed.
 MAX_PARSE_RETRIES = 1
+# The reply that means "no issues", from the output schema.
+EMPTY_REPLY = json.dumps(ReviewFindings().model_dump())
 # Sent after an unparseable reply, before the single retry.
 CORRECTIVE_PROMPT = (
-    "Your previous reply was not a JSON list. "
-    "Reply with only the JSON list, or [] if there are no issues."
+    "Your previous reply was not the JSON object described in the output format. "
+    f"Reply with only that JSON object, or {EMPTY_REPLY} if there are no issues."
 )
 # Fixed order used to pick model_used, so it doesn't depend on branch timing.
 ANALYZER_ORDER = ("security", "quality", "tests")
-SEVERITY_ORDER = {"critical": 0, "error": 1, "warning": 2, "info": 3}
+# Rank of each schema severity, most severe first.
+SEVERITY_ORDER = {severity.value: rank for rank, severity in enumerate(Severity)}
 
 
 def create_system_message(category: str) -> str:
@@ -69,9 +74,10 @@ async def _run_analyzer(
         {"role": "system", "content": create_system_message(category)},
         {
             "role": "user",
-            "content": f"{prompt}\n\n{instruction} Return JSON list with: file_path, line_number, category, severity (critical, error, warning or info), body, suggested_fix. If there are no issues, return an empty JSON list: []",
+            "content": f"{prompt}\n\n{instruction} Reply with only the JSON object described in the output format. If there are no issues, reply with {EMPTY_REPLY}",
         },
     ]
+    settings = get_settings()
 
     run: AnalyzerRun = {
         "model": "",
@@ -93,7 +99,12 @@ async def _run_analyzer(
             messages = messages + [{"role": "user", "content": CORRECTIVE_PROMPT}]
         run["attempts"] += 1
         started = time.perf_counter()
-        response = await llm_client.generate(messages, user_id=state.get("user_id"))
+        response = await llm_client.generate(
+            messages,
+            user_id=state.get("user_id"),
+            temperature=settings.review_temperature,
+            json_mode=True,
+        )
         run["latency_ms"] += int((time.perf_counter() - started) * 1000)
         run["model"] = response.model_used
         for key in ("prompt_tokens", "completion_tokens"):
@@ -154,26 +165,9 @@ async def analyze_tests(state: ReviewState) -> dict[str, Any]:
     return {"test_comments": comments, "analyzer_runs": {"tests": run}}
 
 
-_SEVERITY_VALUES = {"critical", "error", "warning", "info"}
-# Fallback for models that answer with the common high/medium/low scale.
-_SEVERITY_ALIASES = {"high": "error", "medium": "warning", "low": "info"}
-_LIST_KEYS = ("issues", "comments", "findings", "results", "data")
-
-
-class _LLMCommentSchema(BaseModel):
-    file_path: str = ""
-    line_number: int = 0
-    category: str = "general"
-    severity: str = "warning"
-    body: str = ""
-    suggested_fix: str | None = None
-
-    @field_validator("severity", mode="before")
-    @classmethod
-    def normalise_severity(cls, v: object) -> str:
-        s = str(v).strip().lower()
-        s = _SEVERITY_ALIASES.get(s, s)
-        return s if s in _SEVERITY_VALUES else "warning"
+# "findings" is the schema's key; the others are tolerated from models that
+# ignore the output format.
+_LIST_KEYS = (*ReviewFindings.model_fields, "issues", "comments", "results", "data")
 
 
 def _parse_llm_comments(content: str, default_category: str) -> list[ReviewComment]:
@@ -186,13 +180,15 @@ def _parse_llm_comment_list(
 ) -> list[ReviewComment] | None:
     """Parse LLM response into ReviewComment list, or None if unparseable.
 
-    Handles four real-world LLM output formats:
+    The expected reply is the ReviewFindings object, {"findings": [...]}.
+    As a fallback for providers without JSON mode, it also handles:
     - Bare JSON array:              [...]
     - Markdown-fenced JSON:         ```json\\n[...]\\n```
-    - Dict-wrapped array:           {"issues": [...]}
+    - Other wrapper keys:           {"issues": [...]}
     - Prefix text before array:     "Here are the issues: [...]"
 
     "{}" and a known key set to null ({"issues": null}) mean no findings.
+    Each item is validated against ReviewFinding; invalid items are skipped.
     """
     if not content:
         logger.warning("llm_parse_failed category=%s empty response", default_category)
@@ -233,10 +229,12 @@ def _parse_llm_comment_list(
                 pass
 
     if raw_list is None:
+        # The reply can quote diff code, so only its length and hash are logged.
         logger.warning(
-            "llm_parse_failed category=%s preview=%.200s",
+            "llm_parse_failed category=%s length=%d sha256=%s",
             default_category,
-            content,
+            len(content),
+            hashlib.sha256(content.encode()).hexdigest()[:12],
         )
         return None
 
@@ -245,7 +243,7 @@ def _parse_llm_comment_list(
         if not isinstance(item, dict):
             continue
         try:
-            v = _LLMCommentSchema.model_validate(
+            v = ReviewFinding.model_validate(
                 {
                     "file_path": item.get("file_path", ""),
                     "line_number": item.get("line_number", 0),
@@ -260,7 +258,7 @@ def _parse_llm_comment_list(
                     "file_path": v.file_path,
                     "line_number": v.line_number,
                     "category": v.category,
-                    "severity": v.severity,
+                    "severity": v.severity.value,
                     "body": v.body,
                     "suggested_fix": v.suggested_fix,
                 }

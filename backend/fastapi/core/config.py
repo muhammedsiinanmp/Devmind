@@ -1,6 +1,7 @@
 import os
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Path of the dotenv file to read. Set DEVMIND_ENV_FILE="" to disable it
@@ -29,6 +30,9 @@ class Settings(BaseSettings):
     groq_model: str = "openai/gpt-oss-120b"
     # Seconds /health caches each provider's model listing
     llm_health_cache_seconds: int = 300
+
+    # Sampling temperature for review analyzer calls (REVIEW_TEMPERATURE).
+    review_temperature: float = Field(default=0.1, ge=0.0, le=2.0)
 
     # Embeddings
     embedding_model: str = "text-embedding-004"
