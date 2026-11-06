@@ -252,10 +252,11 @@ Each item is validated against `ReviewFinding` (Pydantic); items that fail valid
 parse_diff(diff)                       -> DiffChunk[] (file, language, added/removed/context lines,
                                           hunks with new-file line numbers)
 generate_embeddings(up to 20 hunks)  -> one batchEmbedContents call, Google gemini-embedding-001,
-                                          task_type RETRIEVAL_QUERY, outputDimensionality 768
+                                          taskType RETRIEVAL_QUERY, outputDimensionality 768
 for each query embedding:
     search_similar_by_embedding(..., repo, top_k=5, threshold=0.6, exclude_source_ref="PR#<n>")
-                                       -> ordered by pgvector cosine distance (HNSW index)
+                                       -> rows of this repo and EMBEDDING_MODEL only, ordered by
+                                          pgvector cosine distance (HNSW index)
 merge results                          -> drop untagged rows with file_path "PR#<n>",
                                           drop results whose whitespace-normalized text equals a hunk
                                           of this diff, dedupe by text (keep highest similarity),
@@ -268,16 +269,20 @@ build_review_prompt(...)  per batch   -> user message, 8192-token budget (tiktok
                                           each in untrusted-data delimiters
 run_review_agent(...)                  -> the graph once per batch, results merged
 anchor_comments(chunks, comments)      -> keep comments on added/context lines; see "Comment anchoring"
-store_review_async(...)                -> background task after the response is built: of up to 20
-                                          chunks, drop those whose sha256 is already stored, embed
+store_review_async(...)                -> background task after the response is built: leave out
+                                          files the review skipped (files_skipped, any reason) or
+                                          that match REVIEW_SKIP_PATTERNS; of up to 20 remaining
+                                          chunks, drop those whose sha256 is already stored for this
+                                          repo and EMBEDDING_MODEL, embed
                                           the rest in one batchEmbedContents call (RETRIEVAL_DOCUMENT,
-                                          768 dims), insert each with source_ref="PR#<n>"; an
+                                          768 dims), insert each with source_ref="PR#<n>" and
+                                          embedding_model=EMBEDDING_MODEL; an
                                           IntegrityError or DataError on one chunk is rolled back and
                                           the rest are still stored, any other database error stops
                                           the task
 ```
 
-Nothing is stored before the search, and rows tagged with the current PR's `source_ref` are filtered out in SQL (`source_ref IS DISTINCT FROM 'PR#<n>'`, so untagged rows are kept). That keeps a review, including a re-review after a new push, from retrieving its own diff. When `pr_number` is 0, chunks are stored with no `source_ref` and nothing is excluded. The duplicate check compares against every hunk in the diff, even though only the first 20 are used as queries. Files matching `REVIEW_SKIP_PATTERNS` aren't used as queries, so a lockfile can't take query slots. Retrieval runs once per review, and every batch's prompt gets the same retrieved patterns.
+Nothing is stored before the search, and rows tagged with the current PR's `source_ref` are filtered out in SQL (`source_ref IS DISTINCT FROM 'PR#<n>'`, so untagged rows are kept). That keeps a review, including a re-review after a new push, from retrieving its own diff. When `pr_number` is 0, chunks are stored with no `source_ref` and nothing is excluded. The duplicate check compares against every hunk in the diff, even though only the first 20 are used as queries. Files matching `REVIEW_SKIP_PATTERNS` aren't used as queries, so a lockfile can't take query slots. Retrieval runs once per review, and every batch's prompt gets the same retrieved patterns. Only the files the review covered are stored afterwards: files in the response's `files_skipped` (`generated`, `batch_limit` or `deadline`) aren't embedded, so lockfiles and vendored code never reach the index.
 
 **Transition gap:** rows written before `source_ref` existed carry no tag, and hunk rows used real file paths. If a PR was reviewed before the change and gets a new push afterwards, its old hunks can still be retrieved for it, unless their text exactly matches a hunk in the new diff.
 
@@ -308,7 +313,7 @@ The counts are logged as `review.anchoring` and returned in the response as `anc
 
 Embeddings are cached in process by an LRU cache (`_BoundedCache`, max 1000 entries) keyed by `sha256(f"{task_type}:{text}")`; only texts not in the cache are sent. All embedding calls share one `httpx.AsyncClient` (30 s timeout), closed on app shutdown. No database session is open while an embedding call is in flight: queries are embedded before the search session opens, and the store task closes its duplicate-check session before embedding.
 
-**Embedding model change:** the default `EMBEDDING_MODEL` is `gemini-embedding-001` (Google retired `text-embedding-004`), requested with `outputDimensionality` 768 to fit `Vector(768)`. Vectors from the two models aren't comparable, so `code_embeddings` rows written before the switch should be deleted or re-embedded; nothing does this automatically. `gemini-embedding-001` vectors below 3072 dimensions aren't normalized, which doesn't affect cosine distance.
+**Embedding model change:** the default `EMBEDDING_MODEL` is `gemini-embedding-001` (Google retired `text-embedding-004`), requested with `outputDimensionality` 768 to fit `Vector(768)`. `taskType` and `outputDimensionality` are sent as top-level request fields. The v1beta discovery document marks them deprecated in favour of `embedContentConfig`, but a live check on 2026-11-06 found that `batchEmbedContents` with `gemini-embedding-001` accepts `embedContentConfig` and ignores its `outputDimensionality`, returning 3072 values, which the 768-dimension check rejects. `make providers-check` makes one embedding call and reports the returned dimension, so a change in that behaviour shows up there. Each `code_embeddings` row records its `embedding_model`, and search only reads rows of the configured model, so vectors from two models are never compared. `0003_code_embeddings_model_tag.sql` tags rows written before the column existed as `text-embedding-004`: their model wasn't recorded, and treating a real `text-embedding-004` vector as current would give meaningless similarity scores, whereas mis-tagging a newer row only hides it from search. The tag is the column's default when it is added (dropped right after), so no row is rewritten. `0003` holds an `ACCESS EXCLUSIVE` lock on `code_embeddings` until it commits, so searches wait as well as inserts. Nothing re-embeds the old rows. Delete them after migrating (`DELETE FROM code_embeddings WHERE embedding_model = 'text-embedding-004';`): they stay in the HNSW index, where filtered searches still visit them and iterative scans take longer. `gemini-embedding-001` vectors below 3072 dimensions aren't normalized, which doesn't affect cosine distance.
 
 **Setup gap:** the `core.0001_enable_pgvector` migration enables the `vector` extension, but nothing creates the `code_embeddings` / `review_embeddings` tables (`models/embeddings.py` defines them; nothing calls `create_all`). On a fresh database the retrieval steps fail and get logged, and reviews run without retrieved context.
 
@@ -558,7 +563,8 @@ erDiagram
         varchar language "indexed"
         varchar chunk_type
         vector embedding "Vector(768)"
-        varchar sha256 UK "dedupe key for the chunk text"
+        varchar sha256 "sha256 of chunk_text; unique with repo_full_name and embedding_model"
+        varchar embedding_model "model that produced embedding, e.g. gemini-embedding-001"
         varchar source_ref "nullable, e.g. PR#12"
         timestamptz created_at
     }
@@ -594,7 +600,7 @@ The dotted lines are **logical references, not foreign keys**. Nothing enforces 
 - `code_embeddings.repo_full_name` is the `repo_full_name` the Celery worker sends to `POST /review/analyze`. It holds a name, not an ID, so when `initial_sync` picks up a renamed repository, its older chunks stay under the old name. After each review, a background task writes up to 20 diff chunks here with `source_ref` `PR#<number>` (none when `pr_number` is 0). Older versions also wrote one untagged row for the first 1000 characters of the diff (`file_path` `PR#<number>`, `chunk_type` `pr`); retrieval skips those rows for the PR being reviewed.
 - `review_embeddings.review_id` and `user_id` are meant to hold Django `Review` and `CustomUser` IDs, but nothing in the application writes this table today. `VectorStore.store_review_embedding` is only called from tests, and the `/review/analyze` request carries `user_id` but no review ID. As a result, the "past reviews" section of the prompt is always empty.
 
-There are B-tree indexes on `repo_full_name`, `language`, `review_id`, `user_id` and `code_hash`. `code_embeddings.embedding` has an HNSW index with `vector_cosine_ops` (`ix_code_embeddings_embedding_hnsw`) for the cosine-distance `ORDER BY ... LIMIT` in similarity search. The planner still picks a sequential or `repo_full_name` scan when it estimates that to be cheaper, which it did on a local 20,000-row table. Each search session runs `SET LOCAL hnsw.iterative_scan = relaxed_order` (pgvector 0.8+), so when the index is used it keeps scanning until enough rows pass the repository and `source_ref` filters; results are re-sorted by similarity in Python because `relaxed_order` can return them slightly out of order. On an older pgvector the `SET` fails, is logged once as `vector_store.iterative_scan_unavailable`, and search runs without it. As noted in section 5, nothing in the repo creates these tables yet. For a table created by hand, apply `backend/fastapi/migrations/sql/0001_code_embeddings_source_ref.sql` (adds `source_ref`) and `0002_code_embeddings_hnsw_index.sql` (adds the HNSW index) in order. Both are idempotent and must be applied by hand.
+There are B-tree indexes on `repo_full_name`, `language`, `review_id`, `user_id` and `code_hash`. `code_embeddings.embedding` has an HNSW index with `vector_cosine_ops` (`ix_code_embeddings_embedding_hnsw`) for the cosine-distance `ORDER BY ... LIMIT` in similarity search. The planner still picks a sequential or `repo_full_name` scan when it estimates that to be cheaper, which it did on a local 20,000-row table. Each search session runs `SET LOCAL hnsw.iterative_scan = relaxed_order` (pgvector 0.8+), so when the index is used it keeps scanning until enough rows pass the repository and `source_ref` filters; results are re-sorted by similarity in Python because `relaxed_order` can return them slightly out of order. On an older pgvector the `SET` fails, is logged once as `vector_store.iterative_scan_unavailable`, and search runs without it. As noted in section 5, nothing in the repo creates these tables yet. `code_embeddings` rows are unique per `(repo_full_name, sha256, embedding_model)` (`ux_code_embeddings_repo_sha256_model`), so the same chunk is stored once for each repository and embedding model. Search and the duplicate check only use rows whose `embedding_model` is the configured `EMBEDDING_MODEL`, because vectors from different models aren't comparable. For a table created by hand, apply `backend/fastapi/migrations/sql/0001_code_embeddings_source_ref.sql` (adds `source_ref`), `0002_code_embeddings_hnsw_index.sql` (adds the HNSW index) and `0003_code_embeddings_model_tag.sql` (adds `embedding_model`, tags existing rows `text-embedding-004`, and replaces the global unique `sha256` with the per-repository, per-model index) in order. All three are idempotent and must be applied by hand.
 
 ### Enum values
 

@@ -73,6 +73,8 @@ docker compose exec fastapi uv run python -m scripts.providers_check
 
 For each provider with a key set, it lists the provider's models and sends one chat request of a few tokens, then prints the provider, model, whether the model is listed, the result (`ok`, or the HTTP status, with `model_not_found` for 404 and `rate_limited` for 429) and the latency. On a 404 it also prints the first 150 characters of the provider's error message, with keys redacted before truncation. It never prints keys or other response bodies. It exits 1 if no provider completes the chat request.
 
+When `GOOGLE_AI_API_KEY` is set, it also embeds one short text through `VectorStore`, the code path reviews use. It prints the embedding model, HTTP status, returned dimension against the expected one (`768/768`), latency and the result. Any error, or a dimension other than 768, prints `EMBEDDING CHECK FAILED` and makes it exit 1, even when a chat provider works. The dimension is checked, not just the status, because on 2026-11-06 the API accepted `taskType` / `outputDimensionality` nested in `embedContentConfig` (the shape the v1beta discovery document prefers), ignored them, and returned 3072 values with HTTP 200. That's why `services/vector_store.py` still sends the deprecated top-level fields.
+
 **"Listed" doesn't mean usable.** Google lists models that are closed to new keys. For example, `gemini-2.5-flash` is listed but a newer key gets a 404 ("no longer available to new users"). The chat request in `make providers-check` is the authoritative check. The `listed` field in `/health` only shows that the provider still publishes the model ID.
 
 There's no server-side OpenAI provider. OpenAI keys can be added per user through the BYOK settings.
@@ -569,7 +571,7 @@ These gaps are confirmed in the current code.
 
 ### Embedding tables are never created
 
-The `vector` extension is enabled by a Django migration, but nothing creates `code_embeddings` / `review_embeddings` (FastAPI never calls `create_all`, and no Django migration covers them). Until they exist, the retrieval steps log errors and reviews run without similar-code context. For a table created by hand, apply `backend/fastapi/migrations/sql/0001_code_embeddings_source_ref.sql` and `0002_code_embeddings_hnsw_index.sql` in order; the second adds the HNSW cosine index (`models/embeddings.py` declares the same index).
+The `vector` extension is enabled by a Django migration, but nothing creates `code_embeddings` / `review_embeddings` (FastAPI never calls `create_all`, and no Django migration covers them). Until they exist, the retrieval steps log errors and reviews run without similar-code context. For a table created by hand, apply `backend/fastapi/migrations/sql/0001_code_embeddings_source_ref.sql`, `0002_code_embeddings_hnsw_index.sql` and `0003_code_embeddings_model_tag.sql` in order; the second adds the HNSW cosine index, and the third adds `embedding_model` and the unique `(repo_full_name, sha256, embedding_model)` index (`models/embeddings.py` declares the same indexes). `tests/test_vector_store_pgvector.py` applies them to a scratch schema and runs the vector store queries against it when `PGVECTOR_TEST_URL` is set; CI doesn't set it.
 
 ### `review_embeddings` is never written
 

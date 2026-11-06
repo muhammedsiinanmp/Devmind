@@ -82,9 +82,22 @@ class FakeEmbeddingAPI:
             if task_type is None or body["requests"][0]["taskType"] == task_type
         )
 
+    def documents(self) -> list[str]:
+        """Texts sent for RETRIEVAL_DOCUMENT embedding (i.e. to be stored)."""
+        return [
+            r["content"]["parts"][0]["text"]
+            for body in self.requests
+            for r in body["requests"]
+            if r["taskType"] == "RETRIEVAL_DOCUMENT"
+        ]
+
 
 class FakeVectorStore(VectorStore):
-    """The real VectorStore with its database methods kept in memory."""
+    """The real VectorStore with its database methods kept in memory.
+
+    Mirrors the SQL: rows are unique per (repo_full_name, sha256,
+    embedding_model), and lookups only see rows of the configured model.
+    """
 
     def __init__(self, api: FakeEmbeddingAPI):
         super().__init__()
@@ -97,8 +110,16 @@ class FakeVectorStore(VectorStore):
         self.insert_error: Exception | None = None
         self.insert_attempts = 0
 
-    async def existing_hashes(self, session, hashes):
-        stored = {r["sha256"] for r in self.rows}
+    def _key(self, row: dict) -> tuple[str, str, str]:
+        return (row["repo_full_name"], row["sha256"], row["embedding_model"])
+
+    async def existing_hashes(self, session, repo_full_name, hashes):
+        stored = {
+            r["sha256"]
+            for r in self.rows
+            if r["repo_full_name"] == repo_full_name
+            and r["embedding_model"] == self.embedding_model
+        }
         return {h for h in hashes if h in stored}
 
     async def insert_code_embedding(
@@ -118,20 +139,20 @@ class FakeVectorStore(VectorStore):
             raise self.insert_error
         if file_path in self.integrity_error_paths:
             raise IntegrityError("INSERT", {}, Exception("duplicate key"))
-        if any(r["sha256"] == sha256 for r in self.rows):
+        row = {
+            "repo_full_name": repo_full_name,
+            "file_path": file_path,
+            "chunk_text": chunk_text,
+            "language": language,
+            "chunk_type": chunk_type,
+            "source_ref": source_ref,
+            "sha256": sha256,
+            "embedding": embedding,
+            "embedding_model": self.embedding_model,
+        }
+        if any(self._key(r) == self._key(row) for r in self.rows):
             raise IntegrityError("INSERT", {}, Exception("duplicate key"))
-        self.rows.append(
-            {
-                "repo_full_name": repo_full_name,
-                "file_path": file_path,
-                "chunk_text": chunk_text,
-                "language": language,
-                "chunk_type": chunk_type,
-                "source_ref": source_ref,
-                "sha256": sha256,
-                "embedding": embedding,
-            }
-        )
+        self.rows.append(row)
 
     async def search_similar_by_embedding(
         self,
@@ -145,6 +166,8 @@ class FakeVectorStore(VectorStore):
         scored = []
         for row in self.rows:
             if row["repo_full_name"] != repo_full_name:
+                continue
+            if row["embedding_model"] != self.embedding_model:
                 continue
             if exclude_source_ref is not None and row["source_ref"] == (
                 exclude_source_ref
@@ -226,15 +249,27 @@ PR2_DIFF_PUSH2 = """diff --git a/app/orders.py b/app/orders.py
 """
 
 
-async def _review(diff: str, pr_number: int) -> list[str]:
+async def _review(
+    diff: str,
+    pr_number: int,
+    repo: str = REPO,
+    files_skipped: list[dict] | None = None,
+) -> list[str]:
     """Run POST /review/analyze for one PR and wait for its background tasks.
 
-    Returns the similar_patterns handed to the review agent.
+    files_skipped is what the review agent reports as not reviewed. Returns
+    the similar_patterns handed to the review agent.
     """
-    agent = AsyncMock(return_value={"synthesized_comments": [], "model_used": "x/y"})
+    agent = AsyncMock(
+        return_value={
+            "synthesized_comments": [],
+            "model_used": "x/y",
+            "files_skipped": files_skipped or [],
+        }
+    )
     with patch("agents.review_agent.run_review_agent", agent):
         await analyze_review(
-            ReviewRequest(diff=diff, repo_full_name=REPO, pr_number=pr_number),
+            ReviewRequest(diff=diff, repo_full_name=repo, pr_number=pr_number),
             secret="unused",
         )
     pending = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
@@ -441,12 +476,7 @@ class TestBatchedEmbeddingCalls:
 
         await _review(_diff_with_files(3), pr_number=3)
 
-        documents = [
-            r["content"]["parts"][0]["text"]
-            for body in embedding_api.requests
-            if body["requests"][0]["taskType"] == "RETRIEVAL_DOCUMENT"
-            for r in body["requests"]
-        ]
+        documents = embedding_api.documents()
         assert len(documents) == 1
         assert "value_2" in documents[0]
 
@@ -494,7 +524,7 @@ class TestStoreStopsOnSystemicDbErrors:
         self, fake_store, embedding_api
     ):
         # e.g. the table doesn't exist yet, or the database is unreachable.
-        async def missing_table(session, hashes):
+        async def missing_table(session, repo_full_name, hashes):
             raise ProgrammingError(
                 "SELECT", {}, Exception('relation "code_embeddings" does not exist')
             )
@@ -505,3 +535,122 @@ class TestStoreStopsOnSystemicDbErrors:
 
         assert embedding_api.calls("RETRIEVAL_DOCUMENT") == 0
         assert fake_store.insert_attempts == 0
+
+
+OTHER_REPO = "owner/other-repo"
+
+LOCKFILE_DIFF = """diff --git a/uv.lock b/uv.lock
+--- a/uv.lock
++++ b/uv.lock
+@@ -1,1 +1,2 @@
+ version = 1
++lockfile_marker = "abc"
+"""
+
+
+class TestDedupPerRepository:
+    @pytest.mark.asyncio
+    async def test_same_chunk_in_two_repos_is_stored_for_both(
+        self, fake_store, embedding_api
+    ):
+        await _review(PR1_DIFF, pr_number=1, repo=REPO)
+        _clear_embedding_cache(fake_store)
+
+        await _review(PR1_DIFF, pr_number=5, repo=OTHER_REPO)
+
+        repos = sorted(r["repo_full_name"] for r in fake_store.rows)
+        assert repos == [OTHER_REPO, REPO]
+        assert len({r["sha256"] for r in fake_store.rows}) == 1
+        assert embedding_api.calls("RETRIEVAL_DOCUMENT") == 2
+
+    @pytest.mark.asyncio
+    async def test_chunk_stored_for_another_repo_is_retrievable_in_this_one(
+        self, fake_store
+    ):
+        await _review(PR1_DIFF, pr_number=1, repo=OTHER_REPO)
+        await _review(PR1_DIFF, pr_number=1, repo=REPO)
+
+        patterns = await _review(PR2_DIFF, pr_number=2, repo=REPO)
+
+        assert any("app/users.py" in p for p in patterns)
+
+
+class TestEmbeddingModelSeparation:
+    """The in-memory store mirrors the SQL filters; the real queries are
+    checked in test_vector_store.py and test_vector_store_pgvector.py."""
+
+    @pytest.mark.asyncio
+    async def test_search_never_returns_rows_from_another_model(self, fake_store):
+        fake_store.embedding_model = "text-embedding-004"
+        await _review(PR1_DIFF, pr_number=1)
+        assert [r["embedding_model"] for r in fake_store.rows] == ["text-embedding-004"]
+        fake_store.embedding_model = "gemini-embedding-001"
+        _clear_embedding_cache(fake_store)
+
+        patterns = await _review(PR2_DIFF, pr_number=2)
+
+        assert patterns == []
+
+    @pytest.mark.asyncio
+    async def test_chunk_stored_with_another_model_is_stored_again(
+        self, fake_store, embedding_api
+    ):
+        fake_store.embedding_model = "text-embedding-004"
+        await _review(PR1_DIFF, pr_number=1)
+        fake_store.embedding_model = "gemini-embedding-001"
+        _clear_embedding_cache(fake_store)
+
+        await _review(PR1_DIFF, pr_number=1)
+
+        models = sorted(r["embedding_model"] for r in fake_store.rows)
+        assert models == ["gemini-embedding-001", "text-embedding-004"]
+
+
+class TestSkippedFilesAreNotEmbedded:
+    @pytest.mark.asyncio
+    async def test_generated_files_are_not_embedded(self, fake_store, embedding_api):
+        await _review(
+            LOCKFILE_DIFF + PR1_DIFF,
+            pr_number=1,
+            files_skipped=[{"file_path": "uv.lock", "reason": "generated"}],
+        )
+
+        assert [r["file_path"] for r in fake_store.rows] == ["app/users.py"]
+        assert not any("lockfile_marker" in d for d in embedding_api.documents())
+
+    @pytest.mark.asyncio
+    async def test_generated_files_are_not_embedded_even_if_not_reported(
+        self, fake_store, embedding_api
+    ):
+        # The review skip patterns apply on their own, too.
+        await _review(LOCKFILE_DIFF + PR1_DIFF, pr_number=1)
+
+        assert [r["file_path"] for r in fake_store.rows] == ["app/users.py"]
+        assert not any("lockfile_marker" in d for d in embedding_api.documents())
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("reason", ["batch_limit", "deadline"])
+    async def test_files_the_review_did_not_reach_are_not_embedded(
+        self, fake_store, embedding_api, reason
+    ):
+        await _review(
+            _diff_with_files(3),
+            pr_number=1,
+            files_skipped=[{"file_path": "pkg/mod2.py", "reason": reason}],
+        )
+
+        stored = sorted(r["file_path"] for r in fake_store.rows)
+        assert stored == ["pkg/mod0.py", "pkg/mod1.py"]
+        assert not any("value_2" in d for d in embedding_api.documents())
+
+    @pytest.mark.asyncio
+    async def test_skipped_files_do_not_use_up_the_20_chunk_cap(self, fake_store):
+        diff = _diff_with_files(21)
+        skipped = [{"file_path": "pkg/mod0.py", "reason": "batch_limit"}]
+
+        await _review(diff, pr_number=1, files_skipped=skipped)
+
+        stored = {r["file_path"] for r in fake_store.rows}
+        assert len(stored) == 20
+        assert "pkg/mod0.py" not in stored
+        assert "pkg/mod20.py" in stored
