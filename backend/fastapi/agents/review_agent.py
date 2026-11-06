@@ -31,7 +31,8 @@ from services.prompt_builder import (
     PromptContext,
     build_review_prompt,
     diff_token_budget,
-    REVIEW_SYSTEM_PROMPT,
+    new_delimiter_tag,
+    review_system_prompt,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,14 +52,20 @@ ANALYZER_ORDER = ("security", "quality", "tests")
 SEVERITY_ORDER = {severity.value: rank for rank, severity in enumerate(Severity)}
 
 
-def create_system_message(category: str) -> str:
-    """Create category-specific system message."""
+def create_system_message(category: str, tag: str | None = None) -> str:
+    """
+    Create category-specific system message.
+
+    ``tag`` is the review's delimiter tag (new_delimiter_tag); the system
+    message names it, so it must be the tag the user message uses.
+    """
+    system = review_system_prompt(tag or new_delimiter_tag())
     messages = {
-        "security": f"{REVIEW_SYSTEM_PROMPT}\n\nFocus on security vulnerabilities like SQL injection, XSS, command injection, hardcoded secrets, and authentication issues.",
-        "quality": f"{REVIEW_SYSTEM_PROMPT}\n\nFocus on code quality: readability, performance, error handling, and best practices.",
-        "tests": f"{REVIEW_SYSTEM_PROMPT}\n\nFocus on test coverage, test patterns, and missing test cases.",
+        "security": f"{system}\n\nFocus on security vulnerabilities like SQL injection, XSS, command injection, hardcoded secrets, and authentication issues.",
+        "quality": f"{system}\n\nFocus on code quality: readability, performance, error handling, and best practices.",
+        "tests": f"{system}\n\nFocus on test coverage, test patterns, and missing test cases.",
     }
-    return messages.get(category, REVIEW_SYSTEM_PROMPT)
+    return messages.get(category, system)
 
 
 async def _run_analyzer(
@@ -77,9 +84,11 @@ async def _run_analyzer(
     provider never reports them. run["parsed"] is False if every attempt
     failed to parse.
     """
-    prompt = state.get("prebuilt_prompt") or build_review_prompt(context)
+    # A prebuilt prompt always comes with the tag it was built with.
+    tag = state.get("delimiter_tag") or new_delimiter_tag()
+    prompt = state.get("prebuilt_prompt") or build_review_prompt(context, tag=tag)
     messages = [
-        {"role": "system", "content": create_system_message(category)},
+        {"role": "system", "content": create_system_message(category, tag)},
         {
             "role": "user",
             "content": f"{prompt}\n\n{instruction} Reply with only the JSON object described in the output format. If there are no issues, reply with {EMPTY_REPLY}",
@@ -450,9 +459,13 @@ async def run_review_agent(
     settings = get_settings()
     chunks = diff_chunks or parse_diff(diff_text)
     patterns = similar_patterns or []
+    # One delimiter tag per review, shared by every batch and analyzer.
+    tag = new_delimiter_tag()
     plan = plan_batches(
         chunks,
-        diff_token_budget(PromptContext(diff_chunks=chunks, similar_patterns=patterns)),
+        diff_token_budget(
+            PromptContext(diff_chunks=chunks, similar_patterns=patterns), tag=tag
+        ),
         settings.review_skip_patterns,
         settings.review_max_batches,
     )
@@ -478,7 +491,7 @@ async def run_review_agent(
         prompt = ""
         if share_prompt:
             prompt = build_review_prompt(
-                PromptContext(diff_chunks=batch, similar_patterns=patterns)
+                PromptContext(diff_chunks=batch, similar_patterns=patterns), tag=tag
             )
         initial_state: ReviewState = {
             "diff_text": diff_text,
@@ -488,6 +501,7 @@ async def run_review_agent(
             "diff_chunks": batch,
             "similar_patterns": patterns,
             "prebuilt_prompt": prompt,
+            "delimiter_tag": tag,
             "security_comments": [],
             "quality_comments": [],
             "test_comments": [],

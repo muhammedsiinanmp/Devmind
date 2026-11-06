@@ -67,6 +67,10 @@ OVER_BUDGET_DIFF = (
     + _new_file("pkg/third.py", 220, marker_at=100)
 )
 
+# Lines of each "pkg/modN.py" file: two such files fit one batch (about 7,300
+# tokens of a 7,960-token diff budget), three don't.
+PAIR_FILE_LINES = 110
+
 
 def _files_in(prompt: str) -> list[str]:
     return re.findall(r"^File: (.+)$", prompt, re.M)
@@ -292,7 +296,7 @@ class TestBatchLimits:
     @pytest.mark.parametrize("limit", [1, 2])
     async def test_concurrent_batches_are_bounded(self, settings, limit):
         settings.review_max_concurrent_batches = limit
-        diff = "".join(_new_file(f"pkg/mod{i}.py", 220) for i in range(5))
+        diff = "".join(_new_file(f"pkg/mod{i}.py", PAIR_FILE_LINES) for i in range(5))
         fake = FakeLLM(delay=0.02)
         result = await _run(diff, fake)
 
@@ -312,7 +316,7 @@ class TestBatchLimits:
         self, settings
     ):
         # Batch 1 (mod0, mod1) is slow; batch 2 (mod2, mod3) fails at once.
-        diff = "".join(_new_file(f"pkg/mod{i}.py", 220) for i in range(4))
+        diff = "".join(_new_file(f"pkg/mod{i}.py", PAIR_FILE_LINES) for i in range(4))
         fake = FakeLLM(slow_on="pkg/mod0.py", fail_on="pkg/mod2.py")
         started = time.perf_counter()
 
@@ -326,7 +330,7 @@ class TestBatchLimits:
     @pytest.mark.asyncio
     async def test_no_batch_starts_after_one_failed(self, settings):
         settings.review_max_concurrent_batches = 1
-        diff = "".join(_new_file(f"pkg/mod{i}.py", 220) for i in range(6))
+        diff = "".join(_new_file(f"pkg/mod{i}.py", PAIR_FILE_LINES) for i in range(6))
         fake = FakeLLM(fail_on="pkg/mod0.py")
 
         with pytest.raises(AllProvidersDownError):
@@ -344,10 +348,10 @@ class TestDeadline:
     @pytest.mark.asyncio
     async def test_deadline_returns_finished_batches_and_skips_the_rest(self, settings):
         diff = (
-            _new_file("pkg/mod0.py", 220)
-            + _new_file("pkg/mod1.py", 220, marker_at=50)
-            + _new_file("pkg/mod2.py", 220)
-            + _new_file("pkg/mod3.py", 220)
+            _new_file("pkg/mod0.py", PAIR_FILE_LINES)
+            + _new_file("pkg/mod1.py", PAIR_FILE_LINES, marker_at=50)
+            + _new_file("pkg/mod2.py", PAIR_FILE_LINES)
+            + _new_file("pkg/mod3.py", PAIR_FILE_LINES)
         )
         fake = FakeLLM(slow_on="pkg/mod2.py")
         started = time.perf_counter()
@@ -571,10 +575,10 @@ class TestRouterDeadline:
         from routers.review import analyze_review
 
         diff = (
-            _new_file("pkg/mod0.py", 220)
-            + _new_file("pkg/mod1.py", 220)
-            + _new_file("pkg/mod2.py", 220)
-            + _new_file("pkg/mod3.py", 220)
+            _new_file("pkg/mod0.py", PAIR_FILE_LINES)
+            + _new_file("pkg/mod1.py", PAIR_FILE_LINES)
+            + _new_file("pkg/mod2.py", PAIR_FILE_LINES)
+            + _new_file("pkg/mod3.py", PAIR_FILE_LINES)
         )
         settings.review_deadline_seconds = 0.5
         with (
