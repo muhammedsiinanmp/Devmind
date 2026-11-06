@@ -243,10 +243,11 @@ def fetch_reaction_feedback(repo_id: int, pr_number: int) -> int:
         return 0
 
     repo = Repository.objects.select_related("owner").get(pk=repo_id)
-    service = GitHubService(
-        access_token=repo.owner.github_token.access_token,
-        user=repo.owner,
-    )
+    github_token = getattr(repo.owner, "github_token", None)
+    if github_token is None:
+        logger.warning("feedback.reactions.no_token repo_id=%d", repo_id)
+        return 0
+    service = GitHubService(access_token=github_token.access_token, user=repo.owner)
     items = service.list_pull_request_review_comments(repo.full_name, pr_number)
     by_id = {
         _int_or_none(item.get("id")): item for item in items if isinstance(item, dict)

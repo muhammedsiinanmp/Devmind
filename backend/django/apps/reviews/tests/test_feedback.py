@@ -134,6 +134,14 @@ class TestFetchReactionFeedback:
         assert _signals(review) == {1: [("reaction", "accepted")]}
 
     @responses.activate
+    def test_owner_without_token_makes_no_github_call(self, review: Any) -> None:
+        ReviewCommentFactory(review=review, github_comment_id=1)
+        review.repository.owner.github_token.delete()
+
+        assert fetch_reaction_feedback(review.repository_id, 42) == 0
+        assert len(responses.calls) == 0
+
+    @responses.activate
     def test_no_posted_comments_makes_no_github_call(self, review: Any) -> None:
         ReviewCommentFactory(review=review, github_comment_id=None)
 
