@@ -84,7 +84,10 @@ async def _run_analyzer(
     provider never reports them. run["parsed"] is False if every attempt
     failed to parse.
     """
-    # A prebuilt prompt always comes with the tag it was built with.
+    # A prebuilt prompt names its tag in its delimiters, so the system
+    # message must use that same tag; a fresh one would not match.
+    if state.get("prebuilt_prompt") and not state.get("delimiter_tag"):
+        raise ValueError("prebuilt_prompt is set without its delimiter_tag")
     tag = state.get("delimiter_tag") or new_delimiter_tag()
     prompt = state.get("prebuilt_prompt") or build_review_prompt(context, tag=tag)
     messages = [
@@ -187,6 +190,23 @@ async def analyze_tests(state: ReviewState) -> dict[str, Any]:
 _LIST_KEYS = (*ReviewFindings.model_fields, "issues", "comments", "results", "data")
 
 
+def _is_single_finding(obj: dict) -> bool:
+    """
+    Whether a top-level object is one finding: a non-empty string file_path,
+    an integer line_number and a string body. Anything less (prose in a
+    "body" key, say) stays unparseable, so the analyzer retries.
+    """
+    path = obj.get("file_path")
+    line = obj.get("line_number")
+    return (
+        isinstance(path, str)
+        and bool(path.strip())
+        and isinstance(line, int)
+        and not isinstance(line, bool)
+        and isinstance(obj.get("body"), str)
+    )
+
+
 def _parse_llm_comments(content: str, default_category: str) -> list[ReviewComment]:
     """Parse LLM response into ReviewComment list ([] if unparseable)."""
     return _parse_llm_comment_list(content, default_category) or []
@@ -202,7 +222,8 @@ def _parse_llm_comment_list(
     - Bare JSON array:              [...]
     - Markdown-fenced JSON:         ```json\\n[...]\\n```
     - Other wrapper keys:           {"issues": [...]}
-    - One finding, no wrapper:      {"file_path": ..., "body": "...", ...}
+    - One finding, no wrapper:      {"file_path": "a.py", "line_number": 3,
+                                     "body": "...", ...}
     - Prefix text before array:     "Here are the issues: [...]"
 
     "{}" and a known key set to null ({"issues": null}) mean no findings.
@@ -231,7 +252,7 @@ def _parse_llm_comment_list(
                 ):
                     raw_list = parsed[key] or []
                     break
-            if raw_list is None and isinstance(parsed.get("body"), str):
+            if raw_list is None and _is_single_finding(parsed):
                 # One finding without the wrapper, as some models send
                 # in JSON mode.
                 raw_list = [parsed]

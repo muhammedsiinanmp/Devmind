@@ -73,10 +73,17 @@ def untrusted_close(tag: str) -> str:
 
 # Characters a model might read as part of a tag: invisible format characters
 # (soft hyphen, zero-width space and joiners, direction marks, word joiner,
-# BOM, Hangul fillers), look-alike angle brackets and slashes, and separators
-# that could stand in for the underscore.
-_INVISIBLE = "­͏؜ᅟᅠ឴឵᠎" "​-‏‪-‮⁠-⁯ㅤ﻿ﾠ"
-_ANGLES = "<＜﹤‹〈〈⟨˂"
+# BOM, Hangul fillers), combining marks (U+0300-036F), variation selectors
+# (U+FE00-FE0F) and tag characters (U+E0000-E007F), look-alike angle brackets
+# and slashes, and separators that could stand in for the underscore.
+#
+# Known limits: a form with no separator at all, such as JSX
+# "<UntrustedData />", is escaped too, which is harmless; homoglyphs from
+# other scripts (Cyrillic "u", for example) and HTML entities ("&#60;") are
+# not recognised. The random nonce in the tag is the main defence; this
+# escaping is extra protection.
+_INVISIBLE = "­̀-ͯ؜ᅟᅠ឴឵᠎" "​-‏‪-‮⁠-⁯ㅤ︀-️﻿ﾠ" "\U000e0000-\U000e007f"
+_ANGLES = "<＜﹤‹〈〈⟨˂❮ᐸ"
 _SLASHES = "/／∕⁄⧸"
 _SEPARATORS = r"_\-＿－‐-―−﹘﹣·.:"
 _GAP = rf"[\s{_INVISIBLE}]*"

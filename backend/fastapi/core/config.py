@@ -6,15 +6,18 @@ from pydantic import BeforeValidator, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-def _empty_as_none(value: object) -> object:
-    return None if isinstance(value, str) and not value.strip() else value
+def _normalise_provider_temperature(value: object) -> object:
+    """Strip and lowercase a string (" OMIT " becomes "omit"); empty is None."""
+    if isinstance(value, str):
+        return value.strip().lower() or None
+    return value
 
 
 # A server provider's temperature setting: a number, "omit" (send none), or
 # None (use the caller's temperature). An empty variable counts as None.
 ProviderTemperature = Annotated[
     Annotated[float, Field(ge=0.0, le=2.0)] | Literal["omit"] | None,
-    BeforeValidator(_empty_as_none),
+    BeforeValidator(_normalise_provider_temperature),
 ]
 
 # Generated or vendored files a review skips (REVIEW_SKIP_PATTERNS).
