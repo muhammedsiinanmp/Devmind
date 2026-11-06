@@ -1,0 +1,13 @@
+# Synthetic eval case written for DevMind. Line numbers are new-file lines.
+id: clean-log-message
+description: Makes a log message more specific.
+diff: |
+  diff --git a/jobs/cleanup.py b/jobs/cleanup.py
+  --- a/jobs/cleanup.py
+  +++ b/jobs/cleanup.py
+  @@ -15,3 +15,3 @@
+       removed = purge_expired(sessions)
+  -    logger.info("done")
+  +    logger.info("cleanup removed=%d expired sessions", removed)
+       return removed
+expected: []  # clean diff: no findings expected

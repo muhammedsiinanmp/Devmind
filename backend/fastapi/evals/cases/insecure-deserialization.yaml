@@ -1,0 +1,17 @@
+# Synthetic eval case written for DevMind. Line numbers are new-file lines.
+id: insecure-deserialization
+description: Request body is unpickled.
+diff: |
+  diff --git a/sync/handlers.py b/sync/handlers.py
+  --- a/sync/handlers.py
+  +++ b/sync/handlers.py
+  @@ -9,3 +9,3 @@
+   def import_state(request):
+  -    state = json.loads(request.body)
+  +    state = pickle.loads(request.body)
+       apply_state(state)
+expected:
+- file: sync/handlers.py
+  line_range: [10, 10]
+  category: security
+  min_severity: error

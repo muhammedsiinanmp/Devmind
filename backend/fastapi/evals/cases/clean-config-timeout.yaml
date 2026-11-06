@@ -1,0 +1,13 @@
+# Synthetic eval case written for DevMind. Line numbers are new-file lines.
+id: clean-config-timeout
+description: Raises an HTTP client timeout constant.
+diff: |
+  diff --git a/integrations/settings.py b/integrations/settings.py
+  --- a/integrations/settings.py
+  +++ b/integrations/settings.py
+  @@ -2,3 +2,3 @@
+   BASE_URL = "https://api.example.com"
+  -REQUEST_TIMEOUT_SECONDS = 10
+  +REQUEST_TIMEOUT_SECONDS = 20
+   MAX_RETRIES = 3
+expected: []  # clean diff: no findings expected

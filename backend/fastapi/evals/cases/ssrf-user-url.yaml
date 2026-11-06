@@ -1,0 +1,18 @@
+# Synthetic eval case written for DevMind. Line numbers are new-file lines.
+id: ssrf-user-url
+description: Server fetches an arbitrary user-supplied URL.
+diff: |
+  diff --git a/media/preview.py b/media/preview.py
+  --- a/media/preview.py
+  +++ b/media/preview.py
+  @@ -6,4 +6,4 @@
+   def link_preview(request):
+  -    url = allowlisted(request.json["url"])
+  +    url = request.json["url"]
+       resp = httpx.get(url, timeout=5)
+       return extract_title(resp.text)
+expected:
+- file: media/preview.py
+  line_range: [7, 8]
+  category: security
+  min_severity: warning

@@ -143,7 +143,7 @@ Measured locally on this branch:
 | Suite | Tests | Line coverage |
 |---|---|---|
 | Django | 225 passed | 86% |
-| FastAPI | 226 passed | 91% |
+| FastAPI | 425 passed | 94% |
 
 Coverage method: `pytest --cov`, then `coverage report --omit='*/tests/*,*/migrations/*,*conftest.py'`, so test files, migrations and conftest are excluded. Including the test files would give a higher figure.
 
@@ -216,6 +216,68 @@ pnpm exec tsc -p tsconfig.app.json --noEmit && pnpm build && pnpm lint && pnpm t
 make test
 ```
 
+## Evals
+
+`backend/fastapi/evals/` measures review quality. It runs `run_review_agent` on 27 hand-written synthetic diffs in `evals/cases/` (9 of them clean, with `expected: []`), skipping the database/RAG step, so no Postgres is needed. The agent's comments then go through the same steps the router applies before posting: comments without a body are dropped, each is validated as a `ReviewComment`, and they're anchored to diff lines with `anchor_comments()` when the code has it. The results record which of these steps ran.
+
+Each posted finding is matched to the labeled ones. A label gives a file and line range (or several acceptable locations), a category and a minimum severity. Model category labels such as "SQL Injection" or "test-coverage" are folded into security, quality or tests.
+
+What it reports:
+- **Precision**, measured against the labels: a real issue nobody labeled counts as an extra, and so does a duplicate. It's reported three ways: exact location, with duplicates collapsed (same file, line and folded category), and location-tolerant.
+- **Recall, exact line:** the finding's line must fall inside the labeled range.
+- **Recall, location-tolerant:** also accepts a finding in the same file with the right category and severity that is within 3 lines of the range or in the same hunk.
+- **False-positive rate on clean diffs:** the share of clean cases with at least one posted finding.
+- **Valid-line rate:** the share of the agent's findings, before anchoring, that point at a line shown in the diff.
+- **Analyzer parse failures:** the number of analyzer runs whose reply couldn't be parsed, or "unknown" for code that doesn't report it.
+- **Latency, token counts and cost.** Latency depends on the providers and quotas, so compare it only between runs that used the same providers. Cost is reported only when a price is set in `PRICES_PER_MTOK` in `evals/run.py`. None are set, so it shows "not priced".
+
+A case that errors (missing or stale cassette, a provider failure, an analyzer reply that can't be parsed) is never dropped. Its labeled findings count as missed, and an errored clean case counts as a false positive. Every report states how many cases were scored, and `--results-dir` refuses to write results that include errored cases unless you pass `--allow-partial`.
+
+```bash
+make eval         # replay: offline and deterministic, uses evals/cassettes/, no keys needed
+make eval-record  # live: calls the providers configured in .env, re-records the
+                  # cassettes, writes evals/results/<sha>.json and <sha>.md
+# Free-tier quotas: pin one server provider and wait between cases
+make eval-record EVAL_ARGS="--provider groq --pause 75"
+```
+
+`--provider NAME` (live only) limits the server chain to one provider for the run, so a quota running out partway through can't silently switch models. `--pause SECONDS` waits that long between cases. `--only id1,id2` runs a subset, `--results-name` sets the results file name, and `--allow-partial` writes results even when some cases errored. Results record these flags, the recording date, the providers, the commit (and whether there were uncommitted or untracked files), a hash of the harness code and a hash of the case set.
+
+Cassettes store only the SHA-256 of each prompt, the response text, the model name and provider, token counts and the recording time. They don't store prompts, headers or keys, and recording stops if a configured key appears in a response.
+
+**Replay can't measure a prompt change.** Cassettes are keyed by prompt hash, so replay only re-scores responses that were already recorded. After the agent's prompts or a case's diff change, replay reports those cases as stale. Measuring the effect of a prompt or model change needs a live run (`make eval-record`). Replay is for re-scoring a recorded run, for example after a change to the scorer or the labels. This branch holds no cassettes, and `make eval` exits with a message until you record some.
+
+The test suite checks the scoring against hand-written fixture responses in `backend/fastapi/tests/fixtures/evals/`. Those are test data, not model output.
+
+### Review quality
+
+Baseline for the review agent **before** the A-series fixes. The responses were recorded live and are scored with the current harness:
+
+| Metric | Baseline (pre-fix) |
+|---|---|
+| Precision, exact location | 0.066 (10 of 152 posted findings) |
+| Precision, duplicates collapsed | 0.081 (10 of 123 unique findings) |
+| Precision, location-tolerant | 0.112 (17 of 152) |
+| Recall, exact line | 0.556 (10 of 18 labeled findings) |
+| Recall, location-tolerant | 0.944 (17 of 18) |
+| False-positive rate on clean diffs | 1.000 (9 of 9 clean cases had findings) |
+| Valid-line rate | 0.914 (139 of 152 findings on a line shown in the diff) |
+| Analyzer parse failures | unknown: the pre-fix agent doesn't report them |
+| Anchoring | none: the pre-fix code had no anchoring step |
+| Model calls | 81 |
+| Latency per case (Groq only) | mean 3545 ms, p50 3319 ms, max 5566 ms |
+| Cost | not priced |
+
+Provenance:
+- **Code:** commit `8e606d6` on branch `eval/baseline-prefix` is the first version of this harness on top of `dev` at `ebb335a` (the pre-fix agent). It changes only the model IDs in `services/llm_client.py`, because the original models could no longer be called. `gemini-2.0-flash` became `gemini-3.5-flash`, `llama-3.3-70b-versatile` became `openai/gpt-oss-120b`, and GitHub Models was disabled (retired 2026-07-30). These are the same model IDs #96 adopted.
+- **Model:** `groq/openai/gpt-oss-120b` only. Google's free daily quota had run out, so every call went to Groq.
+- **Recording:** all 27 cases (9 clean), recorded on 2026-11-06 (the commit date of `6e5638a`; the cassettes from that run don't store a timestamp). Cases were run one at a time from a shell loop with a pause between them, because `--pause` didn't exist yet; the pause length isn't recorded in any artifact. The cassettes are in commit `6e5638a` on the same branch. They're keyed to the pre-fix prompts, so they replay only against that code.
+- **Scoring:** [`backend/fastapi/evals/results/baseline-pre-fix.md`](backend/fastapi/evals/results/baseline-pre-fix.md) and `.json`. These come from replaying those cassettes on a checkout of `6e5638a` whose `evals/` directory (harness code and case labels only, no agent code) was replaced with this branch's. That's why the results file shows commit `6e5638a` with uncommitted files present. Its `harness_sha256` (`eaac3e46…`) and `case_set_sha256` (`00dad82d…`) match this branch's `evals/` code and cases. Replaying produced the same agent output, case for case, as the original run.
+- **Why the numbers moved from the first report** (precision 0.059, recall 0.500, 9 matches): one more exact match comes from the alternative location added to `missing-test-for-new-branch` (`tests/test_pricing.py`), and the new location-tolerant bucket counts 7 near matches that were previously misses.
+- **Caveat on that extra exact match:** the finding it credits (`tests/test_pricing.py:4`) is about a different untested case (a discount equal to the subtotal). The finding that names the labeled defect (the untested quantity `ValueError`) is at line 1, just outside the alternative range, and would have been a near match. Read by hand, the split is 9 exact and 8 near. Tolerant recall (17/18) is unaffected. The matcher matches on location, category and severity, not on the finding's text, so this can happen whenever several findings share a category in one hunk.
+
+The "after" numbers for the current agent will come from E2 (#73).
+
 ## Configuration
 
 All services read the root `.env` (template: [.env.example](.env.example)). These are the main variables:
@@ -261,6 +323,7 @@ backend/
     tests/           end-to-end pipeline test
   fastapi/           AI service
     agents/          LangGraph review agent and state
+    evals/           review-quality eval cases, harness, cassettes, results
     routers/         /review, /embeddings, /health
     services/        LLM client, rate limiter, vector store, diff parser, prompt builder
 frontend/            React + Vite app

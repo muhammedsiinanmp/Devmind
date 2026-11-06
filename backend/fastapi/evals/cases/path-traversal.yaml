@@ -1,0 +1,23 @@
+# Synthetic eval case written for DevMind. Line numbers are new-file lines.
+id: path-traversal
+description: Download handler joins a user-supplied file name onto the upload dir.
+diff: |
+  diff --git a/files/download.py b/files/download.py
+  new file mode 100644
+  --- /dev/null
+  +++ b/files/download.py
+  @@ -0,0 +1,9 @@
+  +import os
+  +
+  +UPLOAD_DIR = "/srv/uploads"
+  +
+  +
+  +def read_upload(filename):
+  +    path = os.path.join(UPLOAD_DIR, filename)
+  +    with open(path, "rb") as fh:
+  +        return fh.read()
+expected:
+- file: files/download.py
+  line_range: [7, 8]
+  category: security
+  min_severity: error

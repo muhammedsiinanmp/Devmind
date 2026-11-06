@@ -1,0 +1,16 @@
+# Synthetic eval case written for DevMind. Line numbers are new-file lines.
+id: command-injection
+description: Branch name from the request is passed to a shell.
+diff: |
+  diff --git a/ci/runner.py b/ci/runner.py
+  --- a/ci/runner.py
+  +++ b/ci/runner.py
+  @@ -22,2 +22,2 @@
+   def checkout(branch):
+  -    subprocess.run(["git", "checkout", branch], check=True)
+  +    subprocess.run(f"git checkout {branch}", shell=True, check=True)
+expected:
+- file: ci/runner.py
+  line_range: [23, 23]
+  category: security
+  min_severity: error

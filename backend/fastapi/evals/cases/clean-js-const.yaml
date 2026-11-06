@@ -1,0 +1,16 @@
+# Synthetic eval case written for DevMind. Line numbers are new-file lines.
+id: clean-js-const
+description: Replaces var with const for values that are never reassigned.
+diff: |
+  diff --git a/web/src/format.js b/web/src/format.js
+  --- a/web/src/format.js
+  +++ b/web/src/format.js
+  @@ -1,5 +1,5 @@
+   export function formatPrice(cents) {
+  -  var dollars = Math.floor(cents / 100);
+  -  var rest = String(cents % 100).padStart(2, "0");
+  +  const dollars = Math.floor(cents / 100);
+  +  const rest = String(cents % 100).padStart(2, "0");
+     return `$${dollars}.${rest}`;
+   }
+expected: []  # clean diff: no findings expected

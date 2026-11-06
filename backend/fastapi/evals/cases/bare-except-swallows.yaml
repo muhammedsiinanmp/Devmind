@@ -1,0 +1,21 @@
+# Synthetic eval case written for DevMind. Line numbers are new-file lines.
+id: bare-except-swallows
+description: Bare except hides every failure while saving and reports success.
+diff: |
+  diff --git a/notes/store.py b/notes/store.py
+  --- a/notes/store.py
+  +++ b/notes/store.py
+  @@ -17,3 +17,6 @@
+   def save(note):
+  -    db.insert(note)
+  -    return True
+  +    try:
+  +        db.insert(note)
+  +    except:
+  +        pass
+  +    return True
+expected:
+- file: notes/store.py
+  line_range: [18, 22]
+  category: quality
+  min_severity: warning

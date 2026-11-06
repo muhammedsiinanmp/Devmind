@@ -1,0 +1,19 @@
+# Synthetic eval case written for DevMind. Line numbers are new-file lines.
+id: missing-await
+description: Async save is called without await, so errors are lost and the write may not finish before the response.
+diff: |
+  diff --git a/web/src/settings.ts b/web/src/settings.ts
+  --- a/web/src/settings.ts
+  +++ b/web/src/settings.ts
+  @@ -20,5 +20,5 @@
+   export async function onSubmit(form: SettingsForm): Promise<void> {
+     validate(form);
+  -  await api.saveSettings(form);
+  +  api.saveSettings(form);
+     toast("Saved");
+   }
+expected:
+- file: web/src/settings.ts
+  line_range: [22, 22]
+  category: quality
+  min_severity: warning

@@ -1,0 +1,19 @@
+# Synthetic eval case written for DevMind. Line numbers are new-file lines.
+id: sql-injection-fstring
+description: User id interpolated into a SQL string with an f-string.
+diff: |
+  diff --git a/shop/repository.py b/shop/repository.py
+  --- a/shop/repository.py
+  +++ b/shop/repository.py
+  @@ -20,4 +20,5 @@
+   def find_order(conn, order_id):
+       cur = conn.cursor()
+  -    cur.execute("SELECT * FROM orders WHERE id = %s", (order_id,))
+  +    sql = f"SELECT * FROM orders WHERE id = {order_id}"
+  +    cur.execute(sql)
+       return cur.fetchone()
+expected:
+- file: shop/repository.py
+  line_range: [22, 23]
+  category: security
+  min_severity: error

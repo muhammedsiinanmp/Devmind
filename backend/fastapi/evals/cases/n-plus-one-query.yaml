@@ -1,0 +1,23 @@
+# Synthetic eval case written for DevMind. Line numbers are new-file lines.
+id: n-plus-one-query
+description: ORM query inside a loop issues one query per author.
+diff: |
+  diff --git a/library/views.py b/library/views.py
+  --- a/library/views.py
+  +++ b/library/views.py
+  @@ -30,6 +30,7 @@
+   def author_summaries():
+  -    authors = Author.objects.prefetch_related("books")
+  +    authors = Author.objects.all()
+       rows = []
+       for author in authors:
+  -        rows.append((author.name, len(author.books.all())))
+  +        count = Book.objects.filter(author=author).count()
+  +        rows.append((author.name, count))
+       return rows
+expected:
+- file: library/views.py
+  line_range: [31, 35]
+  category:
+  - quality
+  min_severity: warning

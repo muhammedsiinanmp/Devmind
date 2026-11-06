@@ -1,0 +1,21 @@
+# Synthetic eval case written for DevMind. Line numbers are new-file lines.
+id: go-ignored-error
+description: Error from closing the writer is ignored, so a failed flush goes unnoticed.
+diff: |
+  diff --git a/export/csv.go b/export/csv.go
+  --- a/export/csv.go
+  +++ b/export/csv.go
+  @@ -30,6 +30,4 @@
+   	w := csv.NewWriter(f)
+   	w.WriteAll(rows)
+  -	if err := w.Error(); err != nil {
+  -		return err
+  -	}
+  -	return f.Close()
+  +	f.Close()
+  +	return nil
+expected:
+- file: export/csv.go
+  line_range: [31, 33]
+  category: quality
+  min_severity: warning

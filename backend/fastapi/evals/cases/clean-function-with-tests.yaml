@@ -1,0 +1,29 @@
+# Synthetic eval case written for DevMind. Line numbers are new-file lines.
+id: clean-function-with-tests
+description: Adds a small pure function together with tests for each branch.
+diff: |
+  diff --git a/text/slug.py b/text/slug.py
+  --- a/text/slug.py
+  +++ b/text/slug.py
+  @@ -1,1 +1,6 @@
+   import re
+  +
+  +
+  +def slugify(title: str) -> str:
+  +    words = re.findall(r"[a-z0-9]+", title.lower())
+  +    return "-".join(words) or "untitled"
+  diff --git a/tests/test_slug.py b/tests/test_slug.py
+  new file mode 100644
+  --- /dev/null
+  +++ b/tests/test_slug.py
+  @@ -0,0 +1,9 @@
+  +from text.slug import slugify
+  +
+  +
+  +def test_slugify_joins_words():
+  +    assert slugify("Hello, World!") == "hello-world"
+  +
+  +
+  +def test_slugify_empty_title():
+  +    assert slugify("!!!") == "untitled"
+expected: []  # clean diff: no findings expected

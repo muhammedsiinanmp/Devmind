@@ -1,0 +1,14 @@
+# Synthetic eval case written for DevMind. Line numbers are new-file lines.
+id: clean-rename-variable
+description: Renames a local variable for clarity.
+diff: |
+  diff --git a/stats/summary.py b/stats/summary.py
+  --- a/stats/summary.py
+  +++ b/stats/summary.py
+  @@ -4,3 +4,3 @@
+   def mean(values):
+  -    s = sum(values)
+  -    return s / len(values) if values else 0.0
+  +    total = sum(values)
+  +    return total / len(values) if values else 0.0
+expected: []  # clean diff: no findings expected
