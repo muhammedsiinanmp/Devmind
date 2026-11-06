@@ -25,9 +25,19 @@ class Case:
         return hashlib.sha256(self.diff.encode()).hexdigest()
 
 
+def _parse_range(case_id: str, raw: object) -> tuple[int, int]:
+    try:
+        lo, hi = (int(n) for n in raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{case_id}: malformed line_range {raw!r}") from exc
+    if lo > hi or lo < 1:
+        raise ValueError(f"{case_id}: bad line_range {[lo, hi]}")
+    return lo, hi
+
+
 def _parse_expected(case_id: str, item: dict) -> Expected:
     try:
-        lo, hi = (int(n) for n in item["line_range"])
+        lo, hi = _parse_range(case_id, item["line_range"])
         category = item["category"]
         min_severity = str(item.get("min_severity", "info")).lower()
         file = str(item["file"])
@@ -38,13 +48,19 @@ def _parse_expected(case_id: str, item: dict) -> Expected:
         raise ValueError(f"{case_id}: category must be one of {sorted(CATEGORIES)}")
     if min_severity not in SEVERITY_RANK:
         raise ValueError(f"{case_id}: unknown min_severity {min_severity!r}")
-    if lo > hi or lo < 1:
-        raise ValueError(f"{case_id}: bad line_range {[lo, hi]}")
+    alternatives = []
+    for alt in item.get("alternatives") or []:
+        if not isinstance(alt, dict) or "file" not in alt:
+            raise ValueError(f"{case_id}: malformed alternative {alt!r}")
+        alternatives.append(
+            (str(alt["file"]), _parse_range(case_id, alt.get("line_range")))
+        )
     return Expected(
         file=file,
         line_range=(lo, hi),
         category=category if isinstance(category, str) else cats,
         min_severity=min_severity,
+        alternatives=tuple(alternatives),
     )
 
 

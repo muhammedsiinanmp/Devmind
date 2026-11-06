@@ -26,3 +26,7 @@ expected:
   line_range: [9, 10]
   category: tests
   min_severity: info
+  # A "missing test" finding may also point at the test file that was changed.
+  alternatives:
+  - file: tests/test_pricing.py
+    line_range: [3, 6]
