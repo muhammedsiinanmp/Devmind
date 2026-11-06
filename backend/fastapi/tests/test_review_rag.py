@@ -168,6 +168,12 @@ class FakeVectorStore(VectorStore):
 class FakeSession:
     def __init__(self):
         self.rollbacks = 0
+        # SQL text of statements executed directly on the session (the fake
+        # store's own methods don't use it)
+        self.statements: list[str] = []
+
+    async def execute(self, statement):
+        self.statements.append(str(statement))
 
     async def rollback(self):
         self.rollbacks += 1
@@ -454,6 +460,15 @@ class TestBatchedEmbeddingCalls:
         assert embedding_api.calls("RETRIEVAL_QUERY") == 2
         assert embedding_api.calls("RETRIEVAL_DOCUMENT") == 2
         assert embedding_api.sessions_open_during_calls == [0, 0, 0, 0]
+
+
+class TestIterativeScan:
+    @pytest.mark.asyncio
+    async def test_search_session_enables_hnsw_iterative_scan_once(self, fake_store):
+        await _review(_diff_with_files(3), pr_number=3)
+
+        executed = [s.statements for s in SESSIONS]
+        assert executed.count(["SET LOCAL hnsw.iterative_scan = relaxed_order"]) == 1
 
 
 class TestStoreStopsOnSystemicDbErrors:

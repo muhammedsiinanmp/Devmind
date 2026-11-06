@@ -12,6 +12,8 @@ from typing import Optional
 
 import httpx
 from sqlalchemy import select
+from sqlalchemy import text as sql_text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import get_settings
@@ -72,18 +74,47 @@ class VectorStore:
         self.embedding_model = settings.embedding_model
         self._cache = _BoundedCache(maxsize=1000)
         self._client: Optional[httpx.AsyncClient] = None
+        self._closed = False
+        self._iterative_scan_warned = False
 
     def _get_client(self) -> httpx.AsyncClient:
         """One HTTP client shared by every embedding call, so its connection
         pool is reused instead of opening a new client per call."""
+        if self._closed:
+            # After aclose() (app shutdown) a new client would never be closed.
+            raise VectorStoreError("Vector store is closed")
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(timeout=30.0)
         return self._client
 
     async def aclose(self) -> None:
+        """Close the shared HTTP client. Later embedding calls raise."""
+        self._closed = True
         if self._client is not None and not self._client.is_closed:
             await self._client.aclose()
         self._client = None
+
+    async def enable_iterative_scan(self, session: AsyncSession) -> None:
+        """Let the HNSW index keep scanning until enough rows pass the
+        repository and source_ref filters (pgvector 0.8+). Without it, a
+        filtered search can return fewer than top_k rows.
+
+        Lasts until the session's transaction ends. On a pgvector without
+        the setting, the error is logged once and search runs without it.
+        """
+        try:
+            await session.execute(
+                sql_text("SET LOCAL hnsw.iterative_scan = relaxed_order")
+            )
+        except DBAPIError as exc:
+            # The failed SET aborts the transaction; start a clean one.
+            await session.rollback()
+            if not self._iterative_scan_warned:
+                self._iterative_scan_warned = True
+                logger.warning(
+                    "vector_store.iterative_scan_unavailable error=%s",
+                    type(exc).__name__,
+                )
 
     async def generate_embedding(
         self,
@@ -310,6 +341,7 @@ class VectorStore:
         query_embedding = await self.generate_embedding(
             query_text, task_type="RETRIEVAL_QUERY"
         )
+        await self.enable_iterative_scan(session)
         return await self.search_similar_by_embedding(
             session=session,
             query_embedding=query_embedding,
@@ -331,7 +363,8 @@ class VectorStore:
         """Search with a precomputed RETRIEVAL_QUERY embedding.
 
         Ordered by cosine distance, which the HNSW index on
-        code_embeddings.embedding (vector_cosine_ops) serves.
+        code_embeddings.embedding (vector_cosine_ops) serves. Call
+        enable_iterative_scan on the session first.
         """
         distance_col = CodeEmbedding.embedding.cosine_distance(query_embedding).label(
             "distance"
@@ -365,6 +398,9 @@ class VectorStore:
                         chunk_type=emb.chunk_type,
                     )
                 )
+
+        # relaxed_order iterative scans can return rows slightly out of order.
+        results.sort(key=lambda chunk: -chunk.similarity)
 
         # No query text here: it is code from the diff being reviewed.
         logger.info(

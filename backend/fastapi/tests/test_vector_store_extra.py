@@ -8,6 +8,8 @@ import logging
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from sqlalchemy.exc import ProgrammingError
+
 from services.vector_store import VectorStore, VectorStoreError
 
 
@@ -123,3 +125,100 @@ class TestVectorStoreEdgeCases:
         messages = [r.getMessage() for r in caplog.records]
         assert any("vector_store.search" in m for m in messages)
         assert not any("hunter2" in m for m in messages)
+
+
+class _RecordingSession:
+    """Session double that records SQL and returns canned search rows."""
+
+    def __init__(self, rows=(), fail_set=False):
+        self.statements: list[str] = []
+        self.rows = list(rows)
+        self.fail_set = fail_set
+        self.rollbacks = 0
+
+    async def execute(self, statement):
+        sql = str(statement)
+        self.statements.append(sql)
+        if sql.startswith("SET LOCAL") and self.fail_set:
+            raise ProgrammingError(
+                sql, {}, Exception('unrecognized parameter "hnsw.iterative_scan"')
+            )
+        result = MagicMock()
+        result.all.return_value = self.rows
+        return result
+
+    async def rollback(self):
+        self.rollbacks += 1
+
+
+def _row(path: str, distance: float):
+    emb = MagicMock(
+        chunk_text="x", file_path=path, language="python", chunk_type="hunk"
+    )
+    return (emb, distance)
+
+
+class TestIterativeScan:
+    @pytest.mark.asyncio
+    async def test_search_similar_enables_iterative_scan_before_searching(self):
+        store = VectorStore()
+        session = _RecordingSession()
+
+        with patch.object(
+            store, "generate_embedding", new=AsyncMock(return_value=[0.1] * 768)
+        ):
+            await store.search_similar(session, "q", "owner/repo")
+
+        assert session.statements[0] == (
+            "SET LOCAL hnsw.iterative_scan = relaxed_order"
+        )
+        assert "FROM code_embeddings" in session.statements[1]
+
+    @pytest.mark.asyncio
+    async def test_unsupported_setting_is_logged_once_and_search_still_runs(
+        self, caplog
+    ):
+        store = VectorStore()
+        session = _RecordingSession(rows=[_row("a.py", 0.1)], fail_set=True)
+
+        with patch.object(
+            store, "generate_embedding", new=AsyncMock(return_value=[0.1] * 768)
+        ):
+            with caplog.at_level(logging.WARNING, logger="services.vector_store"):
+                first = await store.search_similar(session, "q", "owner/repo")
+                second = await store.search_similar(session, "q", "owner/repo")
+
+        assert [c.file_path for c in first] == ["a.py"]
+        assert [c.file_path for c in second] == ["a.py"]
+        assert session.rollbacks == 2
+        warnings = [
+            r.getMessage()
+            for r in caplog.records
+            if "iterative_scan_unavailable" in r.getMessage()
+        ]
+        assert len(warnings) == 1
+
+    @pytest.mark.asyncio
+    async def test_results_are_sorted_by_similarity(self):
+        # relaxed_order may return rows slightly out of distance order
+        store = VectorStore()
+        session = _RecordingSession(rows=[_row("b.py", 0.3), _row("a.py", 0.1)])
+
+        results = await store.search_similar_by_embedding(
+            session, [0.1] * 768, "owner/repo"
+        )
+
+        assert [c.file_path for c in results] == ["a.py", "b.py"]
+
+
+class TestClose:
+    @pytest.mark.asyncio
+    async def test_embedding_after_close_raises_and_opens_no_client(self):
+        store = VectorStore()
+        store._get_client()
+
+        await store.aclose()
+
+        with pytest.raises(VectorStoreError, match="closed"):
+            await store.generate_embedding("text")
+        assert store._client is None

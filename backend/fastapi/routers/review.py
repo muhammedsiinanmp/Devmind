@@ -86,6 +86,8 @@ async def _prepare_rag_context(
             [text[:4000] for text in hunk_texts], task_type="RETRIEVAL_QUERY"
         )
         async with AsyncSessionLocal() as session:
+            if query_embeddings:
+                await vector_store.enable_iterative_scan(session)
             for query_embedding in query_embeddings:
                 results = await vector_store.search_similar_by_embedding(
                     session=session,
