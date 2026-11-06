@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "case_id": "path-traversal",
+  "case_sha256": "678de5385b1802840bfa5bbfb6437fe5f320160b74debf8d33be07263d03b235",
+  "latency_ms": 2425,
+  "calls": [
+    {
+      "prompt_sha256": "31652ede8008c5cdc98728a5c375fc2b9e5971da288c543f8c02c065d63b9c01",
+      "response": "{\"findings\": [{\"file_path\": \"files/download.py\", \"line_number\": 7, \"category\": \"security\", \"severity\": \"critical\", \"body\": \"The function concatenates a user-supplied filename with UPLOAD_DIR using os.path.join without validating the filename, allowing directory traversal (e.g., \\\"../secret.txt\\\") to read arbitrary files outside the intended upload directory.\", \"suggested_fix\": \"def read_upload(filename):\\n    # Prevent path traversal by sanitizing the filename\\n    safe_name = os.path.basename(filename)\\n    path = os.path.join(UPLOAD_DIR, safe_name)\\n    # Optional: further verify the resolved path stays within UPLOAD_DIR\\n    # abs_path = os.path.abspath(path)\\n    # if not abs_path.startswith(os.path.abspath(UPLOAD_DIR) + os.sep):\\n    #     raise ValueError(\\\"Invalid filename\\\")\\n    with open(path, \\\"rb\\\") as fh:\\n        return fh.read()\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 705,
+      "completion_tokens": 502
+    },
+    {
+      "prompt_sha256": "e9e05ed47f0cea5f5d1a9f9cc9a9981bc29e36e46eb4740e4697a485b92f0957",
+      "response": "{\"findings\":[{\"file_path\":\"files/download.py\",\"line_number\":7,\"category\":\"security\",\"severity\":\"critical\",\"body\":\"The filename is concatenated to UPLOAD_DIR without any validation, enabling directory traversal attacks (e.g., \\\"../secret.txt\\\").\",\"suggested_fix\":\"def read_upload(filename):\\n    # Reject path separators and parent directory references\\n    if os.path.sep in filename or \\\"..\\\" in filename:\\n        raise ValueError(\\\"Invalid filename\\\")\\n    path = os.path.join(UPLOAD_DIR, filename)\\n    ...\"},{\"file_path\":\"files/download.py\",\"line_number\":8,\"category\":\"error handling\",\"severity\":\"warning\",\"body\":\"Opening the file may raise FileNotFoundError, PermissionError, etc., which are not caught, causing the server to crash.\",\"suggested_fix\":\"try:\\n    with open(path, \\\"rb\\\") as fh:\\n        return fh.read()\\nexcept (FileNotFoundError, PermissionError) as e:\\n    # handle error appropriately, e.g., log and re‑raise a custom exception\\n    raise IOError(f\\\"Unable to read upload: {e}\\\")\"},{\"file_path\":\"files/download.py\",\"line_number\":3,\"category\":\"config\",\"severity\":\"info\",\"body\":\"UPLOAD_DIR is hard‑coded, making the code less portable and harder to configure for different environments.\",\"suggested_fix\":\"UPLOAD_DIR = os.getenv(\\\"UPLOAD_DIR\\\", \\\"/srv/uploads\\\")\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 699,
+      "completion_tokens": 590
+    },
+    {
+      "prompt_sha256": "4b40af13ebe127907e05f9f9cf6727819acff7fd37484499a7d4dc3a24767317",
+      "response": "{\"findings\":[{\"file_path\":\"files/download.py\",\"line_number\":7,\"category\":\"security\",\"severity\":\"critical\",\"body\":\"The function concatenates user‑provided filename directly with UPLOAD_DIR using os.path.join, allowing directory traversal attacks (e.g., \\\"../secret.txt\\\").\",\"suggested_fix\":\"def read_upload(filename):\\n    # Resolve the absolute path and ensure it stays within UPLOAD_DIR\\n    safe_path = os.path.abspath(os.path.join(UPLOAD_DIR, filename))\\n    if not safe_path.startswith(os.path.abspath(UPLOAD_DIR) + os.sep):\\n        raise ValueError(\\\"Invalid filename: path traversal detected\\\")\\n    with open(safe_path, \\\"rb\\\") as fh:\\n        return fh.read()\"},{\"file_path\":\"files/download.py\",\"line_number\":8,\"category\":\"quality\",\"severity\":\"error\",\"body\":\"No error handling for missing or unreadable files; open() will raise an uncaught exception, making the API brittle and hard to test.\",\"suggested_fix\":\"try:\\n        with open(safe_path, \\\"rb\\\") as fh:\\n            return fh.read()\\n    except FileNotFoundError:\\n        raise FileNotFoundError(f\\\"Upload '{filename}' not found\\\")\\n    except OSError as e:\\n        raise OSError(f\\\"Error reading upload '{filename}': {e}\\\")\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 695,
+      "completion_tokens": 463
+    }
+  ]
+}

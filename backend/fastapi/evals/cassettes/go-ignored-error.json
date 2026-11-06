@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "case_id": "go-ignored-error",
+  "case_sha256": "f84da515cdc88d835a07e8452331993277a9500954614fcb5cf85797ee8b4775",
+  "latency_ms": 2853,
+  "calls": [
+    {
+      "prompt_sha256": "b8a5e8dbb0e0ec2738364a3c5a43c20b45e50cd34d356ef47e2fbb786a3ca6ba",
+      "response": "{\"findings\":[{\"file_path\":\"export/csv.go\",\"line_number\":32,\"category\":\"quality\",\"severity\":\"warning\",\"body\":\"The call to f.Close() ignores any error returned, potentially hiding file close failures. Errors should be checked and propagated.\",\"suggested_fix\":\"if err := f.Close(); err != nil {\\n    return err\\n}\"},{\"file_path\":\"export/csv.go\",\"line_number\":30,\"category\":\"quality\",\"severity\":\"warning\",\"body\":\"The removal of w.Error() check means CSV write errors are no longer detected, which can lead to silent data loss.\",\"suggested_fix\":\"if err := w.Error(); err != nil {\\n    return err\\n}\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 695,
+      "completion_tokens": 331
+    },
+    {
+      "prompt_sha256": "958a3e150a17da94d27868f124a708990b7eb7ab55ceeef00a54b3ad4405828d",
+      "response": "{\"findings\":[{\"file_path\":\"export/csv.go\",\"line_number\":32,\"category\":\"testing\",\"severity\":\"warning\",\"body\":\"The removal of error handling for csv.Writer and file close means failures are silently ignored. Existing tests likely don't cover these error paths, reducing confidence in error handling behavior.\",\"suggested_fix\":\"Add tests that simulate csv.Writer errors (e.g., by using a writer that returns an error) and file close errors (e.g., by mocking os.File.Close) to ensure the function propagates errors appropriately.\"},{\"file_path\":\"export/csv.go\",\"line_number\":30,\"category\":\"quality\",\"severity\":\"warning\",\"body\":\"Calling w.WriteAll(rows) without checking w.Error() can hide write errors. Tests should verify that write errors are handled.\",\"suggested_fix\":\"Reintroduce error checking after WriteAll, e.g., if err := w.Error(); err != nil { f.Close(); return err } and add corresponding tests for write failure scenarios.\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 685,
+      "completion_tokens": 419
+    },
+    {
+      "prompt_sha256": "bf1eaff6b1a85e62a82afa514c9daefd18be644a9d19eabdf23abd73885ef7f5",
+      "response": "{\"findings\":[{\"file_path\":\"export/csv.go\",\"line_number\":31,\"category\":\"error handling\",\"severity\":\"error\",\"body\":\"The error returned by w.WriteAll(rows) is ignored, which can hide write failures.\",\"suggested_fix\":\"if err := w.WriteAll(rows); err != nil {\\n    f.Close()\\n    return err\\n}\"},{\"file_path\":\"export/csv.go\",\"line_number\":32,\"category\":\"error handling\",\"severity\":\"error\",\"body\":\"The error from f.Close() is ignored, potentially losing file‑close errors.\",\"suggested_fix\":\"if err := f.Close(); err != nil {\\n    return err\\n}\" }]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 689,
+      "completion_tokens": 630
+    }
+  ]
+}

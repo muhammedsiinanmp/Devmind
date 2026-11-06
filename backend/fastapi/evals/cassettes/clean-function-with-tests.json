@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "case_id": "clean-function-with-tests",
+  "case_sha256": "a71489b9c7b467cf1a7e5517822215ad4bbbd4f4d11de653b1eb029191fd7eba",
+  "latency_ms": 2920,
+  "calls": [
+    {
+      "prompt_sha256": "356e0bd854c3497cf45c96769dbaa8a0be7b8618265b60e6e595f6277029df97",
+      "response": "{\"findings\": []}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 798,
+      "completion_tokens": 197
+    },
+    {
+      "prompt_sha256": "f0ecf8ca66a2a42901ba952b0e5a025734239910990e146c0ced444920d85871",
+      "response": "{\"findings\":[{\"file_path\":\"tests/test_slug.py\",\"line_number\":9,\"category\":\"coverage\",\"severity\":\"warning\",\"body\":\"Missing test for handling of non-ASCII/Unicode characters, which may be stripped by the regex and affect slug output.\",\"suggested_fix\":\"def test_slugify_unicode_characters():\\n    assert slugify(\\\"Café Münchën\\\") == \\\"caf-munchen\\\"  # expected behavior based on current regex, consider updating implementation if needed\\n\"},{\"file_path\":\"tests/test_slug.py\",\"line_number\":9,\"category\":\"coverage\",\"severity\":\"warning\",\"body\":\"Missing test for non-string inputs (e.g., None, int) to ensure the function raises a clear TypeError instead of an AttributeError.\",\"suggested_fix\":\"import pytest\\n\\ndef test_slugify_non_string_input():\\n    with pytest.raises(AttributeError):\\n        slugify(None)\\n    with pytest.raises(AttributeError):\\n        slugify(123)\\n\"},{\"file_path\":\"tests/test_slug.py\",\"line_number\":9,\"category\":\"coverage\",\"severity\":\"info\",\"body\":\"Consider adding tests for titles containing underscores, hyphens, and multiple spaces to verify they are normalized correctly.\",\"suggested_fix\":\"def test_slugify_special_separators():\\n    assert slugify(\\\"hello_world\\\") == \\\"hello-world\\\"\\n    assert slugify(\\\"hello   world\\\") == \\\"hello-world\\\"\\n    assert slugify(\\\"hello-world\\\") == \\\"hello-world\\\"\\n\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 788,
+      "completion_tokens": 633
+    },
+    {
+      "prompt_sha256": "55587c9f650e29c01f873d56274802c565197321b5661bedea0bbb84291a95cf",
+      "response": "{\"findings\": [{\"file_path\": \"text/slug.py\", \"line_number\": 4, \"category\": \"quality\", \"severity\": \"warning\", \"body\": \"The function does not validate that 'title' is a string, which could raise an AttributeError if None or non‑string is passed.\", \"suggested_fix\": \"def slugify(title: str) -> str:\\n    if not isinstance(title, str):\\n        raise TypeError(\\\"title must be a string\\\")\\n    words = re.findall(r\\\"[a-z0-9]+\\\", title.lower())\\n    return \\\"-\\\".join(words) or \\\"untitled\\\"\"}, {\"file_path\": \"text/slug.py\", \"line_number\": 4, \"category\": \"quality\", \"severity\": \"info\", \"body\": \"The function lacks a docstring and could benefit from a compiled regular expression for repeated calls.\", \"suggested_fix\": \"import re\\n_slug_regex = re.compile(r\\\"[a-z0-9]+\\\")\\n\\ndef slugify(title: str) -> str:\\n    \\\"\\\"\\\"Convert a title to a URL‑friendly slug.\\n\\n    Non‑alphanumeric characters are removed, words are lower‑cased and joined\\n    by hyphens. Returns \\\"untitled\\\" when no alphanumeric characters are found.\\n    \\\"\\\"\\\"\\n    words = _slug_regex.findall(title.lower())\\n    return \\\"-\\\".join(words) or \\\"untitled\\\"\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 792,
+      "completion_tokens": 893
+    }
+  ]
+}
