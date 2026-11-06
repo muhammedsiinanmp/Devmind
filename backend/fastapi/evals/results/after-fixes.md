@@ -2,7 +2,7 @@
 
 **Scored 27 of 27 cases.**
 
-- Commit: `bccc370eec4edb600731670a43f89c20bf20111d` (uncommitted or untracked files present)
+- Commit: `01095e380ba9080d73e1f6a0aba689dab69c3dd1`
 - Date (UTC): n/a (not stored in cassettes)
 - Models used: groq/openai/gpt-oss-120b
 - Run flags: {"allow_partial": false, "only": null, "pause": 0.0, "provider": null, "record": false}
