@@ -1,8 +1,21 @@
 import os
 from functools import lru_cache
+from typing import Annotated, Literal
 
-from pydantic import Field
+from pydantic import BeforeValidator, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _empty_as_none(value: object) -> object:
+    return None if isinstance(value, str) and not value.strip() else value
+
+
+# A server provider's temperature setting: a number, "omit" (send none), or
+# None (use the caller's temperature). An empty variable counts as None.
+ProviderTemperature = Annotated[
+    Annotated[float, Field(ge=0.0, le=2.0)] | Literal["omit"] | None,
+    BeforeValidator(_empty_as_none),
+]
 
 # Generated or vendored files a review skips (REVIEW_SKIP_PATTERNS).
 # Matched against the file's path and against its name, so "uv.lock" also
@@ -69,6 +82,15 @@ class Settings(BaseSettings):
 
     # Sampling temperature for review analyzer calls (REVIEW_TEMPERATURE).
     review_temperature: float = Field(default=0.1, ge=0.0, le=2.0)
+    # Per-provider overrides for the server providers (GOOGLE_TEMPERATURE,
+    # GROQ_TEMPERATURE): a number from 0 to 2 replaces the caller's
+    # temperature, "omit" sends no temperature (the provider's default
+    # applies), and unset or empty uses the caller's (REVIEW_TEMPERATURE for
+    # reviews). Google's docs for all Gemini 3.x models recommend not changing
+    # the sampling defaults and removing temperature from requests, so Google
+    # omits it by default.
+    google_temperature: ProviderTemperature = "omit"
+    groq_temperature: ProviderTemperature = None
 
     # Large diffs are reviewed in batches of whole files that each fit one
     # prompt. At most REVIEW_MAX_BATCHES batches per review (files beyond it
