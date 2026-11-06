@@ -1,7 +1,7 @@
 """Load and validate eval cases from evals/cases/*.yaml."""
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import yaml
@@ -38,11 +38,50 @@ class Case:
     diff: str
     expected: list[Expected]
     feedback: tuple[FeedbackItem, ...] = ()
+    # Set by without_feedback() on a case that had feedback.
+    feedback_removed: bool = False
 
     @property
     def digest(self) -> str:
         """Hash of the diff; cassettes recorded for an older diff are stale."""
         return hashlib.sha256(self.diff.encode()).hexdigest()
+
+    @property
+    def cassette_stem(self) -> str:
+        """
+        Cassette file name without ".json". A feedback case run without its
+        examples (--no-feedback) sends other prompts, so it has its own
+        cassette, ``<id>.no-feedback.json``.
+        """
+        return f"{self.id}.no-feedback" if self.feedback_removed else self.id
+
+    def without_feedback(self) -> "Case":
+        """This case with no feedback examples (unchanged if it had none)."""
+        if not self.feedback:
+            return self
+        return replace(self, feedback=(), feedback_removed=True)
+
+    def feedback_context(self):
+        """The examples as the review agent's ``feedback`` argument, formatted
+        by the same code production uses; None without examples."""
+        if not self.feedback:
+            return None
+        from services.feedback_store import FeedbackExample, feedback_context
+
+        def examples(signal: str) -> list:
+            return [
+                FeedbackExample(
+                    file_path=f.file_path,
+                    category=f.category,
+                    severity=f.severity,
+                    body=f.body,
+                    code=f.code,
+                )
+                for f in self.feedback
+                if f.signal == signal
+            ]
+
+        return feedback_context(examples("accepted"), examples("rejected"))
 
 
 def _parse_range(case_id: str, raw: object) -> tuple[int, int]:

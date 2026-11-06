@@ -101,9 +101,11 @@ def harness_sha256() -> str:
 
 
 def case_set_sha256(cases: list[Case]) -> str:
-    """Hash of the case ids, diffs and labels that were scored."""
+    """Hash of the case ids, diffs, labels and feedback examples that were scored."""
     payload = [
         {"id": c.id, "diff": c.digest, "expected": [asdict(e) for e in c.expected]}
+        # Only cases with examples carry the key, so other hashes are unchanged.
+        | ({"feedback": [asdict(f) for f in c.feedback]} if c.feedback else {})
         for c in cases
     ]
     return hashlib.sha256(
@@ -213,14 +215,19 @@ async def _run_agent(case: Case, generate) -> dict:
         patch.object(llm_client, "generate", generate),
         patch.object(prompt_builder, "delimiter_nonce", lambda: EVAL_DELIMITER_NONCE),
     ):
-        return await run_review_agent(diff_text=case.diff, repo_full_name=REPO_NAME)
+        return await run_review_agent(
+            diff_text=case.diff,
+            repo_full_name=REPO_NAME,
+            # The case's feedback examples, given directly: no database.
+            feedback=case.feedback_context(),
+        )
 
 
 async def replay_case(case: Case, cassettes_dir: Path) -> CaseOutcome:
     outcome = CaseOutcome(case=case)
     try:
         cassette = load_cassette(
-            cassettes_dir / f"{case.id}.json", case.id, case.digest
+            cassettes_dir / f"{case.cassette_stem}.json", case.id, case.digest
         )
         outcome.latency_ms = cassette["latency_ms"]
         outcome.recorded_utc = cassette.get("recorded_utc")
@@ -261,7 +268,7 @@ async def live_case(case: Case, cassettes_dir: Path | None) -> CaseOutcome:
     # Save before scoring, so a case that fails scoring can still be replayed.
     if cassettes_dir is not None:
         save_cassette(
-            cassettes_dir / f"{case.id}.json",
+            cassettes_dir / f"{case.cassette_stem}.json",
             case.id,
             case.digest,
             recorder.calls,
@@ -600,6 +607,12 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--only", help="comma-separated case ids")
     parser.add_argument(
+        "--no-feedback",
+        action="store_true",
+        help="run feedback cases without their examples "
+        "(cassettes <case>.no-feedback.json)",
+    )
+    parser.add_argument(
         "--pause",
         type=float,
         default=0.0,
@@ -625,6 +638,8 @@ def main(argv: list[str] | None = None) -> int:
 
     only = set(args.only.split(",")) if args.only else None
     cases = load_cases(args.cases_dir, only)
+    if args.no_feedback:
+        cases = [case.without_feedback() for case in cases]
     if args.replay and not any(args.cassettes_dir.glob("*.json")):
         print(
             f"No cassettes in {args.cassettes_dir}. Record them for this code "
@@ -644,6 +659,7 @@ def main(argv: list[str] | None = None) -> int:
         "only": sorted(only) if only else None,
         "record": args.record,
         "allow_partial": args.allow_partial,
+        "feedback": not args.no_feedback,
     }
     if args.live:
         flags["temperatures"] = temperature_settings()
