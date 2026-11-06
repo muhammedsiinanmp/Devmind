@@ -11,6 +11,7 @@ Design rules enforced here:
 from __future__ import annotations
 
 import re
+import time
 from typing import TYPE_CHECKING, Any
 
 import requests
@@ -38,11 +39,22 @@ if TYPE_CHECKING:
 log: structlog.BoundLogger = structlog.get_logger(__name__)
 
 GITHUB_API_BASE = "https://api.github.com"
-GITHUB_WEBHOOK_EVENTS = ["pull_request", "push"]
+GITHUB_WEBHOOK_EVENTS = [
+    "pull_request",
+    "push",
+    # Replies to DevMind's comments and resolved threads (feedback learning).
+    "pull_request_review_comment",
+    "pull_request_review_thread",
+]
 GITHUB_WEBHOOK_URL_TEMPLATE = "{base}/api/v1/webhooks/github/"
 
 # Retry on transient server errors only — never retry auth failures
 _RETRYABLE_STATUS = frozenset({500, 502, 503, 504})
+
+# Paginated reads stop before the next page when fewer requests than this are
+# left in the token's hourly quota, so feedback polling never uses up the
+# quota that posting reviews needs.
+RATE_LIMIT_FLOOR = 100
 
 
 def _should_retry(exc: BaseException) -> bool:
@@ -82,7 +94,11 @@ class GitHubService:
             return
         if response.status_code == 401:
             raise GitHubAuthError("GitHub token is invalid or expired.")
-        if response.status_code == 403:
+        if response.status_code in (403, 429):
+            # Secondary rate limits send Retry-After (seconds) instead.
+            retry_after = response.headers.get("Retry-After", "")
+            if retry_after.isdigit():
+                raise GitHubRateLimitError(reset_at=int(time.time()) + int(retry_after))
             reset_at_raw = response.headers.get("X-RateLimit-Reset", "0")
             raise GitHubRateLimitError(reset_at=int(reset_at_raw))
         if response.status_code in _RETRYABLE_STATUS:
@@ -253,6 +269,48 @@ class GitHubService:
         )
         self._handle_response_errors(response)
         return response.text
+
+    def _get_all_pages(self, url: str) -> list[dict[str, Any]]:
+        """
+        GETs every page of a GitHub list endpoint, 100 items per page.
+
+        Raises GitHubRateLimitError instead of fetching another page when the
+        quota left is under RATE_LIMIT_FLOOR.
+        """
+        items: list[dict[str, Any]] = []
+        next_url: str | None = url
+        params: dict[str, int] = {"per_page": 100}
+        while next_url is not None:
+            response = self._session.get(next_url, params=params, timeout=30.0)
+            self._handle_response_errors(response)
+            items.extend(response.json())
+
+            link_header = response.headers.get("Link", "")
+            next_match = re.search(r'<([^>]+)>;\s*rel="next"', link_header)
+            if not next_match:
+                break
+            remaining = response.headers.get("X-RateLimit-Remaining", "")
+            if remaining.isdigit() and int(remaining) < RATE_LIMIT_FLOOR:
+                reset_at = response.headers.get("X-RateLimit-Reset", "")
+                raise GitHubRateLimitError(
+                    reset_at=int(reset_at) if reset_at.isdigit() else 0
+                )
+            next_url = next_match.group(1)
+            params = {}  # The next URL already carries the query string.
+        return items
+
+    def list_pull_request_review_comments(
+        self, repo_full_name: str, pr_number: int
+    ) -> list[dict[str, Any]]:
+        """
+        All inline review comments on a pull request, as GitHub returns them.
+
+        Each item has a "reactions" rollup ({"+1": n, "-1": n, ...}), so one
+        paginated call covers the reactions on every comment of the PR.
+        """
+        return self._get_all_pages(
+            f"{GITHUB_API_BASE}/repos/{repo_full_name}/pulls/{pr_number}/comments"
+        )
 
     def __del__(self) -> None:
         if hasattr(self, "_session") and self._session:
