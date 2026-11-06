@@ -6,8 +6,8 @@ posts, and for the README table that report generates.
 import asyncio
 import copy
 import json
-import shutil
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -120,6 +120,25 @@ def _replay(cassettes: Path, ids: set[str]) -> dict:
     return eval_run.build_report(outcomes, "replay", "abc", False, None)
 
 
+def _record_with_reply(cassettes: Path, case_id: str, reply: str) -> None:
+    """Record ``case_id`` from the current prompts, every call answered ``reply``."""
+    from services.llm_client import LLMProvider, LLMResponse, llm_client
+
+    async def generate(messages, *, user_id=None, **kwargs):
+        return LLMResponse(
+            content=reply,
+            model_used="fixture/hand-written",
+            provider=LLMProvider.CUSTOM,
+            prompt_tokens=1,
+            completion_tokens=1,
+        )
+
+    (case,) = load_cases(CASES_DIR, {case_id})
+    with patch.object(llm_client, "generate", generate):
+        outcome = asyncio.run(eval_run.live_case(case, cassettes))
+    assert outcome.error is None, outcome.error
+
+
 def test_prompt_change_reports_cassette_miss_and_no_metrics(tmp_path, after):
     """A changed prompt has no recorded response: say so, don't score."""
     case_id = "missing-await"
@@ -127,7 +146,9 @@ def test_prompt_change_reports_cassette_miss_and_no_metrics(tmp_path, after):
     for call in cassette["calls"]:
         call["prompt_sha256"] = "f" * 64  # as if the agent's prompt changed
     (tmp_path / f"{case_id}.json").write_text(json.dumps(cassette))
-    shutil.copy(CASSETTES / "xss-innerhtml.json", tmp_path / "xss-innerhtml.json")
+    # A cassette that matches today's prompts, whether or not the committed
+    # ones have been re-recorded since the last prompt change.
+    _record_with_reply(tmp_path, "xss-innerhtml", '{"findings": []}')
 
     current = _replay(tmp_path, {case_id, "xss-innerhtml"})
     assert eval_compare.cassette_misses(current) == [case_id]

@@ -4,6 +4,8 @@ Tests for scripts/providers_check.py (`make providers-check`).
 HTTP is mocked with httpx.MockTransport; no provider is contacted.
 """
 
+import json
+
 import httpx
 import pytest
 
@@ -11,6 +13,7 @@ from scripts import providers_check
 
 GOOGLE_KEY = "AIzaFAKE-google-key-0123456789"
 GROQ_KEY = "gsk_FAKE_groq_key_0123456789"
+OK_CHOICE = {"message": {"content": "OK"}, "finish_reason": "stop"}
 
 
 @pytest.fixture(autouse=True)
@@ -46,7 +49,7 @@ def _transport(
                 200,
                 json={
                     "data": [
-                        {"id": "models/gemini-3.5-flash"},
+                        {"id": "models/gemini-3.6-flash"},
                         {"id": "openai/gpt-oss-120b"},
                     ]
                 },
@@ -54,7 +57,7 @@ def _transport(
         status = chat_status.get(host, 200)
         # Echo the auth header back, as a hostile or verbose provider might
         auth = request.headers.get("authorization", "")
-        return httpx.Response(status, json={"error": auth, "choices": []})
+        return httpx.Response(status, json={"error": auth, "choices": [OK_CHOICE]})
 
     return httpx.MockTransport(handler)
 
@@ -67,13 +70,13 @@ def test_reports_each_provider_and_exits_zero_when_one_works(capsys):
     out = capsys.readouterr().out
 
     assert code == 0
-    assert "google" in out and "gemini-3.5-flash" in out
+    assert "google" in out and "gemini-3.6-flash" in out
     assert "groq" in out and "openai/gpt-oss-120b" in out
     assert "model_not_found" in out
     assert "Working: google" in out
     # It sent the configured model to each provider
     chat_bodies = [r.content for r in seen if r.url.path.endswith("/chat/completions")]
-    assert any(b"gemini-3.5-flash" in b for b in chat_bodies)
+    assert any(b"gemini-3.6-flash" in b for b in chat_bodies)
     assert any(b"openai/gpt-oss-120b" in b for b in chat_bodies)
 
 
@@ -142,7 +145,7 @@ def _google_404(message: str) -> httpx.MockTransport:
             return _embed_response(request, 768)
         if request.url.path.endswith("/models"):
             return httpx.Response(
-                200, json={"data": [{"id": "models/gemini-3.5-flash"}]}
+                200, json={"data": [{"id": "models/gemini-3.6-flash"}]}
             )
         if request.url.host == "generativelanguage.googleapis.com":
             # Google's OpenAI-compatible endpoint wraps the error in a list
@@ -156,7 +159,7 @@ def _google_404(message: str) -> httpx.MockTransport:
 
 def test_404_prints_the_providers_error_message(capsys):
     message = (
-        "This model models/gemini-3.5-flash is no longer available to new "
+        "This model models/gemini-3.6-flash is no longer available to new "
         "users. Please update your code to use a newer model."
     )
 
@@ -188,6 +191,61 @@ def test_404_error_message_never_shows_a_key(capsys):
     assert "google error:" in out
     assert GOOGLE_KEY not in out
     assert GOOGLE_KEY[: len(GOOGLE_KEY) // 2] not in out
+
+
+def _google_replies(choice: dict) -> httpx.MockTransport:
+    """Google answers the chat 200 with ``choice``; Groq is down."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith(":batchEmbedContents"):
+            return _embed_response(request, 768)
+        if request.url.path.endswith("/models"):
+            return httpx.Response(
+                200, json={"data": [{"id": "models/gemini-3.6-flash"}]}
+            )
+        if request.url.host == "generativelanguage.googleapis.com":
+            return httpx.Response(200, json={"choices": [choice]})
+        return httpx.Response(503, json={})
+
+    return httpx.MockTransport(handler)
+
+
+@pytest.mark.parametrize(
+    ("choice", "status"),
+    [
+        (
+            {"message": {"content": '{"'}, "finish_reason": "length"},
+            "warn: truncated (length)",
+        ),
+        ({"message": {"content": ""}, "finish_reason": "stop"}, "warn: empty reply"),
+        ({"message": {"content": None}, "finish_reason": "stop"}, "warn: empty reply"),
+        ({"finish_reason": "stop"}, "warn: empty reply"),
+    ],
+    ids=["cut_by_max_tokens", "empty", "null", "no_message"],
+)
+def test_a_200_without_a_usable_reply_is_a_warning_not_working(capsys, choice, status):
+    code = providers_check.main(transport=_google_replies(choice))
+    out = capsys.readouterr().out
+
+    assert code == 1
+    assert status in out
+    assert "google warning: HTTP 200 but the reply is not usable" in out
+    assert "Working:" not in out
+
+
+def test_a_full_reply_is_ok():
+    assert providers_check.main(transport=_google_replies(OK_CHOICE)) == 0
+
+
+def test_chat_probe_leaves_room_for_reasoning_tokens():
+    seen: list[httpx.Request] = []
+
+    providers_check.main(transport=_transport({}, seen))
+
+    chats = [r for r in seen if r.url.path.endswith("/chat/completions")]
+    assert chats
+    for request in chats:
+        assert json.loads(request.content)["max_tokens"] == 256
 
 
 def _embedding_lines(out: str) -> list[str]:

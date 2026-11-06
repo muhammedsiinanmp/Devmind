@@ -1,8 +1,24 @@
 import os
 from functools import lru_cache
+from typing import Annotated, Literal
 
-from pydantic import Field
+from pydantic import BeforeValidator, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+def _normalise_provider_temperature(value: object) -> object:
+    """Strip and lowercase a string (" OMIT " becomes "omit"); empty is None."""
+    if isinstance(value, str):
+        return value.strip().lower() or None
+    return value
+
+
+# A server provider's temperature setting: a number, "omit" (send none), or
+# None (use the caller's temperature). An empty variable counts as None.
+ProviderTemperature = Annotated[
+    Annotated[float, Field(ge=0.0, le=2.0)] | Literal["omit"] | None,
+    BeforeValidator(_normalise_provider_temperature),
+]
 
 # Generated or vendored files a review skips (REVIEW_SKIP_PATTERNS).
 # Matched against the file's path and against its name, so "uv.lock" also
@@ -62,13 +78,25 @@ class Settings(BaseSettings):
 
     # Server provider models. Pinned stable IDs rather than "-latest" aliases,
     # so a provider-side alias change can't silently change review output.
-    google_model: str = "gemini-3.5-flash"
+    # gemini-3.5-flash is deprecated (Google routes it to gemini-3.6-flash);
+    # gemini-3.6-flash answered a JSON-mode request with no temperature on
+    # 2026-11-06. gemini-3.8-flash returned 503 "high demand" that day.
+    google_model: str = "gemini-3.6-flash"
     groq_model: str = "openai/gpt-oss-120b"
     # Seconds /health caches each provider's model listing
     llm_health_cache_seconds: int = 300
 
     # Sampling temperature for review analyzer calls (REVIEW_TEMPERATURE).
     review_temperature: float = Field(default=0.1, ge=0.0, le=2.0)
+    # Per-provider overrides for the server providers (GOOGLE_TEMPERATURE,
+    # GROQ_TEMPERATURE): a number from 0 to 2 replaces the caller's
+    # temperature, "omit" sends no temperature (the provider's default
+    # applies), and unset or empty uses the caller's (REVIEW_TEMPERATURE for
+    # reviews). Google's docs for all Gemini 3.x models recommend not changing
+    # the sampling defaults and removing temperature from requests, so Google
+    # omits it by default.
+    google_temperature: ProviderTemperature = "omit"
+    groq_temperature: ProviderTemperature = None
 
     # Large diffs are reviewed in batches of whole files that each fit one
     # prompt. At most REVIEW_MAX_BATCHES batches per review (files beyond it

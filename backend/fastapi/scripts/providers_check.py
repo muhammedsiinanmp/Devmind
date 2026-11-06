@@ -2,12 +2,18 @@
 Check which server LLM providers and models are reachable.
 
 For each provider in the server failover chain (a provider is in the chain
-when its key is set), list the provider's models and send one tiny chat
-completion to the configured model. Prints provider, model, whether the
-model is listed, the chat result and its latency. On a 404 it also prints
+when its key is set), list the provider's models and send one short chat
+completion (CHAT_MAX_TOKENS) to the configured model. Prints provider,
+model, whether the model is listed, the chat result and its latency. On a
+404 it also prints
 the first 150 characters of the provider's error message, with keys
 redacted. It never prints keys or other response bodies. Exits 1 if no
 provider completes the chat.
+
+A 200 only counts as ok when the reply has text and wasn't cut at
+max_tokens. Gemini 3.x reasoning tokens count against max_tokens, so a
+small limit can return a 200 with an empty or cut-off reply; that is
+reported as a warning ("warn: ...") and doesn't count as working.
 
 The chat request is the authoritative check: a model can be listed yet not
 usable (Google lists models that are closed to new keys).
@@ -36,6 +42,9 @@ from services.llm_client import LLMConfig, _init_model_chain, model_ids
 from services.vector_store import VectorStore, VectorStoreError
 
 PROMPT = [{"role": "user", "content": "Reply with the single word OK."}]
+# Enough for a thinking model's reasoning plus "OK"; with 64, Gemini 3.x was
+# seen to return only the first characters of a reply.
+CHAT_MAX_TOKENS = 256
 
 
 @dataclass
@@ -79,6 +88,21 @@ def _error_message(response: httpx.Response, secrets: list[str]) -> str:
     return message
 
 
+def _reply_status(response: httpx.Response) -> str:
+    """``ok`` for a 200 whose reply has text and wasn't cut, else a warning."""
+    try:
+        choice = response.json()["choices"][0]
+        content = (choice.get("message") or {}).get("content") or ""
+        finish_reason = choice.get("finish_reason")
+    except (ValueError, KeyError, IndexError, TypeError, AttributeError):
+        return "warn: no reply in body"
+    if finish_reason == "length":
+        return "warn: truncated (length)"
+    if not str(content).strip():
+        return "warn: empty reply"
+    return "ok"
+
+
 def check_provider(
     config: LLMConfig, client: httpx.Client, secrets: list[str]
 ) -> ProviderResult:
@@ -101,11 +125,21 @@ def check_provider(
         response = client.post(
             f"{base_url}/chat/completions",
             headers=headers,
-            json={"model": config.model, "messages": PROMPT, "max_tokens": 32},
+            json={
+                "model": config.model,
+                "messages": PROMPT,
+                "max_tokens": CHAT_MAX_TOKENS,
+            },
         )
         latency_ms = round((time.perf_counter() - started) * 1000)
         if response.status_code == 200:
-            chat = "ok"
+            chat = _reply_status(response)
+            if chat != "ok":
+                detail = (
+                    f"HTTP 200 but the reply is not usable at "
+                    f"max_tokens={CHAT_MAX_TOKENS}; reasoning tokens count "
+                    "against max_tokens"
+                )
         elif response.status_code == 404:
             chat = "http 404 (model_not_found)"
             # e.g. a model that is listed but closed to new keys
@@ -221,7 +255,8 @@ def main(transport: httpx.BaseTransport | None = None) -> int:
         latency = f"{r.latency_ms} ms" if r.latency_ms is not None else "-"
         emit(f"{r.provider:<10} {r.model:<28} {r.listed:<12} {r.chat:<28} {latency}")
         if r.detail:
-            emit(f"  {r.provider} error: {r.detail}")
+            label = "warning" if r.chat.startswith("warn") else "error"
+            emit(f"  {r.provider} {label}: {r.detail}")
 
     emit("")
     if embedding is None:
