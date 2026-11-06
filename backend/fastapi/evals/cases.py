@@ -12,12 +12,32 @@ CASES_DIR = Path(__file__).parent / "cases"
 CATEGORIES = {"security", "quality", "tests"}
 
 
+SIGNALS = ("accepted", "rejected")
+
+
+@dataclass(frozen=True)
+class FeedbackItem:
+    """
+    A feedback example given to the case's review, as if retrieved from the
+    repository's earlier reviews (issue #74). Cases supply them directly, so
+    the harness needs no database or embedding API.
+    """
+
+    signal: str
+    file_path: str
+    category: str
+    severity: str
+    body: str
+    code: str = ""
+
+
 @dataclass(frozen=True)
 class Case:
     id: str
     description: str
     diff: str
     expected: list[Expected]
+    feedback: tuple[FeedbackItem, ...] = ()
 
     @property
     def digest(self) -> str:
@@ -64,6 +84,39 @@ def _parse_expected(case_id: str, item: dict) -> Expected:
     )
 
 
+def _parse_feedback(case_id: str, raw: object) -> tuple[FeedbackItem, ...]:
+    """``feedback: {accepted: [...], rejected: [...]}``; both lists optional."""
+    if raw is None:
+        return ()
+    if not isinstance(raw, dict) or not set(raw) <= set(SIGNALS):
+        raise ValueError(f"{case_id}: feedback must map accepted/rejected to lists")
+    items = []
+    for signal in SIGNALS:
+        entries = raw.get(signal) or []
+        if not isinstance(entries, list):
+            raise ValueError(f"{case_id}: feedback.{signal} must be a list")
+        for entry in entries:
+            fields = ("file_path", "category", "severity", "body")
+            if not isinstance(entry, dict) or not all(
+                isinstance(entry.get(name), str) for name in fields
+            ):
+                # Strings only: YAML reads an unquoted "no" or "1" as another type.
+                raise ValueError(f"{case_id}: malformed feedback item {entry!r}")
+            if not entry["body"].strip():
+                raise ValueError(f"{case_id}: feedback item without a body")
+            items.append(
+                FeedbackItem(
+                    signal=signal,
+                    file_path=entry["file_path"],
+                    category=entry["category"],
+                    severity=entry["severity"],
+                    body=entry["body"],
+                    code=str(entry.get("code") or ""),
+                )
+            )
+    return tuple(items)
+
+
 def load_case(path: Path) -> Case:
     data = yaml.safe_load(path.read_text())
     if not isinstance(data, dict):
@@ -80,6 +133,7 @@ def load_case(path: Path) -> Case:
         description=str(data.get("description", "")),
         diff=diff,
         expected=[_parse_expected(case_id, item) for item in expected_raw],
+        feedback=_parse_feedback(case_id, data.get("feedback")),
     )
 
 

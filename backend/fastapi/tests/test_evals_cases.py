@@ -62,3 +62,59 @@ def test_loader_requires_explicit_expected_list(tmp_path):
     bad.write_text("id: bad\ndiff: |\n  x\n")
     with pytest.raises(ValueError):
         load_case(bad)
+
+
+def test_feedback_cases_include_suppression_and_a_control():
+    """Issue #74: rejected examples on clean diffs, and a real bug alongside one."""
+    with_feedback = [c for c in CASES if c.feedback]
+    assert any(not c.expected for c in with_feedback)
+    assert any(c.expected for c in with_feedback)
+    for case in with_feedback:
+        assert all(item.signal in ("accepted", "rejected") for item in case.feedback)
+
+
+def test_cases_without_feedback_load_with_none():
+    assert all(c.feedback == () for c in CASES if not c.id.startswith("feedback-"))
+
+
+def test_loader_reads_feedback_items(tmp_path):
+    path = tmp_path / "fb.yaml"
+    path.write_text(
+        "id: fb\ndiff: |\n  x\nexpected: []\nfeedback:\n  rejected:\n"
+        "  - {file_path: a.py, category: security, severity: warning, body: nope}\n"
+    )
+    [item] = load_case(path).feedback
+    assert (item.signal, item.file_path, item.body, item.code) == (
+        "rejected",
+        "a.py",
+        "nope",
+        "",
+    )
+
+
+@pytest.mark.parametrize(
+    "feedback",
+    [
+        "feedback: [1]\n",
+        "feedback:\n  ignored: []\n",
+        "feedback:\n  rejected:\n  - {file_path: a.py}\n",
+        "feedback:\n  rejected: nope\n",
+        "feedback:\n  rejected:\n"
+        "  - {file_path: a.py, category: x, severity: y, body: ' '}\n",
+    ],
+)
+def test_loader_rejects_malformed_feedback(tmp_path, feedback):
+    bad = tmp_path / "bad.yaml"
+    bad.write_text("id: bad\ndiff: |\n  x\nexpected: []\n" + feedback)
+    with pytest.raises(ValueError):
+        load_case(bad)
+
+
+def test_loader_rejects_non_string_feedback_fields(tmp_path):
+    bad = tmp_path / "bad.yaml"
+    bad.write_text(
+        "id: bad\ndiff: |\n  x\nexpected: []\nfeedback:\n  rejected:\n"
+        "  - {file_path: a.py, category: security, severity: warning, body: no}\n"
+    )
+    with pytest.raises(ValueError):
+        load_case(bad)
