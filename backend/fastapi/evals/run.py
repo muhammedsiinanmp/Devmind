@@ -19,6 +19,8 @@ import statistics
 import subprocess
 import sys
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -125,11 +127,11 @@ async def live_case(case: Case, cassettes_dir: Path | None) -> CaseOutcome:
     from services.llm_client import llm_client
 
     s = get_settings()
+    # Every configured key or secret, whatever the provider set is today.
     secrets = [
-        s.google_ai_api_key,
-        s.groq_api_key,
-        s.github_token,
-        s.fastapi_internal_secret,
+        str(value)
+        for name, value in s.model_dump().items()
+        if value and any(t in name for t in ("key", "token", "secret"))
     ]
     recorder = Recorder(llm_client.generate, secrets=secrets)
     outcome = CaseOutcome(case=case)
@@ -301,18 +303,48 @@ def write_results(report: dict[str, Any], results_dir: Path) -> tuple[Path, Path
     return json_path, md_path
 
 
+@contextmanager
+def restrict_provider(provider: str | None) -> Iterator[None]:
+    """Limit the server provider chain to one provider for this run.
+
+    Free-tier quotas can run out partway through a run; pinning one provider
+    keeps a recording from silently mixing models. With None, nothing changes.
+    """
+    if provider is None:
+        yield
+        return
+    from services import llm_client as llm_module
+
+    chain = [c for c in llm_module.MODEL_CHAIN if c.provider.value == provider]
+    if not chain:
+        configured = sorted({c.provider.value for c in llm_module.MODEL_CHAIN})
+        raise ValueError(
+            f"provider {provider!r} is not configured; configured: {configured}"
+        )
+    with patch.object(llm_module, "MODEL_CHAIN", chain):
+        yield
+
+
 async def run(
     mode: str,
     cases: list[Case],
     cassettes_dir: Path,
     record: bool = False,
+    pause: float = 0.0,
+    provider: str | None = None,
 ) -> list[CaseOutcome]:
+    """Run the cases one at a time, waiting ``pause`` seconds between them."""
     outcomes = []
-    for case in cases:  # sequential: keeps provider rate limits predictable
-        if mode == "replay":
-            outcomes.append(await replay_case(case, cassettes_dir))
-        else:
-            outcomes.append(await live_case(case, cassettes_dir if record else None))
+    with restrict_provider(provider):
+        for i, case in enumerate(cases):  # sequential: predictable rate limits
+            if i and pause > 0:
+                await asyncio.sleep(pause)
+            if mode == "replay":
+                outcomes.append(await replay_case(case, cassettes_dir))
+            else:
+                outcomes.append(
+                    await live_case(case, cassettes_dir if record else None)
+                )
     return outcomes
 
 
@@ -328,10 +360,26 @@ def main(argv: list[str] | None = None) -> int:
         "--results-dir", type=Path, help="write <sha>.json and <sha>.md here"
     )
     parser.add_argument("--only", help="comma-separated case ids")
+    parser.add_argument(
+        "--pause",
+        type=float,
+        default=0.0,
+        metavar="SECONDS",
+        help="wait this long between cases (free-tier rate limits)",
+    )
+    parser.add_argument(
+        "--provider",
+        metavar="NAME",
+        help="live: use only this server provider, e.g. groq or google",
+    )
     args = parser.parse_args(argv)
 
     if args.record and not args.live:
         parser.error("--record needs --live")
+    if args.provider and not args.live:
+        parser.error("--provider needs --live")
+    if args.pause < 0:
+        parser.error("--pause must be >= 0")
     if args.replay:
         # Never read the developer's .env in replay; no provider is called.
         os.environ["DEVMIND_ENV_FILE"] = ""
@@ -340,8 +388,10 @@ def main(argv: list[str] | None = None) -> int:
     cases = load_cases(args.cases_dir, only)
     if args.replay and not any(args.cassettes_dir.glob("*.json")):
         print(
-            f"No cassettes in {args.cassettes_dir}. The baseline has not been "
-            "recorded yet: run `make eval-record` with provider keys set.",
+            f"No cassettes in {args.cassettes_dir}. Record them for this code "
+            "with `make eval-record` (provider keys needed). The pre-fix "
+            "baseline cassettes are on branch eval/baseline-prefix and only "
+            "replay against that branch's prompts.",
             file=sys.stderr,
         )
         return 2
@@ -351,7 +401,20 @@ def main(argv: list[str] | None = None) -> int:
     date = (
         datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if args.live else None
     )
-    outcomes = asyncio.run(run(mode_name, cases, args.cassettes_dir, args.record))
+    try:
+        outcomes = asyncio.run(
+            run(
+                mode_name,
+                cases,
+                args.cassettes_dir,
+                args.record,
+                pause=args.pause,
+                provider=args.provider,
+            )
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     report = build_report(outcomes, mode_name, commit, dirty, date)
     print(render_markdown(report))
     if args.results_dir:

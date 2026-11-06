@@ -2,18 +2,21 @@
 # Hand-written model responses used only by tests/test_evals_harness.py to
 # exercise record -> replay -> scoring offline. No model produced these and
 # they say nothing about the review agent's real quality.
+# Replies use the agent's {"findings": [...]} output envelope; the extra
+# "confidence" field checks that unknown fields are tolerated.
 model_used: fixture/hand-written
 responses:
   sql-injection-fstring: |
-    [
+    {"findings": [
       {"file_path": "shop/repository.py", "line_number": 22, "category": "security",
-       "severity": "critical", "body": "SQL built from an f-string; use a parameterized query."},
+       "severity": "critical", "body": "SQL built from an f-string; use a parameterized query.",
+       "suggested_fix": null, "confidence": 0.9},
       {"file_path": "shop/repository.py", "line_number": 40, "category": "quality",
-       "severity": "info", "body": "Line outside the diff."}
-    ]
+       "severity": "info", "body": "Line outside the diff.", "suggested_fix": null}
+    ]}
   off-by-one-range: |
     ```json
-    [{"file_path": "stats/window.py", "line_number": 7, "category": "correctness",
-      "severity": "info", "body": "range end looks one too large."}]
+    {"findings": [{"file_path": "stats/window.py", "line_number": 7, "category": "correctness",
+      "severity": "info", "body": "range end looks one too large.", "suggested_fix": null}]}
     ```
-  clean-docstring: "[]"
+  clean-docstring: '{"findings": []}'

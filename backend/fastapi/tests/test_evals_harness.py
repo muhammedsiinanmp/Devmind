@@ -5,7 +5,7 @@ fixture responses (tests/fixtures/evals/responses.yaml), never a real model.
 
 import json
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import yaml
@@ -124,7 +124,7 @@ class TestCassetteContents:
             # The prompt (which embeds the diff) is not stored, only its hash.
             assert case.diff.splitlines()[-1] not in text
             # conftest.py sets these fake provider keys; none may leak.
-            for key in ("test-google-key", "test-groq-key", "test-github-token"):
+            for key in ("test-google-key", "test-groq-key", "test-internal-secret"):
                 assert key not in text
             load_cassette(path, case.id, case.digest)  # round-trips
 
@@ -142,7 +142,7 @@ class TestCli:
     def test_replay_without_cassettes_exits_2(self, tmp_path, capsys):
         code = eval_run.main(["--replay", "--cassettes-dir", str(tmp_path)])
         assert code == 2
-        assert "has not been recorded yet" in capsys.readouterr().err
+        assert "make eval-record" in capsys.readouterr().err
 
     def test_record_requires_live(self):
         with pytest.raises(SystemExit):
@@ -176,3 +176,69 @@ class TestCli:
         assert report["commit"] in md
         assert "fixture/hand-written" in md
         assert "Precision | 0.333" in md
+
+
+class TestPause:
+    async def test_waits_between_cases_not_before_or_after(
+        self, fixture_cases, cassettes
+    ):
+        with patch.object(eval_run.asyncio, "sleep", AsyncMock()) as sleep:
+            outcomes = await eval_run.run("replay", fixture_cases, cassettes, pause=75)
+        assert len(outcomes) == 3
+        assert [c.args for c in sleep.await_args_list] == [(75,), (75,)]
+
+    async def test_no_pause_by_default(self, fixture_cases, cassettes):
+        with patch.object(eval_run.asyncio, "sleep", AsyncMock()) as sleep:
+            await eval_run.run("replay", fixture_cases, cassettes)
+        sleep.assert_not_awaited()
+
+    def test_negative_pause_is_rejected(self):
+        with pytest.raises(SystemExit):
+            eval_run.main(["--replay", "--pause", "-1"])
+
+
+class TestProviderFilter:
+    async def _providers_called(self, provider, fixture_cases):
+        """Run live through the real failover chain; note which providers it hit."""
+        called = []
+
+        async def fake_call_provider(config, messages, **kwargs):
+            called.append(config.provider.value)
+            return LLMResponse(
+                content='{"findings": []}',
+                model_used=f"{config.provider.value}/{config.model}",
+                provider=config.provider,
+                prompt_tokens=1,
+                completion_tokens=1,
+            )
+
+        with patch.object(llm_client, "_call_provider", fake_call_provider):
+            outcomes = await eval_run.run(
+                "live", fixture_cases[:1], Path("unused"), provider=provider
+            )
+        assert outcomes[0].error is None, outcomes[0].error
+        return called, outcomes[0]
+
+    async def test_without_filter_first_provider_in_chain_is_used(self, fixture_cases):
+        called, _ = await self._providers_called(None, fixture_cases)
+        assert called and set(called) == {"google"}
+
+    async def test_filter_restricts_chain_to_one_provider(self, fixture_cases):
+        called, outcome = await self._providers_called("groq", fixture_cases)
+        assert called and set(called) == {"groq"}
+        assert {c["model_used"].split("/")[0] for c in outcome.calls} == {"groq"}
+
+    async def test_filter_is_undone_after_the_run(self, fixture_cases):
+        from services import llm_client as llm_module
+
+        before = list(llm_module.MODEL_CHAIN)
+        await self._providers_called("groq", fixture_cases)
+        assert llm_module.MODEL_CHAIN == before
+
+    async def test_unknown_provider_is_an_error(self, fixture_cases):
+        with pytest.raises(ValueError, match="not configured"):
+            await eval_run.run("live", fixture_cases, Path("unused"), provider="nope")
+
+    def test_provider_requires_live(self):
+        with pytest.raises(SystemExit):
+            eval_run.main(["--replay", "--provider", "groq"])

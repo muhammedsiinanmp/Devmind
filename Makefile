@@ -44,10 +44,13 @@ test-all: test
 # eval: offline replay from recorded responses in evals/cassettes.
 # eval-record: calls the real providers configured in .env, re-records the
 # cassettes and writes evals/results/<sha>.json and <sha>.md.
+# On free-tier quotas, pin one provider and wait between cases, e.g.
+#   make eval-record EVAL_ARGS="--provider groq --pause 75"
+EVAL_ARGS ?=
 eval:
-	cd backend/fastapi && uv run python -m evals.run --replay
+	cd backend/fastapi && uv run python -m evals.run --replay $(EVAL_ARGS)
 eval-record:
-	cd backend/fastapi && uv run python -m evals.run --live --record --results-dir evals/results
+	cd backend/fastapi && uv run python -m evals.run --live --record --results-dir evals/results $(EVAL_ARGS)
 
 # ─── Code Quality ─────────────────────────────────────────────
 format:
