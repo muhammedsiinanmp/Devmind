@@ -2,28 +2,32 @@
   "version": 1,
   "case_id": "clean-js-const",
   "case_sha256": "20ed78c28f7439f82d5f935e4d599285caf0bc859637de4c532399ce2e5e420f",
-  "latency_ms": 3920,
+  "latency_ms": 1702,
   "calls": [
     {
       "prompt_sha256": "8465b7f17dbefdcda59bcfc0f1de58bb8e7d9f3652c8500353fc80cc1ae1238b",
       "response": "{\"findings\": []}",
       "model_used": "groq/openai/gpt-oss-120b",
       "prompt_tokens": 731,
-      "completion_tokens": 85
-    },
-    {
-      "prompt_sha256": "62d7db4120897d8ebd4d76f7c7c377524d0e71fc257d46239819fa8c89ca74cd",
-      "response": "{\"findings\":[{\"file_path\":\"web/src/format.js\",\"line_number\":1,\"category\":\"quality\",\"severity\":\"info\",\"body\":\"The function does not validate its input. If `cents` is not a number or is negative, the output may be incorrect or misleading.\",\"suggested_fix\":\"export function formatPrice(cents) {\\n  if (typeof cents !== 'number' || cents < 0 || !Number.isInteger(cents)) {\\n    throw new TypeError('cents must be a non‑negative integer');\\n  }\\n  const dollars = Math.floor(cents / 100);\\n  const rest = String(cents % 100).padStart(2, \\\"0\\\");\\n  return `$${dollars}.${rest}`;\\n}\"}]}",
-      "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 725,
-      "completion_tokens": 335
+      "completion_tokens": 84,
+      "provider": "groq"
     },
     {
       "prompt_sha256": "c1ddea27930cd66679cb9814c9bc1f00ec8d335dab5ed164d42214919dbcdb3b",
-      "response": "{\"findings\":[{\"file_path\":\"web/src/format.js\",\"line_number\":1,\"category\":\"testing\",\"severity\":\"warning\",\"body\":\"The function formatPrice lacks input validation (e.g., non‑numeric or negative values) and there are no unit tests covering these edge cases, which may lead to runtime errors or incorrect formatting.\",\"suggested_fix\":\"// Example validation\\nexport function formatPrice(cents) {\\n  if (typeof cents !== 'number' || !Number.isFinite(cents)) {\\n    throw new TypeError('cents must be a finite number');\\n  }\\n  if (cents < 0) {\\n    throw new RangeError('cents cannot be negative');\\n  }\\n  const dollars = Math.floor(cents / 100);\\n  const rest = String(cents % 100).padStart(2, \\\"0\\\");\\n  return `$${dollars}.${rest}`;\\n}\\n\\n// Add corresponding Jest tests covering:\\n// - typical values (e.g., 123 => $1.23)\\n// - zero cents\\n// - large numbers\\n// - negative input (expect error)\\n// - non‑numeric input (expect error)\"}]}",
+      "response": "{\"findings\":[{\"file_path\":\"web/src/format.js\",\"line_number\":2,\"category\":\"test coverage\",\"severity\":\"warning\",\"body\":\"The function formatPrice lacks tests for edge cases such as negative values, non‑integer inputs, non‑numeric types, and extremely large numbers. Without these tests, regressions or unexpected behavior may go unnoticed.\",\"suggested_fix\":\"Add a test suite (e.g., formatPrice.test.js) covering:\\n- Positive integer cents (e.g., 123 → \\\"$1.23\\\")\\n- Zero cents (0 → \\\"$0.00\\\")\\n- Negative cents (e.g., -99 → \\\"-$0.99\\\" or throw)\\n- Non‑integer numbers (e.g., 99.5 → appropriate rounding or error)\\n- Non‑numeric inputs (null, undefined, \\\"abc\\\") expecting a TypeError or safe fallback\\n- Very large values to ensure no overflow\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
       "prompt_tokens": 721,
-      "completion_tokens": 489
+      "completion_tokens": 365,
+      "provider": "groq"
+    },
+    {
+      "prompt_sha256": "62d7db4120897d8ebd4d76f7c7c377524d0e71fc257d46239819fa8c89ca74cd",
+      "response": "{\"findings\":[{\"file_path\":\"web/src/format.js\",\"line_number\":1,\"category\":\"quality\",\"severity\":\"info\",\"body\":\"The function does not validate its input; passing a non‑numeric or negative value for cents could produce unexpected results (e.g., NaN or malformed strings).\",\"suggested_fix\":\"export function formatPrice(cents) {\\n  if (typeof cents !== 'number' || cents < 0) {\\n    throw new TypeError('cents must be a non‑negative number');\\n  }\\n  const dollars = Math.floor(cents / 100);\\n  const rest = String(cents % 100).padStart(2, \\\"0\\\");\\n  return `$${dollars}.${rest}`;\\n}\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 725,
+      "completion_tokens": 303,
+      "provider": "groq"
     }
-  ]
+  ],
+  "recorded_utc": "2026-11-06T19:21:35Z"
 }

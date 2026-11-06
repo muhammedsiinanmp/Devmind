@@ -2,28 +2,32 @@
   "version": 1,
   "case_id": "clean-parameterized-query",
   "case_sha256": "fc3dcb343771e7ed2c33cf978a4765159b39e1cde12b7023d6bf9394e4d5a3ec",
-  "latency_ms": 2554,
+  "latency_ms": 1867,
   "calls": [
-    {
-      "prompt_sha256": "7c4faf02b9da48360b13faf9d595fe8fbb87ce239f690b6decd3153fb39eefcf",
-      "response": "{\"findings\": []}",
-      "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 699,
-      "completion_tokens": 125
-    },
     {
       "prompt_sha256": "a848ea677cbba6dfe7d8aee2173ea52fcc141b423afdb76bef345f622b8d08e2",
       "response": "{\"findings\": []}",
       "model_used": "groq/openai/gpt-oss-120b",
       "prompt_tokens": 693,
-      "completion_tokens": 126
+      "completion_tokens": 88,
+      "provider": "groq"
+    },
+    {
+      "prompt_sha256": "7c4faf02b9da48360b13faf9d595fe8fbb87ce239f690b6decd3153fb39eefcf",
+      "response": "{\"findings\": []}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 699,
+      "completion_tokens": 117,
+      "provider": "groq"
     },
     {
       "prompt_sha256": "0b156717f2e591a971052afab49bd9fde6d2e3274feafc2f759b92dd0bf4bbcc",
-      "response": "{\"findings\": [{\"file_path\": \"shop/repository.py\", \"line_number\": 22, \"category\": \"test coverage\", \"severity\": \"warning\", \"body\": \"The change introduces parameterized SQL to prevent injection, but there is no test verifying that malicious input is safely handled. Add a unit test that supplies a crafted order_id (e.g., \\\"1; DROP TABLE orders;\\\") and asserts that the cursor receives the value as a parameter rather than interpolated into the query.\", \"suggested_fix\": \"def test_find_order_sql_injection(monkeypatch):\\n    mock_cursor = mock.Mock()\\n    mock_conn = mock.Mock()\\n    mock_conn.cursor.return_value = mock_cursor\\n    repo.find_order(mock_conn, \\\"1; DROP TABLE orders;\\\")\\n    mock_cursor.execute.assert_called_once_with(\\n        \\\"SELECT * FROM orders WHERE id = %s\\\", (\\\"1; DROP TABLE orders;\\\",)\\n    )\\n\"}]}",
+      "response": "{\"findings\": [{\"file_path\": \"shop/repository.py\", \"line_number\": 22, \"category\": \"security\", \"severity\": \"info\", \"body\": \"The query now uses parameter binding, which mitigates SQL injection, but there are no tests confirming this behavior. Add tests that pass a malicious order_id (e.g., \\\"1; DROP TABLE orders;\\\") and verify that the function does not execute unintended SQL and returns the expected result or raises an error.\", \"suggested_fix\": \"Create a test like:\\n\\n```python\\nimport unittest\\nfrom unittest.mock import MagicMock\\nfrom shop.repository import find_order\\n\\nclass FindOrderTests(unittest.TestCase):\\n    def test_parameterized_query_prevents_sql_injection(self):\\n        mock_conn = MagicMock()\\n        mock_cursor = MagicMock()\\n        mock_conn.cursor.return_value = mock_cursor\\n        # Simulate a safe return value\\n        mock_cursor.fetchone.return_value = ('order123',)\\n        malicious_id = \\\"1; DROP TABLE orders;\\\"\\n        result = find_order(mock_conn, malicious_id)\\n        # Ensure execute was called with parameter tuple, not string interpolation\\n        mock_cursor.execute.assert_called_once_with(\\n            \\\"SELECT * FROM orders WHERE id = %s\\\", (malicious_id,)\\n        )\\n        self.assertEqual(result, ('order123',))\\n```\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
       "prompt_tokens": 689,
-      "completion_tokens": 397
+      "completion_tokens": 518,
+      "provider": "groq"
     }
-  ]
+  ],
+  "recorded_utc": "2026-11-06T19:24:08Z"
 }

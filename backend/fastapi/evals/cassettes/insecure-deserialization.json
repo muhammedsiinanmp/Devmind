@@ -2,28 +2,32 @@
   "version": 1,
   "case_id": "insecure-deserialization",
   "case_sha256": "3620dd20adac27094ab09d7c72402e17e73aa28f6a060de5836225a533a1a841",
-  "latency_ms": 1987,
+  "latency_ms": 2644,
   "calls": [
     {
-      "prompt_sha256": "574021a05e7ddde577d2deeea151dc59c1f00f76f0babc199bf3f9cafa6c7dc0",
-      "response": "{\"findings\": [{\"file_path\": \"sync/handlers.py\", \"line_number\": 10, \"category\": \"security\", \"severity\": \"critical\", \"body\": \"Deserializing request.body with pickle.loads is unsafe; pickle can execute arbitrary code if the input is malicious, leading to remote code execution vulnerabilities.\", \"suggested_fix\": \"state = json.loads(request.body)  # Use JSON for safe deserialization and validate the schema\"}]}",
-      "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 662,
-      "completion_tokens": 264
-    },
-    {
       "prompt_sha256": "7577d64d14f974d9363032b8e3c4d06104c4d6634d4ad84c4bfa835834970948",
-      "response": "{\"findings\": [{\"file_path\": \"sync/handlers.py\", \"line_number\": 10, \"category\": \"security\", \"severity\": \"critical\", \"body\": \"Replacing json.loads with pickle.loads on request.body introduces unsafe deserialization of untrusted data. Pickle can execute arbitrary code during loading, leading to remote code execution vulnerabilities.\", \"suggested_fix\": \"state = json.loads(request.body)  # Use a safe format like JSON or implement strict validation instead of pickle.loads\"}]}",
+      "response": "{\"findings\": [{\"file_path\": \"sync/handlers.py\", \"line_number\": 10, \"category\": \"security\", \"severity\": \"critical\", \"body\": \"Deserializing request.body with pickle.loads introduces remote code execution risk, as pickle can execute arbitrary code from untrusted input.\", \"suggested_fix\": \"Replace pickle.loads with a safe parser such as json.loads, and validate the input format before processing. For example:\\n\\n    import json\\n    def import_state(request):\\n        state = json.loads(request.body)\\n        apply_state(state)\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
       "prompt_tokens": 668,
-      "completion_tokens": 225
+      "completion_tokens": 246,
+      "provider": "groq"
+    },
+    {
+      "prompt_sha256": "574021a05e7ddde577d2deeea151dc59c1f00f76f0babc199bf3f9cafa6c7dc0",
+      "response": "{\"findings\": [{\"file_path\": \"sync/handlers.py\", \"line_number\": 10, \"category\": \"security\", \"severity\": \"critical\", \"body\": \"Deserializing request.body with pickle.loads is unsafe because pickle can execute arbitrary code on untrusted input, leading to remote code execution vulnerabilities.\", \"suggested_fix\": \"state = json.loads(request.body)  # Use a safe format like JSON and validate the data before processing\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 662,
+      "completion_tokens": 245,
+      "provider": "groq"
     },
     {
       "prompt_sha256": "2a386e48cad18b76f642bdedb72fcdd8986cdbcaab7fa703b8608d66d37b6275",
-      "response": "{\"findings\":[{\"file_path\":\"sync/handlers.py\",\"line_number\":10,\"category\":\"security\",\"severity\":\"critical\",\"body\":\"Replacing json.loads with pickle.loads on request.body introduces a remote code execution vulnerability, as pickle can execute arbitrary code when deserializing untrusted data.\",\"suggested_fix\":\"# Use safe JSON deserialization instead of pickle\\n    state = json.loads(request.body)  # ensure request Content-Type is application/json\"} ,{\"file_path\":\"sync/handlers.py\",\"line_number\":9,\"category\":\"testing\",\"severity\":\"warning\",\"body\":\"No tests cover the new import_state behavior; adding tests that verify the handler rejects malicious pickle payloads (or confirms safe handling) is required to prevent regressions.\",\"suggested_fix\":\"# Example test (using pytest)\\ndef test_import_state_rejects_malicious_pickle(client):\\n    malicious = pickle.dumps(os.system)  # or any exploit payload\\n    response = client.post('/import_state/', data=malicious, content_type='application/octet-stream')\\n    assert response.status_code == 400  # or appropriate error\"}]}",
+      "response": "{\"findings\":[{\"file_path\":\"sync/handlers.py\",\"line_number\":10,\"category\":\"security\",\"severity\":\"critical\",\"body\":\"Using pickle.loads on request.body allows execution of arbitrary code if an attacker controls the request payload, leading to remote code execution.\",\"suggested_fix\":\"Replace pickle.loads with a safe deserializer such as json.loads, or validate and restrict the allowed types before unpickling.\"},{\"file_path\":\"sync/handlers.py\",\"line_number\":9,\"category\":\"test coverage\",\"severity\":\"warning\",\"body\":\"No unit tests exist for import_state; after changing deserialization method, tests should verify handling of valid and malicious payloads and proper error responses.\",\"suggested_fix\":\"Add tests that send a valid JSON payload and an intentionally malicious pickle payload, asserting that the view returns an error status and does not execute code.\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
       "prompt_tokens": 658,
-      "completion_tokens": 494
+      "completion_tokens": 700,
+      "provider": "groq"
     }
-  ]
+  ],
+  "recorded_utc": "2026-11-06T19:33:09Z"
 }

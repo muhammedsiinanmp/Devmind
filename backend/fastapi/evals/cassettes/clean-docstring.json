@@ -2,28 +2,32 @@
   "version": 1,
   "case_id": "clean-docstring",
   "case_sha256": "281206231bdcd7abd7fdec98355262b70fd735d75354f0fbe60d549c3e6bc7d2",
-  "latency_ms": 2149,
+  "latency_ms": 1723,
   "calls": [
     {
       "prompt_sha256": "aef4b21cac01da2db4c8921f2223fbe577f94392bc5cc7769b695afa51619f07",
       "response": "{\"findings\": []}",
       "model_used": "groq/openai/gpt-oss-120b",
       "prompt_tokens": 685,
-      "completion_tokens": 49
-    },
-    {
-      "prompt_sha256": "3a58103979bc0843598cfb44add499d87de7c080e5e429381d66e9b9ff2faa20",
-      "response": "{\"findings\": [{\"file_path\": \"geo/distance.py\", \"line_number\": 8, \"category\": \"quality\", \"severity\": \"warning\", \"body\": \"Docstring indentation uses 5 spaces, which is inconsistent with the standard 4‑space indentation and may cause style violations.\", \"suggested_fix\": \"    \\\"\\\"\\\"Return the Manhattan distance between two (x, y) points.\\\"\\\"\\\"\"}, {\"file_path\": \"geo/distance.py\", \"line_number\": 9, \"category\": \"quality\", \"severity\": \"warning\", \"body\": \"The return statement is indented with only two spaces, breaking PEP 8 indentation rules.\", \"suggested_fix\": \"    return abs(a[0] - b[0]) + abs(a[1] - b[1])\"}]}",
-      "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 679,
-      "completion_tokens": 414
+      "completion_tokens": 50,
+      "provider": "groq"
     },
     {
       "prompt_sha256": "f320d2de9485258a9766e50dddffa1d5fd35fddf7022d9d5762c5d78ff83dab5",
-      "response": "{\"findings\":[{\"file_path\":\"geo/distance.py\",\"line_number\":7,\"category\":\"test coverage\",\"severity\":\"warning\",\"body\":\"The manhattan function lacks dedicated unit tests, risking undetected bugs for edge cases such as negative coordinates or identical points.\",\"suggested_fix\":\"Add tests in tests/test_distance.py, e.g.,\\n\\ndef test_manhattan_basic():\\n    assert manhattan((0,0), (3,4)) == 7\\n\\ndef test_manhattan_negative():\\n    assert manhattan((-1,-2), (3,4)) == 10\\n\\ndef test_manhattan_same_point():\\n    assert manhattan((5,5), (5,5)) == 0\"}]}",
+      "response": "{\"findings\": [{\"file_path\": \"geo/distance.py\", \"line_number\": 8, \"category\": \"test coverage\", \"severity\": \"warning\", \"body\": \"The newly documented manhattan() function lacks dedicated unit tests. Adding tests will ensure correct behavior for typical, edge, and error cases (e.g., same point, negative coordinates, non‑tuple inputs).\", \"suggested_fix\": \"Create a test file (e.g., tests/test_distance.py) with cases such as:\\n\\n```python\\nimport pytest\\nfrom geo.distance import manhattan\\n\\n@pytest.mark.parametrize(\\n    \\\"a,b,expected\\\",\\n    [\\n        ((0, 0), (0, 0), 0),               # same point\\n        ((1, 2), (3, 4), 4),               # positive coordinates\\n        ((-1, -2), (3, 4), 10),            # mixed signs\\n        ((-5, 5), (-5, -5), 10),           # vertical line\\n        ((1000000, 0), (0, -1000000), 2000000),  # large values\\n    ],\\n)\\ndef test_manhattan(a, b, expected):\\n    assert manhattan(a, b) == expected\\n```\\n\\nOptionally add tests for invalid inputs to verify TypeError handling.\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
       "prompt_tokens": 675,
-      "completion_tokens": 574
+      "completion_tokens": 467,
+      "provider": "groq"
+    },
+    {
+      "prompt_sha256": "3a58103979bc0843598cfb44add499d87de7c080e5e429381d66e9b9ff2faa20",
+      "response": "{\"findings\": [{\"file_path\": \"geo/distance.py\", \"line_number\": 9, \"category\": \"quality\", \"severity\": \"warning\", \"body\": \"Inconsistent indentation in the function body: the docstring line and the return statement have mismatched spaces, which can lead to style violations or indentation errors.\", \"suggested_fix\": \"def manhattan(a, b):\\n    \\\"\\\"\\\"Return the Manhattan distance between two (x, y) points.\\\"\\\"\\\"\\n    return abs(a[0] - b[0]) + abs(a[1] - b[1])\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 679,
+      "completion_tokens": 523,
+      "provider": "groq"
     }
-  ]
+  ],
+  "recorded_utc": "2026-11-06T19:19:00Z"
 }

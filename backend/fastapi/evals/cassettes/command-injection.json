@@ -2,28 +2,32 @@
   "version": 1,
   "case_id": "command-injection",
   "case_sha256": "f3c58aa1e18335f96ce2526d2a7f5cfb0d15526c079892f8be0d8ce655272da7",
-  "latency_ms": 1825,
+  "latency_ms": 1795,
   "calls": [
     {
+      "prompt_sha256": "a056aba7996e9c607380a7112d3734ccbcdd5a5c6e2e48432bcfcb4d2bb576f3",
+      "response": "{\"findings\":[{\"file_path\":\"ci/runner.py\",\"line_number\":23,\"category\":\"security\",\"severity\":\"critical\",\"body\":\"Using shell=True with an f-string inserts the branch name directly into the shell command, which enables command injection if the branch value is untrusted. This is a critical security vulnerability.\",\"suggested_fix\":\"subprocess.run([\\\"git\\\", \\\"checkout\\\", branch], check=True)\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 668,
+      "completion_tokens": 271,
+      "provider": "groq"
+    },
+    {
       "prompt_sha256": "d7ed63478c40cb5a43d4b6c6335bc0205702df0125a4e5402368626efb775f8e",
-      "response": "{\"findings\": [{\"file_path\": \"ci/runner.py\", \"line_number\": 23, \"category\": \"security\", \"severity\": \"critical\", \"body\": \"Using shell=True with an f-string inserts the branch name directly into the command line, allowing command injection if the branch value is controlled by an attacker.\", \"suggested_fix\": \"subprocess.run([\\\"git\\\", \\\"checkout\\\", branch], check=True)\"}]}",
+      "response": "{\"findings\": [{\"file_path\": \"ci/runner.py\", \"line_number\": 23, \"category\": \"security\", \"severity\": \"critical\", \"body\": \"Using shell=True with an f-string inserts the branch directly into the command line, allowing command injection if the branch name is untrusted.\", \"suggested_fix\": \"subprocess.run([\\\"git\\\", \\\"checkout\\\", branch], check=True)\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
       "prompt_tokens": 674,
-      "completion_tokens": 239
+      "completion_tokens": 266,
+      "provider": "groq"
     },
     {
       "prompt_sha256": "bc5e1b1bacf1dcf72467f57716c85cfe5002dda9957fceac0b720c78320411e1",
-      "response": "{\"findings\":[{\"file_path\":\"ci/runner.py\",\"line_number\":23,\"category\":\"security\",\"severity\":\"critical\",\"body\":\"Using shell=True with an f-string allows command injection if 'branch' contains malicious characters (e.g., '; rm -rf /').\",\"suggested_fix\":\"subprocess.run([\\\"git\\\", \\\"checkout\\\", branch], check=True)\"},{\"file_path\":\"ci/runner.py\",\"line_number\":22,\"category\":\"test\",\"severity\":\"warning\",\"body\":\"The checkout function has no unit tests, especially for edge cases like non‑existent branches or malicious input.\",\"suggested_fix\":\"Add tests that mock subprocess.run to verify it is called with the correct arguments and that errors are handled appropriately.\"}]}",
+      "response": "{\"findings\":[{\"file_path\":\"ci/runner.py\",\"line_number\":23,\"category\":\"security\",\"severity\":\"critical\",\"body\":\"Using shell=True with an f-string allows command injection if 'branch' contains malicious characters.\",\"suggested_fix\":\"subprocess.run([\\\"git\\\", \\\"checkout\\\", branch], check=True)\"},{\"file_path\":\"ci/runner.py\",\"line_number\":22,\"category\":\"test\",\"severity\":\"warning\",\"body\":\"The checkout function lacks unit tests, especially for handling unsafe branch names that could exploit the command injection vulnerability.\",\"suggested_fix\":\"Add tests that mock subprocess.run and verify that only safe branch names are passed, and that malicious input does not result in arbitrary command execution.\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
       "prompt_tokens": 664,
-      "completion_tokens": 398
-    },
-    {
-      "prompt_sha256": "a056aba7996e9c607380a7112d3734ccbcdd5a5c6e2e48432bcfcb4d2bb576f3",
-      "response": "{\"findings\": [{\"file_path\": \"ci/runner.py\", \"line_number\": 23, \"category\": \"security\", \"severity\": \"critical\", \"body\": \"Using shell=True with an f-string inserts the branch name directly into the command line, allowing command injection if the branch value is untrusted. This is a security risk.\", \"suggested_fix\": \"subprocess.run([\\\"git\\\", \\\"checkout\\\", branch], check=True)\"}]}",
-      "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 668,
-      "completion_tokens": 299
+      "completion_tokens": 430,
+      "provider": "groq"
     }
-  ]
+  ],
+  "recorded_utc": "2026-11-06T19:29:17Z"
 }

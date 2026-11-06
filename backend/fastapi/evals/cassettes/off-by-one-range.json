@@ -2,28 +2,32 @@
   "version": 1,
   "case_id": "off-by-one-range",
   "case_sha256": "c6e9041880115ce042e043699bc04075ac58a3087fe22aed433144663fd53473",
-  "latency_ms": 1797,
+  "latency_ms": 2081,
   "calls": [
     {
-      "prompt_sha256": "0653d059b6b3a2ed396845e94a688bf413082bed5adf9eb1329afdd4a4b309fe",
-      "response": "{\"findings\": [{\"file_path\": \"stats/window.py\", \"line_number\": 7, \"category\": \"correctness\", \"severity\": \"error\", \"body\": \"The loop range was changed from `len(values) - width + 1` to `len(values) - width + 2`, which can cause the slice `values[i : i + width]` to exceed the list bounds, leading to IndexError and incorrect results.\", \"suggested_fix\": \"Use the original range calculation: `for i in range(len(values) - width + 1):`\"}]}",
-      "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 699,
-      "completion_tokens": 256
-    },
-    {
       "prompt_sha256": "275fa1acfbb6b1ce0fa8b17358a6fcbd0a85527ccbe7bc2ab02b8ad476b7beac",
-      "response": "{\"findings\": [{\"file_path\": \"stats/window.py\", \"line_number\": 7, \"category\": \"correctness\", \"severity\": \"error\", \"body\": \"The loop range was changed to len(values) - width + 2, which can cause i + width to exceed the list bounds, leading to IndexError and incorrect sums. The original range len(values) - width + 1 correctly iterates over all valid windows.\", \"suggested_fix\": \"for i in range(len(values) - width + 1):\"}]}",
+      "response": "{\"findings\": [{\"file_path\": \"stats/window.py\", \"line_number\": 7, \"category\": \"correctness\", \"severity\": \"error\", \"body\": \"The loop range is off by one. Using `len(values) - width + 2` can cause `i + width` to exceed the list length, leading to IndexError or incorrect sums.\", \"suggested_fix\": \"for i in range(len(values) - width + 1):\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
       "prompt_tokens": 693,
-      "completion_tokens": 307
+      "completion_tokens": 276,
+      "provider": "groq"
     },
     {
       "prompt_sha256": "2861a478491d80152912112d8be6d69928ecf433e62aaef101d4ca6f5fc630bc",
-      "response": "{\"findings\": [{\"file_path\": \"stats/window.py\", \"line_number\": 7, \"category\": \"test coverage\", \"severity\": \"warning\", \"body\": \"The change to the loop range alters the function's behavior and may introduce off‑by‑one errors or IndexError for edge cases (e.g., empty list, width equal to or greater than the list length). No tests currently verify these boundary conditions, so regressions could go unnoticed.\", \"suggested_fix\": \"Add unit tests for moving_sum covering:\\n- values = [] with various widths\\n- width = 0\\n- width = len(values)\\n- width > len(values)\\n- typical case where width < len(values)\\n- verify that the function returns the expected list length and contents for each scenario.\"}]}",
+      "response": "{\"findings\": [{\"file_path\": \"stats/window.py\", \"line_number\": 7, \"category\": \"correctness\", \"severity\": \"error\", \"body\": \"The loop range was changed from len(values) - width + 1 to len(values) - width + 2, introducing an off‑by‑one error. This causes an extra iteration where i + width exceeds the list bounds, leading to incorrect totals or a potential IndexError.\", \"suggested_fix\": \"Replace the line with the original correct range:\\n    for i in range(len(values) - width + 1):\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
       "prompt_tokens": 689,
-      "completion_tokens": 321
+      "completion_tokens": 329,
+      "provider": "groq"
+    },
+    {
+      "prompt_sha256": "0653d059b6b3a2ed396845e94a688bf413082bed5adf9eb1329afdd4a4b309fe",
+      "response": "{\"findings\": [{\"file_path\": \"stats/window.py\", \"line_number\": 7, \"category\": \"correctness\", \"severity\": \"error\", \"body\": \"The loop range was changed from len(values) - width + 1 to len(values) - width + 2, which introduces an off‑by‑one error. This can cause the slice values[i : i + width] to exceed the list bounds, leading to IndexError or incorrect sums.\", \"suggested_fix\": \"Restore the original range calculation or add explicit bounds checking, e.g.,\\n```python\\nfor i in range(len(values) - width + 1):\\n    totals.append(sum(values[i:i+width]))\\n```\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 699,
+      "completion_tokens": 291,
+      "provider": "groq"
     }
-  ]
+  ],
+  "recorded_utc": "2026-11-06T19:42:10Z"
 }

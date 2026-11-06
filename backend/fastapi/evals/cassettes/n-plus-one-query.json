@@ -2,28 +2,32 @@
   "version": 1,
   "case_id": "n-plus-one-query",
   "case_sha256": "13919f5d1f8fbcec6c7583f111cc0867499672aa832b9b5493fc25b21002cd88",
-  "latency_ms": 2727,
+  "latency_ms": 2302,
   "calls": [
     {
       "prompt_sha256": "a8a211a053dff745a4fa2206279219cb2224b0f7c0d4d6049c2e97185d949a17",
       "response": "{\"findings\": []}",
       "model_used": "groq/openai/gpt-oss-120b",
       "prompt_tokens": 724,
-      "completion_tokens": 126
-    },
-    {
-      "prompt_sha256": "056f1fa938ecfe1a905b04d5e6599eb662e11c111c2b90247c666639976da4c8",
-      "response": "{\"findings\": [{\"file_path\": \"library/views.py\", \"line_number\": 30, \"category\": \"test coverage\", \"severity\": \"warning\", \"body\": \"The author_summaries function lacks unit tests verifying that it returns the correct list of (author name, book count) tuples, especially after the query logic change.\", \"suggested_fix\": \"Add a test case in tests/test_views.py that creates several Author and Book instances, calls author_summaries(), and asserts the returned list matches expected counts.\"}, {\"file_path\": \"library/views.py\", \"line_number\": 31, \"category\": \"test coverage\", \"severity\": \"info\", \"body\": \"There is no test ensuring the new implementation does not introduce N+1 query problems; each author now triggers a separate count query.\", \"suggested_fix\": \"Add a test using Django's assertNumQueries context manager to verify the total number of queries stays within acceptable limits (e.g., 2 queries: one for authors, one for aggregated counts).\"}]}",
-      "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 714,
-      "completion_tokens": 475
+      "completion_tokens": 126,
+      "provider": "groq"
     },
     {
       "prompt_sha256": "1545fc00be87a552ce53e3305556b7f6331bc75758e9bb4782ed404dfda82e9d",
-      "response": "{\"findings\": [{\"file_path\": \"library/views.py\", \"line_number\": 31, \"category\": \"performance\", \"severity\": \"warning\", \"body\": \"Replacing prefetch_related with Author.objects.all() removes the eager loading of related books, causing an N+1 query pattern when counting books per author.\", \"suggested_fix\": \"authors = Author.objects.annotate(book_count=Count('books')).values('name', 'book_count')  # requires from django.db.models import Count\"}, {\"file_path\": \"library/views.py\", \"line_number\": 34, \"category\": \"performance\", \"severity\": \"warning\", \"body\": \"Counting books with a separate query per author (Book.objects.filter(author=author).count()) introduces a query for each iteration, degrading performance.\", \"suggested_fix\": \"# After annotating authors, you can directly use the annotated count:\\n# rows = [(author['name'], author['book_count']) for author in authors]\"}]}",
+      "response": "{\"findings\":[{\"file_path\":\"library/views.py\",\"line_number\":31,\"category\":\"performance\",\"severity\":\"warning\",\"body\":\"Replacing prefetch_related with a per‑author count query introduces an N+1 query problem, degrading performance especially with many authors.\",\"suggested_fix\":\"from django.db.models import Count\\n\\nauthors = Author.objects.annotate(book_count=Count('books'))\\nrows = [(author.name, author.book_count) for author in authors]\\nreturn rows\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
       "prompt_tokens": 718,
-      "completion_tokens": 719
+      "completion_tokens": 567,
+      "provider": "groq"
+    },
+    {
+      "prompt_sha256": "056f1fa938ecfe1a905b04d5e6599eb662e11c111c2b90247c666639976da4c8",
+      "response": "{\"findings\":[{\"file_path\":\"library/views.py\",\"line_number\":31,\"category\":\"test coverage\",\"severity\":\"warning\",\"body\":\"The change replaces prefetch_related with a per‑author count query, introducing an N+1 query pattern. No tests verify the number of database queries, so performance regressions could go unnoticed.\",\"suggested_fix\":\"Add a test using Django's assertNumQueries to ensure author_summaries executes a reasonable number of queries (e.g., 2 queries total).\"},{\"file_path\":\"library/views.py\",\"line_number\":30,\"category\":\"test coverage\",\"severity\":\"warning\",\"body\":\"There is no test for the case where no Author records exist. The function should return an empty list without error.\",\"suggested_fix\":\"Create a test that clears all Author objects, calls author_summaries(), and asserts the result is []\"},{\"file_path\":\"library/views.py\",\"line_number\":34,\"category\":\"test coverage\",\"severity\":\"warning\",\"body\":\"Authors without any related Book records are not explicitly tested. The function should correctly report a count of 0 for such authors.\",\"suggested_fix\":\"Add a test that creates an Author with no books, invokes author_summaries(), and checks that the returned tuple contains a count of 0\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 714,
+      "completion_tokens": 546,
+      "provider": "groq"
     }
-  ]
+  ],
+  "recorded_utc": "2026-11-06T19:40:52Z"
 }

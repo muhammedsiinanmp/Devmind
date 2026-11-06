@@ -2,28 +2,32 @@
   "version": 1,
   "case_id": "sql-injection-fstring",
   "case_sha256": "8e8a6fb7f5b174567c40465855a8f2ec66b2779749600712168a019a2830b4b3",
-  "latency_ms": 1888,
+  "latency_ms": 2263,
   "calls": [
     {
-      "prompt_sha256": "42c37773d0610ebfeb17209f1f2b925fa7508a1331fe50e00f0c6dc0fb0341a9",
-      "response": "{\"findings\": [{\"file_path\": \"shop/repository.py\", \"line_number\": 22, \"category\": \"security\", \"severity\": \"critical\", \"body\": \"The query is built using an f-string with the raw order_id, introducing a SQL injection vulnerability. User-controlled input can alter the query and compromise the database.\", \"suggested_fix\": \"sql = \\\"SELECT * FROM orders WHERE id = %s\\\"\\ncur.execute(sql, (order_id,))\"}]}",
+      "prompt_sha256": "eabad69eba70b1bcaa2bccd9d0ae0490f2501611c457bfe647161b7cd8b348cf",
+      "response": "{\"findings\": [{\"file_path\": \"shop/repository.py\", \"line_number\": 22, \"category\": \"security\", \"severity\": \"critical\", \"body\": \"Constructing the SQL query with an f-string directly interpolates order_id, creating a SQL injection vulnerability and potential type errors.\", \"suggested_fix\": \"sql = \\\"SELECT * FROM orders WHERE id = %s\\\"\\ncur.execute(sql, (order_id,))\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 695,
-      "completion_tokens": 280
+      "prompt_tokens": 699,
+      "completion_tokens": 242,
+      "provider": "groq"
     },
     {
       "prompt_sha256": "dfdcffa3a90682836da20ffea92705e89840493080aa13810fcb62190910a290",
-      "response": "{\"findings\":[{\"file_path\":\"shop/repository.py\",\"line_number\":22,\"category\":\"security\",\"severity\":\"critical\",\"body\":\"SQL query is built using an f-string with unescaped user input, creating a SQL injection risk.\",\"suggested_fix\":\"sql = \\\"SELECT * FROM orders WHERE id = %s\\\"\\ncur.execute(sql, (order_id,))\"},{\"file_path\":\"shop/repository.py\",\"line_number\":23,\"category\":\"security\",\"severity\":\"error\",\"body\":\"Executing a raw SQL string that was constructed via f-string can lead to SQL injection.\",\"suggested_fix\":\"# The execute call is combined with the parameterized query above; remove this line after applying the fix.\"}]}",
+      "response": "{\"findings\":[{\"file_path\":\"shop/repository.py\",\"line_number\":22,\"category\":\"security\",\"severity\":\"critical\",\"body\":\"The query is built using an f-string with direct interpolation of order_id, which enables SQL injection if order_id is derived from untrusted input. Use parameterized queries instead.\",\"suggested_fix\":\"cur.execute(\\\"SELECT * FROM orders WHERE id = %s\\\", (order_id,))\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
       "prompt_tokens": 705,
-      "completion_tokens": 372
+      "completion_tokens": 282,
+      "provider": "groq"
     },
     {
-      "prompt_sha256": "eabad69eba70b1bcaa2bccd9d0ae0490f2501611c457bfe647161b7cd8b348cf",
-      "response": "{\"findings\":[{\"file_path\":\"shop/repository.py\",\"line_number\":22,\"category\":\"security\",\"severity\":\"critical\",\"body\":\"Using an f-string to construct SQL introduces SQL injection risk. The order_id is interpolated directly into the query string. This bypasses parameterization and can allow malicious input to alter the query.\",\"suggested_fix\":\"sql = \\\"SELECT * FROM orders WHERE id = %s\\\"\\ncur.execute(sql, (order_id,))\"},{\"file_path\":\"shop/repository.py\",\"line_number\":23,\"category\":\"security\",\"severity\":\"critical\",\"body\":\"Executing a raw SQL string built via f-string without parameters is unsafe and can lead to SQL injection.\",\"suggested_fix\":\"cur.execute(\\\"SELECT * FROM orders WHERE id = %s\\\", (order_id,))\"}]}",
+      "prompt_sha256": "42c37773d0610ebfeb17209f1f2b925fa7508a1331fe50e00f0c6dc0fb0341a9",
+      "response": "{\"findings\":[{\"file_path\":\"shop/repository.py\",\"line_number\":22,\"category\":\"security\",\"severity\":\"critical\",\"body\":\"The query is built using f-string interpolation, directly inserting order_id into the SQL statement. This enables SQL injection if order_id is derived from untrusted input.\",\"suggested_fix\":\"sql = \\\"SELECT * FROM orders WHERE id = %s\\\"\\ncur.execute(sql, (order_id,))\"},{\"file_path\":\"shop/repository.py\",\"line_number\":20,\"category\":\"test\",\"severity\":\"warning\",\"body\":\"There are no unit tests verifying that find_order correctly handles malicious order_id values or that it uses parameterized queries, leaving a gap in test coverage for this security-critical function.\",\"suggested_fix\":\"def test_find_order_sql_injection(monkeypatch):\\n    mock_conn = MagicMock()\\n    mock_cur = MagicMock()\\n    mock_conn.cursor.return_value = mock_cur\\n    # Simulate malicious input\\n    malicious_id = \\\"1; DROP TABLE users;--\\\"\\n    find_order(mock_conn, malicious_id)\\n    # Ensure execute was called with a parameterized query, not raw string\\n    mock_cur.execute.assert_called_once()\\n    args, _ = mock_cur.execute.call_args\\n    assert \\\"%s\\\" in args[0]  # query contains placeholder\\n    assert malicious_id in args[1]  # value passed as parameter\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 699,
-      "completion_tokens": 340
+      "prompt_tokens": 695,
+      "completion_tokens": 692,
+      "provider": "groq"
     }
-  ]
+  ],
+  "recorded_utc": "2026-11-06T19:44:46Z"
 }

@@ -2,28 +2,32 @@
   "version": 1,
   "case_id": "bare-except-swallows",
   "case_sha256": "8a06378a7b1807881b9804f28dd122ab3f1ec66842e84d96c8fc82ab0ee57150",
-  "latency_ms": 2417,
+  "latency_ms": 4740,
   "calls": [
     {
       "prompt_sha256": "02d526360bb33529b58e9b9871cbe75856377161923271776eb30549d533db5a",
-      "response": "{\"findings\":[{\"file_path\":\"notes/store.py\",\"line_number\":18,\"category\":\"error handling\",\"severity\":\"warning\",\"body\":\"A bare except clause catches all exceptions and silently discards them, which can hide bugs and make debugging difficult. This also means callers cannot know if the save failed.\",\"suggested_fix\":\"try:\\n    db.insert(note)\\nexcept SpecificException as e:  # replace SpecificException with the expected error type(s)\\n    logger.error(f\\\"Failed to save note: {e}\\\")\\n    return False\\nelse:\\n    return True\"}]}",
+      "response": "{\"findings\": [{\"file_path\": \"notes/store.py\", \"line_number\": 18, \"category\": \"quality\", \"severity\": \"warning\", \"body\": \"The broad except clause catches all exceptions and silently ignores them, which can hide bugs and make failures undetectable. This also means the function always returns True even when the insert fails.\", \"suggested_fix\": \"Replace the bare except with specific exception handling, log the error, and return False on failure. For example:\\n\\n```python\\ntry:\\n    db.insert(note)\\n    return True\\nexcept DatabaseError as e:  # replace with the actual exception type\\n    logger.error(f\\\"Failed to save note: {e}\\\")\\n    return False\\n```\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
       "prompt_tokens": 674,
-      "completion_tokens": 366
+      "completion_tokens": 339,
+      "provider": "groq"
     },
     {
       "prompt_sha256": "37c52f02a47111e9eb5cf8d6fc041f3609a79f203b12cb30d5a42a8edd1afbd6",
-      "response": "{\"findings\": [{\"file_path\": \"notes/store.py\", \"line_number\": 20, \"category\": \"error handling\", \"severity\": \"error\", \"body\": \"A bare except clause catches all exceptions and silently discards them with 'pass', causing failures to be hidden and always returning True even when the insert fails.\", \"suggested_fix\": \"Replace the bare except with a specific exception (e.g., except DatabaseError as e:), log the error, and return False or re‑raise as appropriate.\\n\\nExample:\\n```python\\ntry:\\n    db.insert(note)\\n    return True\\nexcept DatabaseError as e:\\n    logger.error(f\\\"Failed to save note: {e}\\\")\\n    return False\\n```\"}]}",
+      "response": "{\"findings\": [{\"file_path\": \"notes/store.py\", \"line_number\": 18, \"category\": \"quality\", \"severity\": \"error\", \"body\": \"Catching all exceptions with a bare except and silently ignoring them hides errors and always returns True, which can lead to data loss and makes debugging difficult.\", \"suggested_fix\": \"Replace the bare except with specific exception handling, log the error, and return False or re-raise the exception. For example:\\n```python\\ntry:\\n    db.insert(note)\\n    return True\\nexcept DatabaseError as e:  # replace with the actual exception type\\n    logger.error(f\\\"Failed to save note: {e}\\\")\\n    return False\\n```\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
       "prompt_tokens": 678,
-      "completion_tokens": 382
+      "completion_tokens": 327,
+      "provider": "groq"
     },
     {
       "prompt_sha256": "c1ff05db1d6d6590aa9df58cff122f281f7beb4253dcda106b180813799b6e14",
-      "response": "{\"findings\": [{\"file_path\": \"notes/store.py\", \"line_number\": 18, \"category\": \"quality\", \"severity\": \"warning\", \"body\": \"Broad except clause catches all exceptions and silently ignores them, causing failures to be hidden and always returns True even when the insert fails.\", \"suggested_fix\": \"Replace the bare except with specific exception handling, log the error, and return False on failure. For example:\\n\\n```python\\ntry:\\n    db.insert(note)\\n    return True\\nexcept DatabaseError as e:\\n    logger.error(f\\\"Failed to save note: {e}\\\")\\n    return False\\n```\"}]}",
+      "response": "{\"findings\":[{\"file_path\":\"notes/store.py\",\"line_number\":20,\"category\":\"security\",\"severity\":\"warning\",\"body\":\"Broad except clause swallows all exceptions and silently ignores insertion failures, causing the function to always return True even when the note is not saved, which can lead to security/consistency issues.\",\"suggested_fix\":\"except Exception as e:\\n    logger.error(f'Failed to insert note: {e}')\\n    return False\"},{\"file_path\":\"notes/store.py\",\"line_number\":22,\"category\":\"quality\",\"severity\":\"info\",\"body\":\"Returning True unconditionally after a failed insert misleads callers about operation success.\",\"suggested_fix\":\"return True only if db.insert succeeds; otherwise return False as shown above.\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
       "prompt_tokens": 684,
-      "completion_tokens": 431
+      "completion_tokens": 639,
+      "provider": "groq"
     }
-  ]
+  ],
+  "recorded_utc": "2026-11-06T19:16:24Z"
 }
