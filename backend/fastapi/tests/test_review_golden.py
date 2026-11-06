@@ -9,7 +9,8 @@ retrieved similar patterns). The committed eval cassettes are keyed on these
 prompts, so any change here also breaks `make eval`.
 
 Regenerate only on purpose, after a prompt change that re-records the
-cassettes: ``A5_WRITE_GOLDEN=1 uv run pytest tests/test_review_golden.py``.
+cassettes: ``uv run python -m tests.test_review_golden`` writes the file and
+checks nothing; the test only compares.
 """
 
 import json
@@ -125,15 +126,30 @@ async def _router_path() -> list[dict]:
     return capture.sorted_calls()
 
 
+async def _capture() -> dict[str, list[dict]]:
+    return {"agent": await _agent_path(), "router": await _router_path()}
+
+
 @pytest.mark.asyncio
 async def test_small_diff_prompts_are_byte_identical_to_before_batching():
-    captured = {"agent": await _agent_path(), "router": await _router_path()}
-
-    if os.environ.get("A5_WRITE_GOLDEN"):
-        GOLDEN.parent.mkdir(exist_ok=True)
-        GOLDEN.write_text(json.dumps(captured, indent=2, ensure_ascii=False) + "\n")
+    captured = await _capture()
 
     assert captured == json.loads(GOLDEN.read_text())
     # The router's prompt carries the retrieved pattern; the agent's doesn't.
     assert all(len(calls) == 3 for calls in captured.values())
     assert "lib/legacy.py" in captured["router"][0]["messages"][1]["content"]
+
+
+if __name__ == "__main__":
+    # Same isolation as conftest.py: no .env, fake keys, set before the app
+    # modules read their settings.
+    os.environ["DEVMIND_ENV_FILE"] = ""
+    os.environ["SENTRY_DSN_FASTAPI"] = ""
+    os.environ["GOOGLE_AI_API_KEY"] = "test-google-key"
+    os.environ["GROQ_API_KEY"] = "test-groq-key"
+    import asyncio
+
+    captured = asyncio.run(_capture())
+    GOLDEN.parent.mkdir(exist_ok=True)
+    GOLDEN.write_text(json.dumps(captured, indent=2, ensure_ascii=False) + "\n")
+    print(f"Wrote {GOLDEN}")
