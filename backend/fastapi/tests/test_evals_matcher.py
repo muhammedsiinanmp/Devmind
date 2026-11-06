@@ -151,6 +151,12 @@ class TestMatchCase:
         result = match_case([_exp()], [_finding(line="12")])
         assert len(result.matched) == 1
 
+    def test_enum_severity_is_accepted(self):
+        from models.review import Severity
+
+        result = match_case([_exp()], [_finding(severity=Severity.ERROR)])
+        assert len(result.matched) == 1
+
     def test_garbage_line_number_never_matches(self):
         result = match_case([_exp()], [_finding(line="n/a")])
         assert result.matched == []

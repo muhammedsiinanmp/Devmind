@@ -11,6 +11,12 @@ Classification per case (each list is disjoint):
   wrong category or a severity below the minimum; not counted as matches
 - missed:  expected items with no matching or partial finding
 - extra:   findings that matched nothing
+
+Scores are only as current as the findings fed in. In replay mode those come
+from cassettes keyed by prompt hash, so a replay re-scores old model output
+and cannot measure the effect of a prompt change: a changed prompt has no
+recorded response and the case is reported as stale. Measuring a prompt or
+model change needs a live run (``make eval-record``).
 """
 
 import re
@@ -103,7 +109,8 @@ def _full_match(exp: Expected, finding: dict) -> bool:
         return False
     if normalize_category(finding.get("category")) not in exp.categories:
         return False
-    severity = str(finding.get("severity", "")).lower()
+    raw = finding.get("severity", "")
+    severity = str(getattr(raw, "value", raw)).strip().lower()
     return SEVERITY_RANK.get(severity, -1) >= SEVERITY_RANK[exp.min_severity]
 
 
