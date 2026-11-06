@@ -356,8 +356,8 @@ async def store_review_async(
                     except (IntegrityError, DataError) as exc:
                         # This row only, e.g. a concurrent insert of the same
                         # (repo, sha256, model) or a value too long for its
-                        # column. Reset the
-                        # session so the remaining chunks can still be stored.
+                        # column. Reset the session so the remaining chunks
+                        # can still be stored.
                         # Any other error (a missing column, a lost connection)
                         # would hit every chunk, so it ends the task below.
                         await session.rollback()
