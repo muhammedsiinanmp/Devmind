@@ -707,3 +707,25 @@ class TestFeedbackRetrieval:
 
         assert not feedback
         search.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_review_hands_the_examples_to_the_agent(self, fake_store):
+        from services.feedback_store import FeedbackContext
+
+        context = FeedbackContext(rejected=["example"])
+        agent = AsyncMock(
+            return_value={"synthesized_comments": [], "model_used": "x/y"}
+        )
+        with (
+            patch(
+                "services.feedback_store.search_feedback",
+                AsyncMock(return_value=context),
+            ),
+            patch("agents.review_agent.run_review_agent", agent),
+        ):
+            await analyze_review(
+                ReviewRequest(diff=PR1_DIFF, repo_full_name=REPO, pr_number=1),
+                secret="unused",
+            )
+
+        assert agent.call_args.kwargs["feedback"] is context

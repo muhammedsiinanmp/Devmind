@@ -235,6 +235,7 @@ async def analyze_review(
             user_id=request.user_id,
             diff_chunks=parsed_chunks,
             similar_patterns=similar_patterns,
+            feedback=feedback,
             share_prompt=True,
             # The deadline counts from the start of the request, retrieval included.
             deadline_seconds=get_settings().review_deadline_seconds

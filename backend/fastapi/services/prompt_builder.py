@@ -176,6 +176,9 @@ class PromptContext:
     quality_patterns: list = field(default_factory=list)
     past_reviews: list = field(default_factory=list)
     repo_conventions: Optional[str] = None
+    # Formatted feedback examples (services/feedback_store.py, issue #74).
+    accepted_findings: list = field(default_factory=list)
+    rejected_findings: list = field(default_factory=list)
 
 
 def count_tokens(text: str, encoding_name: str = "cl100k_base") -> int:
@@ -287,6 +290,51 @@ def _section_overhead(title: str, source: str, tag: str) -> int:
     return count_tokens(_section_text(title, source, "", tag)) + 1
 
 
+# Feedback sections (issue #74): (title, source, guidance). The guidance is
+# ours, so it sits outside the untrusted block; the examples are inside it.
+FEEDBACK_SECTIONS = (
+    (
+        "PREVIOUSLY ACCEPTED FINDINGS",
+        "accepted_findings",
+        "Developers on this repository confirmed these earlier DevMind "
+        "findings on similar code. They show the kind of issue this team "
+        "wants flagged.",
+    ),
+    (
+        "PREVIOUSLY REJECTED FINDINGS",
+        "rejected_findings",
+        "Developers on this repository rejected these earlier DevMind "
+        "findings on similar code as wrong or unwanted. Do not report the "
+        "same kind of finding again unless the code under review really has "
+        "the problem.",
+    ),
+)
+# Each feedback section gets at most this many tokens for its examples, and
+# is left out unless more than FEEDBACK_SECTION_GATE tokens are free.
+FEEDBACK_SECTION_CAP = 1000
+FEEDBACK_SECTION_GATE = 150
+
+
+def _feedback_section_text(
+    title: str, guidance: str, source: str, body: str, tag: str
+) -> str:
+    return f"\n\n=== {title} ===\n{guidance}\n{wrap_untrusted(source, body, tag)}"
+
+
+def _feedback_sections(context: PromptContext) -> list[tuple[str, str, str, str]]:
+    """The non-empty feedback sections as ``(title, source, guidance, text)``,
+    text already escaped (escape_untrusted)."""
+    examples = {
+        "accepted_findings": context.accepted_findings,
+        "rejected_findings": context.rejected_findings,
+    }
+    return [
+        (title, source, guidance, escape_untrusted(format_feedback(examples[source])))
+        for title, source, guidance in FEEDBACK_SECTIONS
+        if examples[source]
+    ]
+
+
 def _context_sections_tokens(context: PromptContext, tag: str) -> int:
     """
     Tokens to keep free for the non-diff sections.
@@ -359,6 +407,8 @@ def build_review_prompt(
     3. Quality patterns
     4. Past review summaries
     5. Repo conventions
+    6. Previously accepted, then rejected, findings (feedback examples; not
+       counted in the diff's budget, so they only use what is left)
 
     Args:
         context: PromptContext with all context parts
@@ -386,6 +436,20 @@ def build_review_prompt(
         if room > gate:
             body = truncate_to_budget(text, min(room, cap), [])
             parts.append(_section_text(title, source, body, tag))
+
+    # Feedback examples come last and only use what is left: diff_token_budget
+    # doesn't reserve room for them, so they never shorten the diff.
+    for title, source, guidance, text in _feedback_sections(context):
+        room = (
+            max_tokens
+            - count_tokens("\n".join(parts))
+            - count_tokens(_feedback_section_text(title, guidance, source, "", tag))
+            - 1
+        )
+        if room > FEEDBACK_SECTION_GATE:
+            body = truncate_to_budget(text, min(room, FEEDBACK_SECTION_CAP), [])
+            if body:
+                parts.append(_feedback_section_text(title, guidance, source, body, tag))
 
     final_prompt = "\n".join(parts)
 
@@ -675,6 +739,11 @@ def format_patterns(patterns: list) -> str:
     for i, pattern in enumerate(patterns[:10], 1):
         lines.append(f"{i}. {pattern}")
     return "\n".join(lines)
+
+
+def format_feedback(examples: list) -> str:
+    """Number feedback examples (each may span several lines) for the prompt."""
+    return "\n\n".join(f"{i}. {example}" for i, example in enumerate(examples, 1))
 
 
 def format_past_reviews(reviews: list) -> str:
