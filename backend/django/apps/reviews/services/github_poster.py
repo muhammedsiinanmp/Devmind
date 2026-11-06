@@ -5,6 +5,7 @@ Uses GitHub Create Pull Request Review API to post comments in batches.
 """
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -19,7 +20,22 @@ MAX_SKIPPED_FILES_LISTED = 20
 SKIP_REASON_TEXT = {
     "generated": "generated or vendored",
     "batch_limit": "over the review's batch limit",
+    "deadline": "not reached before the review deadline",
 }
+
+
+def _code_span(text: str) -> str:
+    """
+    ``text`` as a Markdown code span that its own backticks can't end.
+
+    The fence is one backtick longer than the longest run inside, padded with
+    spaces when the text starts or ends with a backtick (CommonMark).
+    """
+    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
+    fence = "`" * (longest + 1)
+    if text.startswith("`") or text.endswith("`"):
+        text = f" {text} "
+    return f"{fence}{text}{fence}"
 
 
 def coverage_line(
@@ -27,6 +43,10 @@ def coverage_line(
 ) -> str:
     """
     "Reviewed X of Y files." plus the skipped files and why.
+
+    Y counts the files the review service parsed from the diff: files with
+    added or removed lines. Binary, rename-only and mode-only changes have no
+    lines, so they aren't counted.
 
     Returns "" when the review service didn't report coverage
     (files_reviewed is None), so older responses get no line.
@@ -40,7 +60,7 @@ def coverage_line(
         for skipped in files_skipped[:MAX_SKIPPED_FILES_LISTED]:
             reason = skipped.get("reason", "")
             reason_text = SKIP_REASON_TEXT.get(reason, reason)
-            listed.append(f"`{skipped.get('file_path', '')}` ({reason_text})")
+            listed.append(f"{_code_span(skipped.get('file_path', ''))} ({reason_text})")
         more = len(files_skipped) - len(listed)
         if more:
             listed.append(f"{more} more")

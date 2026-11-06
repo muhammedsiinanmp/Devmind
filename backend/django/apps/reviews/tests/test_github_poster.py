@@ -411,3 +411,32 @@ class TestPostedSummaryIncludesCoverage:
             "1 critical\n\nReviewed 2 of 3 files. Not reviewed: `uv.lock` "
             "(generated or vendored)."
         )
+
+
+class TestCoverageLineEscaping:
+    def test_deadline_reason_is_named(self):
+        from apps.reviews.services.github_poster import coverage_line
+
+        line = coverage_line(["a.py"], [{"file_path": "b.py", "reason": "deadline"}])
+
+        assert line == (
+            "Reviewed 1 of 2 files. Not reviewed: `b.py` "
+            "(not reached before the review deadline)."
+        )
+
+    @pytest.mark.parametrize(
+        "path, span",
+        [
+            ("docs/a`b.md", "``docs/a`b.md``"),
+            ("x``y.py", "```x``y.py```"),
+            ("`edge`.py", "`` `edge`.py ``"),
+        ],
+    )
+    def test_backticks_in_paths_cannot_end_the_code_span(self, path, span):
+        from apps.reviews.services.github_poster import coverage_line
+
+        line = coverage_line([], [{"file_path": path, "reason": "generated"}])
+
+        assert line == (
+            f"Reviewed 0 of 1 files. Not reviewed: {span} (generated or vendored)."
+        )
