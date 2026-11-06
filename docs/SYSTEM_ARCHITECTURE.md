@@ -177,7 +177,7 @@ sequenceDiagram
     CW->>GH: POST /repos/{owner}/{repo}/pulls/{pr}/reviews (event COMMENT)
 ```
 
-The orchestrator only writes status to Postgres. While a review is `pending` or `processing`, the frontend's `ReviewStatus` component polls `GET /api/v1/reviews/<id>/` every 3 seconds and stops on `completed`, `failed` or unmount.
+The orchestrator only writes status to Postgres. While a review is `pending` or `processing`, the frontend's `ReviewStatus` component polls `GET /api/v1/reviews/<id>/` every 3 seconds and stops on `completed`, `failed`, an unrecoverable error or unmount.
 
 ### Idempotency
 
@@ -352,7 +352,7 @@ The frontend stores both tokens in `localStorage` and refreshes on 401 (`fronten
 
 ### Review status updates
 
-There are no WebSockets. `devmind/asgi.py` is the plain Django ASGI app, the production image runs `gunicorn devmind.wsgi:application`, and Nginx has no upgrade block. The browser reads status through the same JWT-authenticated REST endpoint as everything else, so the ownership checks on `GET /api/v1/reviews/<id>/` apply. While a review is `pending` or `processing`, the frontend's `ReviewStatus` component polls `GET /api/v1/reviews/<id>/` every 3 seconds and stops on `completed`, `failed` or unmount. Each request waits for the previous one, and a failed request is retried on the next tick. The loop is in `frontend/src/lib/reviewStatusPolling.ts`.
+There are no WebSockets. `devmind/asgi.py` is the plain Django ASGI app, the production image runs `gunicorn devmind.wsgi:application`, and Nginx has no upgrade block. The browser reads status through the same JWT-authenticated REST endpoint as everything else, so the ownership checks on `GET /api/v1/reviews/<id>/` apply. While a review is `pending` or `processing`, the frontend's `ReviewStatus` component polls `GET /api/v1/reviews/<id>/` every 3 seconds and stops on `completed`, `failed` or unmount. Each request waits for the previous one. A 403 or 404 stops polling at once. A 5xx or network failure backs off: the next request waits 3, 6, 12, 24, 48 and then 60 seconds, and polling gives up after 10 consecutive failures. A successful request resets the backoff. When polling stops on an error, the badge keeps the last known status and shows "Status updates stopped". A 401 is handled by the API client's token-refresh interceptor. On the review page, a change to `completed` or `failed` refetches the review, so the summary and comments appear without a reload. The loop is in `frontend/src/lib/reviewStatusPolling.ts`.
 
 ### Service-to-service authentication
 
@@ -614,7 +614,7 @@ stateDiagram-v2
 | Failure | Behavior |
 |---|---|
 | Redis unavailable (FastAPI) | Rate limiter logs and lets the request through |
-| Status poll request fails | `ReviewStatus` skips that tick and tries again 3 seconds later |
+| Status poll request fails | 403 or 404: `ReviewStatus` stops polling and shows "Status updates stopped". 5xx or network error: retries with backoff (3 s doubling to 60 s) and stops after 10 consecutive failures |
 | An LLM provider fails | Next provider in the chain; all failed means FastAPI returns 429 and the review fails |
 | Embedding/search fails | Logged; review runs without retrieved context |
 
