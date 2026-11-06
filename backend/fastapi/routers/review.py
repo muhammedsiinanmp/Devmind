@@ -226,13 +226,15 @@ async def analyze_review(
         rag_pipeline_duration.observe(latency_ms)
 
         model_used = result.get("model_used", "unknown")
+        files_skipped = result.get("files_skipped", [])
 
-        # Embed the PR's hunks after the review (fire-and-forget)
+        # Embed the reviewed files' hunks after the review (fire-and-forget)
         task = asyncio.create_task(
             store_review_async(
                 repo_full_name=request.repo_full_name,
                 pr_number=request.pr_number,
                 chunks=parsed_chunks,
+                skipped_paths={item["file_path"] for item in files_skipped},
             )
         )
         _background_tasks.add(task)
@@ -248,7 +250,7 @@ async def analyze_review(
             latency_ms=latency_ms,
             analyzer_runs=result.get("analyzer_runs", {}),
             files_reviewed=result.get("files_reviewed", []),
-            files_skipped=result.get("files_skipped", []),
+            files_skipped=files_skipped,
             **asdict(anchor_stats),
         )
 
@@ -284,13 +286,17 @@ async def store_review_async(
     repo_full_name: str,
     pr_number: int,
     chunks: list[DiffChunk],
+    skipped_paths: set[str] | None = None,
 ):
     """Embed the reviewed PR's hunks, tagged with the PR's source_ref.
 
     Runs after the review so the PR's own chunks are never retrieved for it.
-    Chunks whose sha256 is already stored are skipped before embedding, the
-    rest are embedded in one batched call, and no DB connection is held
-    during that call.
+    Only files the review covered are embedded: files in ``skipped_paths``
+    (the review's files_skipped: generated, batch_limit or deadline) and
+    files matching review_skip_patterns are left out. Chunks already stored
+    for this repository with the configured embedding model are skipped
+    before embedding, the rest are embedded in one batched call, and no DB
+    connection is held during that call.
     """
     try:
         from sqlalchemy.exc import DataError, IntegrityError
@@ -299,8 +305,16 @@ async def store_review_async(
         from core.database import AsyncSessionLocal
 
         source_ref = _source_ref(pr_number)
+        skipped_paths = skipped_paths or set()
+        skip_patterns = get_settings().review_skip_patterns
+        reviewed_chunks = [
+            chunk
+            for chunk in chunks
+            if chunk.file_path not in skipped_paths
+            and not is_skipped_path(chunk.file_path, skip_patterns)
+        ]
         pending: dict[str, tuple[DiffChunk, str]] = {}  # sha256 -> (chunk, text)
-        for chunk in chunks[:20]:
+        for chunk in reviewed_chunks[:20]:
             chunk_text = _chunk_text(chunk)
             if not chunk_text:
                 continue
@@ -310,7 +324,9 @@ async def store_review_async(
 
         if pending:
             async with AsyncSessionLocal() as session:
-                existing = await vector_store.existing_hashes(session, list(pending))
+                existing = await vector_store.existing_hashes(
+                    session, repo_full_name, list(pending)
+                )
             for text_hash in existing:
                 pending.pop(text_hash, None)
 
@@ -339,7 +355,8 @@ async def store_review_async(
                         stored += 1
                     except (IntegrityError, DataError) as exc:
                         # This row only, e.g. a concurrent insert of the same
-                        # sha256 or a value too long for its column. Reset the
+                        # (repo, sha256, model) or a value too long for its
+                        # column. Reset the
                         # session so the remaining chunks can still be stored.
                         # Any other error (a missing column, a lost connection)
                         # would hit every chunk, so it ends the task below.
