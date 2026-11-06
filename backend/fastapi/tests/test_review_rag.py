@@ -654,3 +654,56 @@ class TestSkippedFilesAreNotEmbedded:
         assert len(stored) == 20
         assert "pkg/mod0.py" not in stored
         assert "pkg/mod20.py" in stored
+
+
+class TestFeedbackRetrieval:
+    """Issue #74: feedback examples are searched with the code-search queries."""
+
+    @pytest.mark.asyncio
+    async def test_reuses_the_query_embeddings_without_another_embedding_call(
+        self, fake_store, embedding_api
+    ):
+        from services.feedback_store import FeedbackContext
+
+        search = AsyncMock(return_value=FeedbackContext(rejected=["example"]))
+        with patch("services.feedback_store.search_feedback", search):
+            _, _, feedback = await review_router._prepare_rag_context(
+                ReviewRequest(diff=PR1_DIFF, repo_full_name=REPO, pr_number=1)
+            )
+
+        assert feedback.rejected == ["example"]
+        assert embedding_api.calls("RETRIEVAL_QUERY") == 1
+        session, embeddings, repo, model = search.call_args.args
+        assert (repo, model) == (REPO, fake_store.embedding_model)
+        [query_text] = embedding_api.requests[0]["requests"]
+        assert embeddings == [_fake_embed(query_text["content"]["parts"][0]["text"])]
+
+    @pytest.mark.asyncio
+    async def test_search_failure_gives_no_examples_and_keeps_code_context(
+        self, fake_store, caplog
+    ):
+        await _review(PR1_DIFF, pr_number=1)  # stores PR 1's hunk
+        search = AsyncMock(side_effect=RuntimeError("no feedback_embeddings"))
+        with (
+            patch("services.feedback_store.search_feedback", search),
+            caplog.at_level(logging.WARNING, logger="routers.review"),
+        ):
+            _, patterns, feedback = await review_router._prepare_rag_context(
+                ReviewRequest(diff=PR2_DIFF, repo_full_name=REPO, pr_number=2)
+            )
+
+        assert not feedback
+        assert len(patterns) == 1
+        assert "review.feedback_context_failed" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_no_query_embeddings_no_search(self, fake_store):
+        search = AsyncMock()
+        diff = "diff --git a/x.min.js b/x.min.js\n--- a/x.min.js\n+++ b/x.min.js\n"
+        with patch("services.feedback_store.search_feedback", search):
+            _, _, feedback = await review_router._prepare_rag_context(
+                ReviewRequest(diff=diff, repo_full_name=REPO, pr_number=1)
+            )
+
+        assert not feedback
+        search.assert_not_called()

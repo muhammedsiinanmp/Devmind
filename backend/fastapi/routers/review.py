@@ -20,6 +20,7 @@ from models.review import ReviewRequest, ReviewResponse, ReviewComment
 from services.code_parser import DiffChunk, parse_diff
 from services.comment_anchoring import anchor_comments
 from services.diff_batching import ReviewDeadlineError, is_skipped_path
+from services.feedback_store import FeedbackContext
 from services.llm_client import AllProvidersDownError
 
 logger = logging.getLogger(__name__)
@@ -56,12 +57,42 @@ def _normalize(text: str) -> str:
     return " ".join(text.split())
 
 
+async def _retrieve_feedback(
+    repo_full_name: str, query_embeddings: list[list[float]]
+) -> FeedbackContext:
+    """
+    The repository's accepted and rejected feedback examples closest to the
+    review's hunks (services/feedback_store.py), searched with the code
+    search's query embeddings in a session of its own. Any failure, such as
+    a missing feedback_embeddings table, gives no examples.
+    """
+    try:
+        from core.database import AsyncSessionLocal
+        from services import feedback_store
+        from services.vector_store import vector_store
+
+        async with AsyncSessionLocal() as session:
+            return await feedback_store.search_feedback(
+                session,
+                query_embeddings,
+                repo_full_name,
+                vector_store.embedding_model,
+            )
+    except Exception as exc:
+        logger.warning(
+            "review.feedback_context_failed repo=%s error=%s",
+            repo_full_name,
+            type(exc).__name__,
+        )
+        return FeedbackContext()
+
+
 async def _prepare_rag_context(
     request: ReviewRequest,
-) -> tuple[list[DiffChunk], list[str]]:
+) -> tuple[list[DiffChunk], list[str], FeedbackContext]:
     """
     Run the RAG context preparation steps:
-    parse diff -> similarity search per hunk.
+    parse diff -> similarity search per hunk -> feedback examples.
 
     The agent builds the prompt from these, one per file batch, and gives it
     to all three analyzers. Retrieval runs once per review, and files the
@@ -71,9 +102,13 @@ async def _prepare_rag_context(
     store_review_async after the review, so retrieval only sees other code:
     rows tagged with this PR's source_ref are excluded in the query, and any
     result whose text matches a hunk of this diff is dropped.
+
+    Feedback examples are searched with the same query embeddings, so they
+    cost no extra embedding call.
     """
     parsed_chunks = parse_diff(request.diff)
     similar_patterns: list[str] = []
+    query_embeddings: list[list[float]] = []
 
     all_hunk_texts = [text for text in map(_chunk_text, parsed_chunks) if text]
     skip_patterns = get_settings().review_skip_patterns
@@ -143,7 +178,11 @@ async def _prepare_rag_context(
     except Exception as exc:
         logger.warning("review.rag_context_partial error=%s", str(exc))
 
-    return parsed_chunks, similar_patterns
+    feedback = FeedbackContext()
+    if query_embeddings:
+        feedback = await _retrieve_feedback(request.repo_full_name, query_embeddings)
+
+    return parsed_chunks, similar_patterns, feedback
 
 
 RISK_BASE_BY_SEVERITY = {"critical": 70, "error": 45, "warning": 20, "info": 5}
@@ -186,7 +225,7 @@ async def analyze_review(
     try:
         from agents.review_agent import run_review_agent
 
-        parsed_chunks, similar_patterns = await _prepare_rag_context(request)
+        parsed_chunks, similar_patterns, feedback = await _prepare_rag_context(request)
 
         # Run the review agent with RAG-prepared context
         result = await run_review_agent(
