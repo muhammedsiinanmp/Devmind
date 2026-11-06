@@ -144,6 +144,16 @@ class ReviewComment(models.Model):
         default="",
         help_text="Suggested code fix in diff format.",
     )
+    github_comment_id = models.BigIntegerField(
+        null=True,
+        blank=True,
+        unique=True,
+        help_text=(
+            "ID of the inline review comment DevMind posted on GitHub. Null "
+            "for comments that weren't posted inline (folded into the review "
+            "body) or posted before this was recorded."
+        ),
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -156,6 +166,75 @@ class ReviewComment(models.Model):
 
     def __str__(self) -> str:
         return f"{self.severity.upper()} {self.category} in {self.file_path}:{self.line_number}"
+
+
+class CommentFeedback(models.Model):
+    """
+    A developer's verdict on one DevMind comment, from one source.
+
+    Sources and what they mean (docs/feedback-learning.md):
+    - reaction: 👍/👎 on the comment, counted when the PR closes. More 👍
+      than 👎 is accepted, more 👎 than 👍 is rejected, a tie is no signal.
+    - reply: a reply to the comment that starts with one of the phrases in
+      services/feedback.py (for example "fixed" or "false positive").
+    - resolved: the comment's thread was resolved (accepted). Unresolving it
+      removes the row.
+
+    One row per comment and source; a later event from the same source
+    replaces it. When sources disagree, effective_signal() picks one.
+    """
+
+    SIGNAL_CHOICES = [
+        ("accepted", "Accepted"),
+        ("rejected", "Rejected"),
+    ]
+
+    SOURCE_CHOICES = [
+        ("reaction", "Reaction"),
+        ("reply", "Reply"),
+        ("resolved", "Resolved thread"),
+    ]
+
+    # Explicit votes beat explicit words, which beat resolving a thread
+    # (people also resolve threads to dismiss them).
+    SOURCE_PRECEDENCE = ("reaction", "reply", "resolved")
+
+    comment = models.ForeignKey(
+        ReviewComment,
+        on_delete=models.CASCADE,
+        related_name="feedback",
+    )
+    signal = models.CharField(max_length=10, choices=SIGNAL_CHOICES)
+    source = models.CharField(max_length=10, choices=SOURCE_CHOICES)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "reviews_commentfeedback"
+        ordering = ["comment_id", "source"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["comment", "source"],
+                name="uq_commentfeedback_comment_source",
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.signal} ({self.source}) on comment #{self.comment_id}"
+
+    @classmethod
+    def effective(cls, rows) -> CommentFeedback | None:
+        """
+        The row that decides a comment's feedback state, or None.
+
+        ``rows`` are one comment's feedback rows. The source that comes first
+        in SOURCE_PRECEDENCE wins.
+        """
+        by_source = {row.source: row for row in rows}
+        for source in cls.SOURCE_PRECEDENCE:
+            if source in by_source:
+                return by_source[source]
+        return None
 
 
 class ReviewRun(models.Model):

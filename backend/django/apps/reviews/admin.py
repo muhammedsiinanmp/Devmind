@@ -16,6 +16,7 @@ class ReviewCommentInline(admin.TabularInline):
         "severity",
         "category",
         "suggested_fix",
+        "github_comment_id",
         "created_at",
     ]
     can_delete = False

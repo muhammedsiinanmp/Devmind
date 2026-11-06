@@ -11,7 +11,7 @@ import factory
 from factory.django import DjangoModelFactory
 
 from apps.repositories.tests.factories import RepositoryFactory
-from apps.reviews.models import Review, ReviewComment, ReviewRun
+from apps.reviews.models import CommentFeedback, Review, ReviewComment, ReviewRun
 
 
 class ReviewFactory(DjangoModelFactory):
@@ -55,3 +55,12 @@ class ReviewRunFactory(DjangoModelFactory):
     prompt_tokens = factory.Faker("random_int", min=500, max=2000)
     completion_tokens = factory.Faker("random_int", min=100, max=500)
     latency_ms = factory.Faker("random_int", min=500, max=5000)
+
+
+class CommentFeedbackFactory(DjangoModelFactory):
+    class Meta:
+        model = CommentFeedback
+
+    comment = factory.SubFactory(ReviewCommentFactory)
+    signal = "accepted"
+    source = "resolved"
