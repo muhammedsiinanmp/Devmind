@@ -1,7 +1,8 @@
 """
 Review router with full RAG pipeline.
 
-Wires: parse diff → similarity search per hunk → build prompt → review agent → return response → embed the PR's hunks.
+Wires: parse diff → similarity search per hunk → review agent (builds the
+prompt per file batch) → return response → embed the PR's hunks.
 """
 
 import time
@@ -16,7 +17,6 @@ from core.security import verify_internal_token
 from core.metrics import rag_pipeline_duration, agent_iterations, review_errors_total
 from models.review import ReviewRequest, ReviewResponse, ReviewComment
 from services.code_parser import DiffChunk, parse_diff
-from services.prompt_builder import PromptContext, build_review_prompt
 from services.comment_anchoring import anchor_comments
 from services.llm_client import AllProvidersDownError
 
@@ -56,10 +56,13 @@ def _normalize(text: str) -> str:
 
 async def _prepare_rag_context(
     request: ReviewRequest,
-) -> tuple[list[DiffChunk], list[str], str]:
+) -> tuple[list[DiffChunk], list[str]]:
     """
     Run the RAG context preparation steps:
-    parse diff -> similarity search per hunk -> build prompt.
+    parse diff -> similarity search per hunk.
+
+    The agent builds the prompt from these, one per file batch, and gives it
+    to all three analyzers.
 
     Nothing is stored here. The PR's own chunks are embedded by
     store_review_async after the review, so retrieval only sees other code:
@@ -124,12 +127,7 @@ async def _prepare_rag_context(
     except Exception as exc:
         logger.warning("review.rag_context_partial error=%s", str(exc))
 
-    prompt_context = PromptContext(
-        diff_chunks=parsed_chunks,
-        similar_patterns=similar_patterns,
-    )
-    prebuilt_prompt = build_review_prompt(prompt_context)
-    return parsed_chunks, similar_patterns, prebuilt_prompt
+    return parsed_chunks, similar_patterns
 
 
 RISK_BASE_BY_SEVERITY = {"critical": 70, "error": 45, "warning": 20, "info": 5}
@@ -172,9 +170,7 @@ async def analyze_review(
     try:
         from agents.review_agent import run_review_agent
 
-        parsed_chunks, similar_patterns, prebuilt_prompt = await _prepare_rag_context(
-            request
-        )
+        parsed_chunks, similar_patterns = await _prepare_rag_context(request)
 
         # Run the review agent with RAG-prepared context
         result = await run_review_agent(
@@ -184,7 +180,7 @@ async def analyze_review(
             user_id=request.user_id,
             diff_chunks=parsed_chunks,
             similar_patterns=similar_patterns,
-            prebuilt_prompt=prebuilt_prompt,
+            share_prompt=True,
         )
 
         # Extract comments from agent state
@@ -232,6 +228,8 @@ async def analyze_review(
             provider=model_used.split("/")[0] if "/" in model_used else "unknown",
             latency_ms=latency_ms,
             analyzer_runs=result.get("analyzer_runs", {}),
+            files_reviewed=result.get("files_reviewed", []),
+            files_skipped=result.get("files_skipped", []),
             **asdict(anchor_stats),
         )
 
