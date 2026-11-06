@@ -193,3 +193,86 @@ class TestQueries:
             await _insert(store, session, REPO)
             with pytest.raises(IntegrityError):
                 await _insert(store, session, REPO)
+
+
+async def _store_feedback(session, comment_id, signal, vector, repo=REPO, model="m1"):
+    from services import feedback_store
+
+    await feedback_store.replace_feedback(
+        session,
+        comment_id=comment_id,
+        repo_full_name=repo,
+        signal=signal,
+        file_path=f"f{comment_id}.py",
+        category="security",
+        severity="error",
+        body=f"comment {comment_id}",
+        code_hunk="+x = 1",
+        embedding=vector,
+        embedding_model=model,
+    )
+
+
+# Unit vectors: cosine similarity with VECTOR is 1.0, 0.8 and 0.0.
+NEAR = [0.8, 0.6] + [0.0] * 766
+FAR = [0.0, 1.0] + [0.0] * 766
+
+
+class TestFeedbackEmbeddings:
+    @pytest.mark.asyncio
+    async def test_0004_creates_the_table_with_its_indexes(self, migrated_schema):
+        _, conn = migrated_schema
+
+        indexes = await conn.fetch(
+            "SELECT indexname FROM pg_indexes"
+            " WHERE schemaname = current_schema()"
+            " AND tablename = 'feedback_embeddings' ORDER BY indexname"
+        )
+
+        assert [r["indexname"] for r in indexes] == [
+            "feedback_embeddings_pkey",
+            "ix_feedback_embeddings_repo_model",
+            "ux_feedback_embeddings_comment_model",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_signal_must_be_accepted_or_rejected(self, session_factory):
+        async with session_factory() as session:
+            with pytest.raises(IntegrityError):
+                await _store_feedback(session, 1, "maybe", VECTOR)
+
+    @pytest.mark.asyncio
+    async def test_search_returns_close_examples_of_the_repo_and_model(
+        self, session_factory
+    ):
+        from services.feedback_store import search_feedback
+
+        async with session_factory() as session:
+            await _store_feedback(session, 1, "rejected", VECTOR)
+            await _store_feedback(session, 2, "accepted", NEAR)
+            await _store_feedback(session, 3, "rejected", FAR)
+            await _store_feedback(session, 4, "rejected", VECTOR, repo=OTHER_REPO)
+            await _store_feedback(session, 5, "rejected", VECTOR, model="m2")
+
+            found = await search_feedback(session, [VECTOR], REPO, "m1", threshold=0.7)
+
+        assert [line.splitlines()[0] for line in found.rejected] == [
+            "f1.py (security, error, similarity 1.00)"
+        ]
+        assert [line.splitlines()[0] for line in found.accepted] == [
+            "f2.py (security, error, similarity 0.80)"
+        ]
+
+    @pytest.mark.asyncio
+    async def test_replace_keeps_one_row_per_comment_and_model(self, session_factory):
+        from services.feedback_store import delete_feedback, search_feedback
+
+        async with session_factory() as session:
+            await _store_feedback(session, 1, "accepted", VECTOR)
+            await _store_feedback(session, 1, "rejected", VECTOR)
+            await _store_feedback(session, 1, "rejected", VECTOR, model="m2")
+            found = await search_feedback(session, [VECTOR], REPO, "m1")
+            assert (len(found.accepted), len(found.rejected)) == (0, 1)
+
+            assert await delete_feedback(session, 1) == 2
+            assert not await search_feedback(session, [VECTOR], REPO, "m1")
