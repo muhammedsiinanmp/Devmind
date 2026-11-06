@@ -1,6 +1,6 @@
 """
-The embeddings and scan routers are internal (called by Django only) and must
-reject requests without the shared X-Internal-Secret header.
+The embeddings router is internal (called by Django only) and must reject
+requests without the shared X-Internal-Secret header.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -9,11 +9,6 @@ import pytest
 
 from core.config import get_settings
 
-SCAN_BODY = {
-    "repo_full_name": "owner/repo",
-    "repo_url": "https://github.com/owner/repo",
-    "branch": "main",
-}
 EMBED_BODY = {
     "repo_full_name": "owner/repo",
     "file_path": "app.py",
@@ -24,9 +19,6 @@ PROTECTED_REQUESTS = [
     ("POST", "/embeddings/store", EMBED_BODY),
     ("POST", "/embeddings/search", {"q": "auth", "repo": "owner/repo"}),
     ("GET", "/embeddings/search?q=auth&repo=owner/repo", None),
-    ("POST", "/scan/full", SCAN_BODY),
-    ("GET", "/scan/status/1", None),
-    ("GET", "/scan/report/1", None),
 ]
 
 
@@ -69,23 +61,6 @@ async def test_embeddings_search_with_secret_succeeds(client):
 
     assert response.status_code == 200
     assert response.json() == {"results": []}
-
-
-@pytest.mark.asyncio
-async def test_scan_flow_with_secret_succeeds(client):
-    with patch("routers.scan.scan_repository", new=AsyncMock()):
-        start = await client.post(
-            "/scan/full", json=SCAN_BODY, headers=_valid_headers()
-        )
-        assert start.status_code == 202
-        scan_id = start.json()["scan_id"]
-
-        status_response = await client.get(
-            f"/scan/status/{scan_id}", headers=_valid_headers()
-        )
-
-    assert status_response.status_code == 200
-    assert status_response.json()["status"] == "queued"
 
 
 def test_empty_configured_secret_rejects_empty_header():

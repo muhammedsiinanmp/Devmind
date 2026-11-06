@@ -64,7 +64,7 @@ flowchart LR
     API -->|"enqueue"| RD
     RD --> CW
     CW -->|"fetch diff, post comments"| GH
-    CW -->|"POST /review/analyze, /scan/full<br/>X-Internal-Secret"| FA
+    CW -->|"POST /review/analyze<br/>X-Internal-Secret"| FA
     FA -->|"BYOK key lookup<br/>X-Internal-Secret"| API
     FA --> LLM
     FA -->|"embeddings + similarity search"| PG
@@ -74,7 +74,7 @@ flowchart LR
     PR -->|"scrape /metrics, /fastapi-metrics"| NGX
 ```
 
-The deployment view (all nine compose services, ports and Redis databases), the data model and the scan flow are in [docs/SYSTEM_ARCHITECTURE.md](docs/SYSTEM_ARCHITECTURE.md).
+The deployment view (all nine compose services, ports and Redis databases), the review flow and the data model are in [docs/SYSTEM_ARCHITECTURE.md](docs/SYSTEM_ARCHITECTURE.md).
 
 A review moves through the system like this:
 
@@ -121,7 +121,7 @@ START -> [analyze_security | analyze_quality | analyze_tests] -> synthesize -> E
 **Security hardening**:
 
 - **Webhooks:** the HMAC signature is checked before any payload parsing, and webhooks are rejected outright when no secret is configured.
-- **Service-to-service calls:** FastAPI's `/review/analyze`, `/embeddings/*` and `/scan/*` routes, and Django's internal BYOK endpoint, all require an `X-Internal-Secret` header (compared in constant time).
+- **Service-to-service calls:** FastAPI's `/review/analyze` and `/embeddings/*` routes, and Django's internal BYOK endpoint, all require an `X-Internal-Secret` header (compared in constant time).
 - **Stored secrets:** GitHub OAuth tokens and BYOK API keys are encrypted at rest with Fernet (`apps/accounts/encryption.py`). The key is derived from `SECRET_KEY` with HKDF.
 - **SSRF protection:** a user-supplied BYOK `base_url` must use https and resolve only to public IP addresses (`apps/accounts/url_safety.py`). This blocks requests to internal services and cloud metadata endpoints, with two caveats:
   - DNS rebinding between the check and the request isn't prevented.
@@ -141,12 +141,12 @@ Measured locally on this branch:
 
 | Suite | Tests | Line coverage |
 |---|---|---|
-| Django | 243 passed | 83% |
-| FastAPI | 227 passed | 83% |
+| Django | 225 passed | 86% |
+| FastAPI | 226 passed | 91% |
 
 Coverage method: `pytest --cov`, then `coverage report --omit='*/tests/*,*/migrations/*,*conftest.py'`, so test files, migrations and conftest are excluded. Including the test files would give a higher figure.
 
-CI doesn't enforce a coverage threshold. The frontend has 6 Vitest tests, all for the review status polling loop; coverage isn't measured.
+CI doesn't enforce a coverage threshold. The frontend has 8 Vitest tests: 6 for the review status polling loop and 2 checking that the removed scan page and API stay removed. Frontend coverage isn't measured.
 
 ## Tech stack
 
@@ -242,8 +242,8 @@ All routes are under `/api/v1/` and need `Authorization: Bearer <access token>` 
 | Area | Routes |
 |---|---|
 | Auth | `GET auth/github/start/` and `GET auth/github/callback/?code=&state=` (no auth), `POST auth/token/refresh/`, `POST auth/logout/`, `GET auth/me/`, `GET auth/github/token/` |
-| Repositories | `GET repositories/`, `GET/PATCH repositories/<id>/`, `POST repositories/connect/` (queues a GitHub sync and webhook install), `POST repositories/<id>/scan/` |
-| Reviews | `GET reviews/` (filters `status`, `repository`; `search`; `ordering`), `GET reviews/<id>/`, `POST reviews/<id>/retrigger/`, `GET reviews/scans/<id>/` |
+| Repositories | `GET repositories/`, `GET/PATCH repositories/<id>/`, `POST repositories/connect/` (queues a GitHub sync and webhook install) |
+| Reviews | `GET reviews/` (filters `status`, `repository`; `search`; `ordering`), `GET reviews/<id>/`, `POST reviews/<id>/retrigger/` |
 | LLM settings (BYOK) | `GET/POST settings/llm/`, `GET/PATCH/DELETE settings/llm/<id>/`, `POST settings/llm/<id>/set_default/`, `POST settings/llm/test/` |
 | Webhooks | `POST webhooks/github/` (no JWT; HMAC signature required) |
 | Internal | `GET auth/internal/llm-configs/?user_id=` (`X-Internal-Secret` only) |
@@ -255,12 +255,12 @@ backend/
   django/            Django project (devmind/ settings, urls, celery)
     apps/accounts/   GitHub OAuth, users, encrypted tokens, BYOK LLM configs
     apps/repositories/  repo sync, webhook install + receiver
-    apps/reviews/    Review models, orchestrator, GitHub comment poster, scans
+    apps/reviews/    Review models, orchestrator, GitHub comment poster
     apps/core/       structlog configuration, database-level migrations (pgvector)
     tests/           end-to-end pipeline test
   fastapi/           AI service
     agents/          LangGraph review agent and state
-    routers/         /review, /embeddings, /scan, /health
+    routers/         /review, /embeddings, /health
     services/        LLM client, rate limiter, vector store, diff parser, prompt builder
 frontend/            React + Vite app
 nginx/  prometheus/  grafana/   local infrastructure config
@@ -275,16 +275,15 @@ These are current gaps in the code, listed so nobody has to find them by surpris
 - **No embedding tables.** A Django migration enables the `vector` extension, but nothing creates the `code_embeddings` / `review_embeddings` tables. Until they exist, embedding storage and similarity search fail (logged), and reviews run without retrieved context. If you created `code_embeddings` by hand before `source_ref` existed, apply [`backend/fastapi/migrations/sql/0001_code_embeddings_source_ref.sql`](backend/fastapi/migrations/sql/0001_code_embeddings_source_ref.sql). Without it, retrieval and storage fail with a missing-column error, and the failure is only logged.
 - **Old untagged chunks can match their own PR.** Before `source_ref`, each review stored its hunks under their real file paths with no tag. If a PR was reviewed before this change and gets a new push afterwards, its old hunks can still be retrieved for it, unless their text exactly matches a hunk in the new diff. Deleting rows where `source_ref IS NULL` removes them, along with all other context stored before the change.
 - **`GET /api/v1/auth/github/token/` sends the user's decrypted GitHub token to the browser.** The frontend also keeps JWTs in `localStorage`.
-- **Repository scans never complete in Django.** Django starts a scan on FastAPI but never reads the result back, so `RepoScan` rows stay in `scanning`. FastAPI holds scan progress in process memory.
 - **Token counts are always zero in Django.** FastAPI returns token counts only per analyzer in `analyzer_runs`, which Django doesn't read, so `ReviewRun.prompt_tokens` and `completion_tokens` stay at 0.
 - **Anthropic keys aren't used for reviews.** They can be saved and validated, but the FastAPI client sends only OpenAI-compatible `/chat/completions` requests, so it skips them.
-- **Frontend tests are minimal.** Vitest covers only the review status polling loop (`frontend/src/lib/reviewStatusPolling.test.ts`); there are no component or page tests.
+- **Frontend tests are minimal.** Vitest covers only the review status polling loop (`frontend/src/lib/reviewStatusPolling.test.ts`) and a check that the removed scan page and API stay removed (`frontend/src/api/scanRemoved.test.ts`); there are no component or page tests.
 
 ## Further reading
 
 | Document | Contents |
 |---|---|
-| [docs/SYSTEM_ARCHITECTURE.md](docs/SYSTEM_ARCHITECTURE.md) | Services, deployment topology, review and scan flows, AI pipeline, data model (Django and pgvector tables), failure handling, security model, architectural decisions |
+| [docs/SYSTEM_ARCHITECTURE.md](docs/SYSTEM_ARCHITECTURE.md) | Services, deployment topology, review flow, AI pipeline, data model (Django and pgvector tables), failure handling, security model, architectural decisions |
 | [docs/ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md) | Environment variables, local setup, workflows, full API reference, testing, deployment notes, troubleshooting, known gaps |
 | [frontend/README.md](frontend/README.md) | Frontend stack, scripts and how it talks to the API |
 | [CONTRIBUTING.md](CONTRIBUTING.md) | Branches, pull requests, required CI checks and the checks to run locally |

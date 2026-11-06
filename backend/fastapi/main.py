@@ -8,7 +8,6 @@ from core.logging import configure_logging
 from routers.health import router as health_router
 from routers.review import router as review_router
 from routers.embeddings import router as embeddings_router
-from routers.scan import router as scan_router
 
 settings = get_settings()
 
@@ -49,4 +48,3 @@ Instrumentator().instrument(app).expose(app)
 app.include_router(health_router)
 app.include_router(review_router)
 app.include_router(embeddings_router)
-app.include_router(scan_router)
