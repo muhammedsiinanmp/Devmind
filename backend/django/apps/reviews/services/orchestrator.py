@@ -14,6 +14,7 @@ from tenacity import (
 )
 
 from apps.reviews.models import Review, ReviewComment, ReviewRun
+from apps.reviews.services.github_poster import coverage_line
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,10 @@ class ReviewResult:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     agent_iterations: int = 1
+    # Coverage reported by FastAPI. files_reviewed is None if the response
+    # doesn't include it; files_skipped items are {"file_path", "reason"}.
+    files_reviewed: list[str] | None = None
+    files_skipped: list[dict] = field(default_factory=list)
 
 
 class ReviewOrchestrator:
@@ -104,6 +109,9 @@ class ReviewOrchestrator:
             self.review.status = "completed"
             self.review.risk_score = result.risk_score
             self.review.summary = self._build_summary(result.comments)
+            coverage = coverage_line(result.files_reviewed, result.files_skipped)
+            if coverage:
+                self.review.summary += f"\n\n{coverage}"
             self.review.completed_at = timezone.now()
             self.review.save(
                 update_fields=["status", "risk_score", "summary", "completed_at"]
@@ -201,6 +209,8 @@ class ReviewOrchestrator:
                 prompt_tokens=data.get("prompt_tokens", 0),
                 completion_tokens=data.get("completion_tokens", 0),
                 agent_iterations=data.get("agent_iterations", 1),
+                files_reviewed=data.get("files_reviewed"),
+                files_skipped=data.get("files_skipped") or [],
             )
 
         if response.status_code == 403:
