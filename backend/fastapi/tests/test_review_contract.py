@@ -72,6 +72,23 @@ class TestSchemaIsTheSourceOfTruth:
         (key,) = ReviewFindings.model_fields
         assert f'{{"{key}": []}}' in REVIEW_SYSTEM_PROMPT
 
+    def test_severity_tables_match_the_schema_enum(self):
+        from agents.review_agent import SEVERITY_ORDER
+        from routers.review import RISK_BASE_BY_SEVERITY
+
+        values = [s.value for s in Severity]
+        # Sorted most severe first, in enum order.
+        assert sorted(SEVERITY_ORDER, key=SEVERITY_ORDER.get) == values
+        assert set(RISK_BASE_BY_SEVERITY) == set(values)
+        bases = [RISK_BASE_BY_SEVERITY[v] for v in values]
+        assert bases == sorted(bases, reverse=True)
+
+    def test_parser_reads_the_schema_list_key_first(self):
+        from agents.review_agent import _LIST_KEYS
+
+        (key,) = ReviewFindings.model_fields
+        assert _LIST_KEYS[0] == key
+
     def test_parser_output_is_validated_by_the_schema(self):
         from agents.review_agent import _parse_llm_comment_list
 

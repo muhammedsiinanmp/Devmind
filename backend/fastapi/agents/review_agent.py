@@ -17,7 +17,7 @@ from langgraph.graph import END, START, StateGraph
 
 from agents.states import AnalyzerRun, ReviewState, ReviewComment
 from core.config import get_settings
-from models.review import ReviewFinding, ReviewFindings
+from models.review import ReviewFinding, ReviewFindings, Severity
 from services.code_parser import parse_diff
 from services.llm_client import llm_client
 from services.prompt_builder import (
@@ -39,7 +39,8 @@ CORRECTIVE_PROMPT = (
 )
 # Fixed order used to pick model_used, so it doesn't depend on branch timing.
 ANALYZER_ORDER = ("security", "quality", "tests")
-SEVERITY_ORDER = {"critical": 0, "error": 1, "warning": 2, "info": 3}
+# Rank of each schema severity, most severe first.
+SEVERITY_ORDER = {severity.value: rank for rank, severity in enumerate(Severity)}
 
 
 def create_system_message(category: str) -> str:
@@ -166,7 +167,7 @@ async def analyze_tests(state: ReviewState) -> dict[str, Any]:
 
 # "findings" is the schema's key; the others are tolerated from models that
 # ignore the output format.
-_LIST_KEYS = ("findings", "issues", "comments", "results", "data")
+_LIST_KEYS = (*ReviewFindings.model_fields, "issues", "comments", "results", "data")
 
 
 def _parse_llm_comments(content: str, default_category: str) -> list[ReviewComment]:
