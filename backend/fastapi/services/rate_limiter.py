@@ -23,7 +23,6 @@ settings = get_settings()
 _DEFAULT_LIMITS: dict[str, int] = {
     "google": 15,
     "groq": 30,
-    "github_models": 150,
 }
 
 

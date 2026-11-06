@@ -23,7 +23,7 @@ flowchart LR
     User["DevMind user<br/>signs in, connects repositories,<br/>reads reviews, adds BYOK keys"]
     DM["DevMind<br/>React app, Django API, Celery worker,<br/>FastAPI AI service, Postgres, Redis"]
     GH["GitHub<br/>OAuth, repositories, webhooks,<br/>pull request reviews"]
-    LLM["LLM and embedding APIs<br/>server keys: Gemini, Groq, GitHub Models<br/>or the user's own keys"]
+    LLM["LLM and embedding APIs<br/>server keys: Gemini, Groq<br/>or the user's own keys"]
 
     Author -->|"push to a pull request"| GH
     User -->|"browser"| DM
@@ -38,7 +38,7 @@ flowchart LR
 flowchart LR
     subgraph External
         GH["GitHub"]
-        LLM["LLM providers<br/>Gemini / Groq / GitHub Models<br/>+ user BYOK"]
+        LLM["LLM providers<br/>Gemini / Groq<br/>+ user BYOK"]
     end
 
     FE["React app<br/>Vite dev server :5173"]
@@ -93,7 +93,7 @@ The full design, including [architectural decisions and their trade-offs](docs/S
 START -> [analyze_security | analyze_quality | analyze_tests] -> synthesize -> END
 ```
 
-- The three analyzers run as parallel branches, one LLM call each, so a review normally makes 3 LLM calls. The output format in the system prompt is generated from one Pydantic schema (`ReviewFindings` in `models/review.py`), which also validates every reply: a JSON object `{"findings": [...]}`, and `{"findings": []}` when there are no issues. Calls use JSON mode (`response_format: json_object`) on the built-in providers and on OpenAI, Groq, Mistral and Google BYOK keys (not yet checked against the live APIs), and run at temperature 0.1 (`REVIEW_TEMPERATURE`). An analyzer repeats its call once only if the model's response can't be parsed, adding a turn that asks for only that JSON object. An empty list of findings (also a bare `[]`, `{}` or `{"issues": null}`) is a valid result and is not retried.
+- The three analyzers run as parallel branches, one LLM call each, so a review normally makes 3 LLM calls. The output format in the system prompt is generated from one Pydantic schema (`ReviewFindings` in `models/review.py`), which also validates every reply: a JSON object `{"findings": [...]}`, and `{"findings": []}` when there are no issues. Calls use JSON mode (`response_format: json_object`) on the built-in Google and Groq providers and on OpenAI, Groq, Mistral and Google BYOK keys (not yet checked against the live APIs), and run at temperature 0.1 (`REVIEW_TEMPERATURE`). An analyzer repeats its call once only if the model's response can't be parsed, adding a turn that asks for only that JSON object. An empty list of findings (also a bare `[]`, `{}` or `{"issues": null}`) is a valid result and is not retried.
 - The diff and every retrieved context section are wrapped in `<untrusted_data source="...">` ... `</untrusted_data>` tags, and the system prompt says their content is data, never instructions. Delimiter text inside the content is escaped so it can't close the block. This lowers the risk of prompt injection from a PR; it doesn't rule it out. The system prompt is sent once, as the system message.
 - Each analyzer records its model, latency, token counts, attempts and whether its reply parsed in `analyzer_runs` (merged by the `_merge_dict` reducer in `agents/states.py`), and `POST /review/analyze` returns it.
 - `synthesize` removes duplicates (same file, line and category), sorts by severity and sets `model_used` from the security, quality and tests analyzers in that order, so it doesn't depend on which branch finished last.
@@ -114,8 +114,9 @@ START -> [analyze_security | analyze_quality | analyze_tests] -> synthesize -> E
 **LLM provider failover** (`backend/fastapi/services/llm_client.py`):
 
 - A user's own active provider configs are tried first, in priority order.
-- After that come the server's providers: Google `gemini-2.0-flash`, then Groq `llama-3.3-70b-versatile`, then GitHub Models `gpt-4o-mini`. Any provider without a configured key is skipped.
-- Any non-200 response (including 429 and 5xx) or a timeout moves the request to the next provider.
+- After that come the server's providers: Google (`GOOGLE_MODEL`, default `gemini-3.5-flash`), then Groq (`GROQ_MODEL`, default `openai/gpt-oss-120b`). Any provider without a configured key is skipped. GitHub Models was retired on 2026-07-30 and was removed.
+- Any non-200 response (including 429 and 5xx) or a timeout moves the request to the next provider. A 404 is logged as `llm.model_not_found`, which usually means the configured model was retired.
+- `make providers-check` lists each keyed provider's models, sends one tiny chat request and prints provider, model, whether the model is listed, the result and latency. On a 404 it also prints the provider's error message, truncated and with keys redacted. It never prints keys and exits non-zero if no provider works. FastAPI's `/health` also reports each provider's configured model and whether the provider lists it (cached for `LLM_HEALTH_CACHE_SECONDS`, default 300). Listed doesn't mean usable, because Google lists models that are closed to new keys. The chat request in `make providers-check` is the authoritative check.
 - Per-provider requests-per-minute limits are enforced with a Redis counter (`services/rate_limiter.py`), so all FastAPI workers share one budget. If Redis is down, requests go through instead of being blocked.
 
 **Security hardening**:
@@ -168,7 +169,7 @@ Prerequisites: Docker with Compose v2 and a [GitHub OAuth App](https://github.co
 cp .env.example .env
 #    Set DJANGO_SECRET_KEY, JWT_SECRET_KEY, FASTAPI_INTERNAL_SECRET,
 #    GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GITHUB_WEBHOOK_SECRET
-#    and at least one of GOOGLE_AI_API_KEY / GROQ_API_KEY / GITHUB_TOKEN.
+#    and at least one of GOOGLE_AI_API_KEY / GROQ_API_KEY.
 #    Sentry is off by default; set SENTRY_DSN_DJANGO / SENTRY_DSN_FASTAPI to enable it.
 make up
 ```
@@ -177,7 +178,7 @@ make up
 
 Flower, Prometheus and Grafana sit behind the compose `ops` profile. Start them with `make up-ops`.
 
-Other `Makefile` shortcuts: `make down`, `make logs`, `make migrate`, `make test`, and `make frontend-dev` to run Vite on the host instead (needs Node.js 20 and pnpm).
+Other `Makefile` shortcuts: `make down`, `make logs`, `make migrate`, `make test`, `make providers-check` to check the server LLM keys and models (runs on the host, needs `uv`), and `make frontend-dev` to run Vite on the host instead (needs Node.js 20 and pnpm).
 
 | Service | URL |
 |---|---|
@@ -229,7 +230,8 @@ All services read the root `.env` (template: [.env.example](.env.example)). Thes
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | Django | GitHub OAuth App |
 | `GITHUB_WEBHOOK_SECRET` | Django | Webhook HMAC key. Webhooks are rejected if it's empty. |
 | `DEVMIND_PUBLIC_URL` | Django | Base URL that installed GitHub webhooks point to |
-| `GOOGLE_AI_API_KEY`, `GROQ_API_KEY`, `GITHUB_TOKEN` | FastAPI | Server LLM providers. The Google key is also used for embeddings. |
+| `GOOGLE_AI_API_KEY`, `GROQ_API_KEY` | FastAPI | Server LLM providers. The Google key is also used for embeddings. |
+| `GOOGLE_MODEL`, `GROQ_MODEL` | FastAPI | Model per server provider. Check with `make providers-check`. |
 | `DJANGO_BASE_URL` | FastAPI | Where FastAPI fetches BYOK configs from |
 
 [docs/ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md) lists every variable.
@@ -244,7 +246,6 @@ All routes are under `/api/v1/` and need `Authorization: Bearer <access token>` 
 | Repositories | `GET repositories/`, `GET/PATCH repositories/<id>/`, `POST repositories/connect/` (queues a GitHub sync and webhook install), `POST repositories/<id>/scan/` |
 | Reviews | `GET reviews/` (filters `status`, `repository`; `search`; `ordering`), `GET reviews/<id>/`, `POST reviews/<id>/retrigger/`, `GET reviews/scans/<id>/` |
 | LLM settings (BYOK) | `GET/POST settings/llm/`, `GET/PATCH/DELETE settings/llm/<id>/`, `POST settings/llm/<id>/set_default/`, `POST settings/llm/test/` |
-| Organizations | `POST organizations/`, `organizations/<id>/`, `.../invite/`, `.../members/`, `organizations/invite/accept/` |
 | Webhooks | `POST webhooks/github/` (no JWT; HMAC signature required) |
 | Internal | `GET auth/internal/llm-configs/?user_id=` (`X-Internal-Secret` only) |
 
@@ -256,8 +257,7 @@ backend/
     apps/accounts/   GitHub OAuth, users, encrypted tokens, BYOK LLM configs
     apps/repositories/  repo sync, webhook install + receiver
     apps/reviews/    Review models, orchestrator, GitHub comment poster, scans
-    apps/organizations/ organizations, members, invites
-    apps/core/       structlog configuration
+    apps/core/       structlog configuration, database-level migrations (pgvector)
     tests/           end-to-end pipeline test
   fastapi/           AI service
     agents/          LangGraph review agent and state
