@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "case_id": "mutable-default-argument",
+  "case_sha256": "6bf125542c7cf5169281ec5482a0ff77ac63b5abde8368bd75be879e5b6b2bf0",
+  "latency_ms": 2740,
+  "calls": [
+    {
+      "prompt_sha256": "4cfc34e75005e9f406e456df4190128ca61eff5cf5dc22ab310cfb5a9c688cf3",
+      "response": "[\n  {\n    \"file_path\": \"tags/util.py\",\n    \"line_number\": 1,\n    \"category\": \"correctness\",\n    \"severity\": \"high\",\n    \"body\": \"The function now uses a mutable default argument `tags=[]`. This causes the same list instance to be shared across all calls, leading to unexpected accumulation of tags and potential bugs. The original implementation correctly used `tags=None` and created a new list inside the function.\",\n    \"suggested_fix\": \"Revert to the safe pattern:\\n```python\\ndef add_tag(tag, tags=None):\\n    tags = list(tags or [])\\n    # ... rest of the function logic ...\\n```\"\n  }\n]",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 381,
+      "completion_tokens": 389
+    },
+    {
+      "prompt_sha256": "47de926e74ff114c8286b4cd21c15594f770f2b7d8b9b18137f188141a1e70cf",
+      "response": "[\n  {\n    \"file_path\": \"tags/util.py\",\n    \"line_number\": 1,\n    \"category\": \"bug\",\n    \"severity\": \"high\",\n    \"body\": \"The function now uses a mutable default argument (tags=[]). This causes the same list instance to be shared across all calls, leading to unexpected accumulation of tags.\",\n    \"suggested_fix\": \"Replace the mutable default with None and initialise a new list inside the function:\\n```python\\ndef add_tag(tag, tags=None):\\n    if tags is None:\\n        tags = []\\n    # existing logic here\\n    return tags\\n```\"\n  },\n  {\n    \"file_path\": \"tags/util.py\",\n    \"line_number\": 1,\n    \"category\": \"test-coverage\",\n    \"severity\": \"medium\",\n    \"body\": \"There are no tests verifying the behaviour of `add_tag` when called multiple times without providing the `tags` argument. This scenario would expose the mutable‑default bug.\",\n    \"suggested_fix\": \"Add unit tests such as:\\n```python\\nimport unittest\\nfrom tags.util import add_tag\\n\\nclass TestAddTag(unittest.TestCase):\\n    def test_default_list_is_not_shared(self):\\n        result1 = add_tag('a')\\n        result2 = add_tag('b')\\n        self.assertNotIn('b', result1)\\n        self.assertEqual(result1, ['a'])\\n        self.assertEqual(result2, ['b'])\\n```\\nThese tests will fail with the current implementation, highlighting the issue.\"\n  }\n]",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 371,
+      "completion_tokens": 567
+    },
+    {
+      "prompt_sha256": "8bde2a22aeff1542de1b632dbe2ab246335994509db2d8c5e4ef536d2bf60bef",
+      "response": "[\n  {\n    \"file_path\": \"tags/util.py\",\n    \"line_number\": 1,\n    \"category\": \"MutableDefaultArgument\",\n    \"severity\": \"critical\",\n    \"body\": \"The function `add_tag` now uses a mutable default argument `tags=[]`. This list will be shared across all calls, causing tags to accumulate unintentionally and leading to bugs that are hard to trace.\",\n    \"suggested_fix\": \"Change the default to `None` and initialise a new list inside the function:\\n```python\\ndef add_tag(tag, tags=None):\\n    if tags is None:\\n        tags = []\\n    # existing logic here\\n```\"\n  },\n  {\n    \"file_path\": \"tags/util.py\",\n    \"line_number\": 1,\n    \"category\": \"MissingImplementation\",\n    \"severity\": \"high\",\n    \"body\": \"The previous implementation converted `tags` to a list and likely contained the core logic for adding a tag. The new version only defines the function signature and omits the body, resulting in a no‑op function or a syntax error if the body is missing.\",\n    \"suggested_fix\": \"Restore the original logic (or re‑implement it) inside the function. For example:\\n```python\\ndef add_tag(tag, tags=None):\\n    tags = list(tags or [])\\n    if tag not in tags:\\n        tags.append(tag)\\n    return tags\\n```\"\n  }\n]",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 375,
+      "completion_tokens": 493
+    }
+  ]
+}

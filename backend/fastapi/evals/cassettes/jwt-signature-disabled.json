@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "case_id": "jwt-signature-disabled",
+  "case_sha256": "0b5b658ee1d8fcbabfa287905a25db1181ed0a714fbb517a1c2e28ee3d39c16f",
+  "latency_ms": 3117,
+  "calls": [
+    {
+      "prompt_sha256": "95fa30343a5db3a5708b71a24b82016330022e5288f6db50bf48b2b8b270258a",
+      "response": "```json\n[\n  {\n    \"file_path\": \"auth/tokens.py\",\n    \"line_number\": 11,\n    \"category\": \"Security\",\n    \"severity\": \"critical\",\n    \"body\": \"The JWT is decoded with `options={\\\"verify_signature\\\": False}` which disables signature verification. This allows any attacker to forge or modify tokens and gain unauthorized access, effectively bypassing authentication.\",\n    \"suggested_fix\": \"Decode the token with proper signature verification and algorithm enforcement, e.g.:\\n```python\\n# Verify signature and enforce expected algorithm(s)\\nclaims = jwt.decode(\\n    token,\\n    SECRET,\\n    algorithms=[\\\"HS256\\\"],\\n    options={\\\"require\\\": [\\\"exp\\\", \\\"iat\\\", \\\"sub\\\"]}  # optional: enforce required claims\\n)\\n```\\nIf you need to support multiple algorithms, list them explicitly. Never disable signature verification in production code.\"\n  }\n]\n```",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 387,
+      "completion_tokens": 398
+    },
+    {
+      "prompt_sha256": "fec43b4f9c66d0f5b03de81e199f1ae730b66e224728653476ab5517aa01cec3",
+      "response": "[\n  {\n    \"file_path\": \"auth/tokens.py\",\n    \"line_number\": 11,\n    \"category\": \"security\",\n    \"severity\": \"critical\",\n    \"body\": \"The code now decodes JWTs with `options={\\\"verify_signature\\\": False}` which completely disables signature verification. This allows attackers to forge arbitrary tokens and gain unauthorized access. The previous implementation correctly verified the signature using the secret and algorithm.\",\n    \"suggested_fix\": \"Restore signature verification by passing the secret and allowed algorithms to `jwt.decode`. Also handle possible exceptions and validate standard claims (exp, iat, aud, etc.). Example:\\n```python\\ntry:\\n    claims = jwt.decode(\\n        token,\\n        SECRET,\\n        algorithms=[\\\"HS256\\\"],\\n        audience=EXPECTED_AUDIENCE,\\n        options={\\\"require\\\": [\\\"exp\\\", \\\"iat\\\"]}\\n    )\\nexcept jwt.ExpiredSignatureError:\\n    # handle expired token\\n    raise AuthenticationError(\\\"Token has expired\\\")\\nexcept jwt.InvalidTokenError as e:\\n    # handle any other token issues\\n    raise AuthenticationError(f\\\"Invalid token: {e}\\\")\\n```\"\n  }\n]",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 381,
+      "completion_tokens": 438
+    },
+    {
+      "prompt_sha256": "7758787fb24c3f3b6df4d80b674067c1a6d1d6019c5a280db89c81724c186be8",
+      "response": "[\n  {\n    \"file_path\": \"auth/tokens.py\",\n    \"line_number\": 11,\n    \"category\": \"security\",\n    \"severity\": \"critical\",\n    \"body\": \"The JWT is now decoded with `verify_signature=False`, which completely disables signature verification. This allows any attacker to forge tokens and gain unauthorized access.\",\n    \"suggested_fix\": \"Restore signature verification by providing the secret/key and specifying the allowed algorithms. Example:\\n```python\\nclaims = jwt.decode(token, SECRET, algorithms=[\\\"HS256\\\"])\\n```\\nIf you need to support multiple algorithms, list them explicitly and keep the secret/key secure.\"\n  },\n  {\n    \"file_path\": \"auth/tokens.py\",\n    \"line_number\": 11,\n    \"category\": \"test coverage\",\n    \"severity\": \"high\",\n    \"body\": \"There are no tests that assert the token signature is validated. After this change, existing tests may still pass, masking a severe security regression.\",\n    \"suggested_fix\": \"Add unit tests that:\\n1. Generate a valid token with the correct secret and assert `decode` returns expected claims.\\n2. Attempt to decode a token signed with a wrong secret and expect a `jwt.InvalidSignatureError` (or similar).\\n3. Verify that decoding a token without a signature raises an error.\\nThese tests will catch accidental removal of signature verification.\"\n  },\n  {\n    \"file_path\": \"auth/tokens.py\",\n    \"line_number\": 11,\n    \"category\": \"test coverage\",\n    \"severity\": \"medium\",\n    \"body\": \"No tests cover algorithm enforcement. The previous implementation limited decoding to HS256; the new code accepts any algorithm, opening the door to algorithm‑confusion attacks.\",\n    \"suggested_fix\": \"Add a test that creates a token using a different algorithm (e.g., RS256) and asserts that decoding fails when only HS256 is allowed.\\n```python\\nwith pytest.raises(jwt.InvalidAlgorithmError):\\n    jwt.decode(token_rs256, SECRET, algorithms=[\\\"HS256\\\"])\\n```\"\n  },\n  {\n    \"file_path\": \"auth/tokens.py\",\n    \"line_number\": 11,\n    \"category\": \"test coverage\",\n    \"severity\": \"low\",\n    \"body\": \"Edge‑case handling (malformed token, expired token, missing claims) is not exercised by the current test suite.\",\n    \"suggested_fix\": \"Add tests for:\\n- `jwt.DecodeError` when the token string is malformed.\\n- `jwt.ExpiredSignatureError` when the token’s `exp` claim is in the past.\\n- Missing required claims (e.g., `sub`) and ensure the function raises a clear error.\\nThese improve robustness and documentation of expected behavior.\"\n  }\n]",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 377,
+      "completion_tokens": 789
+    }
+  ]
+}

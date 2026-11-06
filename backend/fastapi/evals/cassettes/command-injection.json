@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "case_id": "command-injection",
+  "case_sha256": "f3c58aa1e18335f96ce2526d2a7f5cfb0d15526c079892f8be0d8ce655272da7",
+  "latency_ms": 2415,
+  "calls": [
+    {
+      "prompt_sha256": "a5ef709101655e397af4b73b8ab99bc4c1cfbc9cf9f1249e46071c6560736c93",
+      "response": "```json\n[\n  {\n    \"file_path\": \"ci/runner.py\",\n    \"line_number\": 22,\n    \"category\": \"security\",\n    \"severity\": \"high\",\n    \"body\": \"The new code uses `subprocess.run` with `shell=True` and an f‑string to build the command: `subprocess.run(f\\\"git checkout {branch}\\\", shell=True, check=True)`. If `branch` can be influenced by an attacker (e.g., from user input, environment variables, or external data), this introduces a command injection vulnerability because the entire string is interpreted by the shell.\",\n    \"suggested_fix\": \"Avoid invoking the shell. Pass the command and its arguments as a list and let `subprocess` handle quoting, e.g.:\\n```python\\n# Validate or sanitize `branch` if necessary\\nsubprocess.run([\\\"git\\\", \\\"checkout\\\", branch], check=True)\\n```\\nIf you must keep `shell=True` for some reason, at minimum escape the variable with `shlex.quote`:\\n```python\\nimport shlex\\ncmd = f\\\"git checkout {shlex.quote(branch)}\\\"\\nsubprocess.run(cmd, shell=True, check=True)\\n```\\nHowever, the list form is preferred for security and correctness.\"\n  }\n]\n```",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 388,
+      "completion_tokens": 489
+    },
+    {
+      "prompt_sha256": "1d62d17581ea9f728d28e3652be9b98321b96e80f10097d8c4f0d0ada81f3053",
+      "response": "[\n  {\n    \"file_path\": \"ci/runner.py\",\n    \"line_number\": 23,\n    \"category\": \"security\",\n    \"severity\": \"high\",\n    \"body\": \"The change introduces `shell=True` with an f‑string that interpolates the `branch` variable directly into the command line. If `branch` contains malicious characters (e.g., `feature && rm -rf /`), it will be executed by the shell, leading to command injection.\",\n    \"suggested_fix\": \"Avoid using `shell=True` and pass the command as a list to `subprocess.run`. If a shell is absolutely required, properly escape the branch name with `shlex.quote`.\\n```python\\nimport shlex\\nsubprocess.run([\\\"git\\\", \\\"checkout\\\", branch], check=True)\\n# or, if a shell is needed:\\ncmd = f\\\"git checkout {shlex.quote(branch)}\\\"\\nsubprocess.run(cmd, shell=True, check=True)\\n```\"\n  }\n]",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 378,
+      "completion_tokens": 410
+    },
+    {
+      "prompt_sha256": "063ba4dcd74321714c4a97c7036c79b3ae97691f3cf4bddb50b3fd50d6f94681",
+      "response": "[\n  {\n    \"file_path\": \"ci/runner.py\",\n    \"line_number\": 22,\n    \"category\": \"security\",\n    \"severity\": \"critical\",\n    \"body\": \"The new code executes `git checkout {branch}` with `shell=True` and an f‑string. If `branch` contains malicious characters (e.g., `$(rm -rf /)`), it will be interpreted by the shell, leading to command injection. The previous implementation used the list form of `subprocess.run`, which safely passes arguments without invoking a shell.\",\n    \"suggested_fix\": \"Use the list form of `subprocess.run` (or at least properly escape the branch name). Example:\\n```python\\n# Safe version – no shell needed\\nsubprocess.run([\\\"git\\\", \\\"checkout\\\", branch], check=True)\\n```\\nIf you must use a shell for some reason, sanitize the input with `shlex.quote`:\\n```python\\nimport shlex\\ncmd = f\\\"git checkout {shlex.quote(branch)}\\\"\\nsubprocess.run(cmd, shell=True, check=True)\\n```\"\n  }\n]",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 382,
+      "completion_tokens": 456
+    }
+  ]
+}

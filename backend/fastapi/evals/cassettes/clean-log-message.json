@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "case_id": "clean-log-message",
+  "case_sha256": "fef96774476e31eebc1c43d98f71bb26f0379bafc410222404feed8b1998ab1e",
+  "latency_ms": 2732,
+  "calls": [
+    {
+      "prompt_sha256": "f701f05f85c955dd9f5c778dd47b82f4720c52dd998d9bbafd3d8730419567ab",
+      "response": "[\n]",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 377,
+      "completion_tokens": 154
+    },
+    {
+      "prompt_sha256": "a775a9d24fdecae1caa77c0f513c7b67f97838b8609e3cd376267e3ec7d70888",
+      "response": "[\n  {\n    \"file_path\": \"jobs/cleanup.py\",\n    \"line_number\": 15,\n    \"category\": \"logging/readability\",\n    \"severity\": \"low\",\n    \"body\": \"The new log message is more informative, but the previous generic \\\"done\\\" message was removed. Ensure that the variable `removed` is always defined in this scope; otherwise the logging call could raise a NameError and hide the original cleanup error.\",\n    \"suggested_fix\": \"Add a defensive check or default value before logging, e.g.\\n```python\\nremoved_count = removed if 'removed' in locals() else 0\\nlogger.info(\\\"cleanup removed=%d expired sessions\\\", removed_count)\\n```\\nIf `removed` is guaranteed to exist, a comment explaining its source would improve readability.\"\n  }\n]",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 371,
+      "completion_tokens": 394
+    },
+    {
+      "prompt_sha256": "746fcf45f5e723a4fdf619b5f0966a9d0046765693a085fcf3b6b0032094f21c",
+      "response": "[\n  {\n    \"file_path\": \"jobs/cleanup.py\",\n    \"line_number\": 15,\n    \"category\": \"test coverage\",\n    \"severity\": \"high\",\n    \"body\": \"The new log statement `logger.info(\\\"cleanup removed=%d expired sessions\\\", removed)` is not exercised by any existing tests. Without a test, regressions (e.g., formatting errors, missing arguments, or accidental removal) could go unnoticed.\",\n    \"suggested_fix\": \"Add a unit test that mocks the logger and verifies that `logger.info` is called with the expected format string and the correct `removed` value. Example (using pytest and unittest.mock):\\n```python\\nfrom unittest.mock import patch\\nfrom jobs.cleanup import cleanup_sessions\\n\\ndef test_cleanup_logs_removed_sessions():\\n    with patch('jobs.cleanup.logger') as mock_logger:\\n        # Arrange: set up a scenario where 3 sessions are expired\\n        # (you may need to mock the session store to return 3 expired items)\\n        mock_store = ...\\n        cleanup_sessions(store=mock_store)\\n        \\n        # Assert: logger.info was called with the new message\\n        mock_logger.info.assert_called_with(\\n            \\\"cleanup removed=%d expired sessions\\\", 3\\n        )\\n```\"\n  },\n  {\n    \"file_path\": \"jobs/cleanup.py\",\n    \"line_number\": 14,\n    \"category\": \"test coverage\",\n    \"severity\": \"medium\",\n    \"body\": \"The removal of the generic `logger.info(\\\"done\\\")` statement may cause existing tests that assert this exact log output to fail, even though the functional behavior hasn't changed.\",\n    \"suggested_fix\": \"Review any tests that check for the \\\"done\\\" log message. Either update them to expect the new message or add a separate assertion for the new log while keeping the old one if both messages are required. If the old log is no longer needed, ensure all related tests are updated accordingly.\"\n  }\n]",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 367,
+      "completion_tokens": 638
+    }
+  ]
+}

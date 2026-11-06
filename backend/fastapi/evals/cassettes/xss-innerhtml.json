@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "case_id": "xss-innerhtml",
+  "case_sha256": "60438f8742cdac1ce2d24d1ceff2306d79a83511b8d12634ddd19ae7fad38ea1",
+  "latency_ms": 3035,
+  "calls": [
+    {
+      "prompt_sha256": "a7b556ee94d38a6d955d64258de50e75bc9891844ca952d7fb8ec0d152c7f157",
+      "response": "[\n  {\n    \"file_path\": \"web/src/comments.js\",\n    \"line_number\": 14,\n    \"category\": \"Cross‑Site Scripting (XSS)\",\n    \"severity\": \"critical\",\n    \"body\": \"The code now uses `innerHTML` to inject `comment.author` and `comment.text` directly into the DOM. If either value contains malicious HTML or script tags, it will be executed in the user's browser, leading to a stored XSS vulnerability. Previously `textContent` safely escaped the content.\",\n    \"suggested_fix\": \"Render user‑generated content safely. Either keep using `textContent` for both fields or explicitly escape HTML before assigning to `innerHTML`. Example using `textContent`:\\n```javascript\\nconst el = document.createElement('div');\\nconst authorSpan = document.createElement('b');\\nauthorSpan.textContent = comment.author;\\nel.appendChild(authorSpan);\\nel.appendChild(document.createTextNode(`: ${comment.text}`));\\n``` \\nIf `innerHTML` is required for styling, sanitize the strings with a library such as DOMPurify:\\n```javascript\\nimport DOMPurify from 'dompurify';\\nel.innerHTML = `<b>${DOMPurify.sanitize(comment.author)}</b>: ${DOMPurify.sanitize(comment.text)}`;\\n```\"\n  }\n]",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 383,
+      "completion_tokens": 458
+    },
+    {
+      "prompt_sha256": "21d888dc26a102d077569f9b5e00c55959e2206279aad344e1675153ee94aa9e",
+      "response": "[\n  {\n    \"file_path\": \"web/src/comments.js\",\n    \"line_number\": 14,\n    \"category\": \"security\",\n    \"severity\": \"critical\",\n    \"body\": \"The code now uses `innerHTML` with a template literal that directly interpolates `comment.author` and `comment.text`. Both values originate from user input and can contain malicious HTML/JavaScript, leading to a reflected XSS vulnerability.\",\n    \"suggested_fix\": \"Avoid `innerHTML` for untrusted data. Build the element using safe DOM APIs, e.g.:\\n```js\\nconst el = document.createElement('div');\\nconst authorEl = document.createElement('b');\\nauthorEl.textContent = comment.author; // safely escaped\\nel.appendChild(authorEl);\\nel.appendChild(document.createTextNode(`: ${comment.text}`));\\n```\\nIf HTML formatting is required, sanitize the inputs with a trusted library (e.g., DOMPurify) before assigning to `innerHTML`.\\n```js\\nimport DOMPurify from 'dompurify';\\nel.innerHTML = `<b>${DOMPurify.sanitize(comment.author)}</b>: ${DOMPurify.sanitize(comment.text)}`;\\n```\"\n  },\n  {\n    \"file_path\": \"web/src/comments.js\",\n    \"line_number\": 14,\n    \"category\": \"code_quality\",\n    \"severity\": \"low\",\n    \"body\": \"The change removed `el.textContent = comment.text;` which previously set only the comment text. The new `innerHTML` also injects the author markup, but the author’s name is not escaped, reducing readability and maintainability.\",\n    \"suggested_fix\": \"Separate concerns: set the author in a `<b>` element and the comment text as plain text. This improves readability and makes future modifications easier.\"\n  }\n]",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 377,
+      "completion_tokens": 628
+    },
+    {
+      "prompt_sha256": "f15a9dc9f335d38532f1d84dafbe3ea25d698f3eca953823ecec496311bc7040",
+      "response": "```json\n[\n  {\n    \"file_path\": \"web/src/comments.js\",\n    \"line_number\": 14,\n    \"category\": \"security\",\n    \"severity\": \"critical\",\n    \"body\": \"The code now uses `el.innerHTML = `<b>${comment.author}</b>: ${comment.text}`;` which directly injects user‑provided data (`comment.author` and `comment.text`) into HTML. This opens a cross‑site scripting (XSS) vulnerability if either field contains malicious markup. The previous implementation used `textContent`, which safely escaped any HTML.\",\n    \"suggested_fix\": \"Sanitize or escape the user data before inserting it into `innerHTML`, or avoid `innerHTML` altogether. A safe approach is to build the DOM nodes using `textContent`:\\n```javascript\\nconst el = document.createElement('div');\\nconst authorEl = document.createElement('b');\\nauthorEl.textContent = comment.author; // escaped\\nel.appendChild(authorEl);\\nel.appendChild(document.createTextNode(`: ${comment.text}`)); // escaped\\n``` \\nIf you must keep the template string, use a library such as DOMPurify to sanitize the combined string:\\n```javascript\\nimport DOMPurify from 'dompurify';\\nel.innerHTML = DOMPurify.sanitize(`<b>${comment.author}</b>: ${comment.text}`);\\n``` \\nAdditionally, add unit tests that verify malicious input is not rendered as executable HTML, e.g.,\\n```javascript\\nit('does not execute script tags in comment text', () => {\\n  const comment = { author: 'Alice', text: '<img src=x onerror=alert(1)>' };\\n  const el = renderComment(comment);\\n  expect(el.innerHTML).not.toContain('onerror');\\n  expect(el.textContent).toContain('<img src=x onerror=alert(1)>');\\n});\\n```\"\n  }\n]\n```",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 373,
+      "completion_tokens": 661
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "case_id": "sql-injection-fstring",
+  "case_sha256": "8e8a6fb7f5b174567c40465855a8f2ec66b2779749600712168a019a2830b4b3",
+  "latency_ms": 2751,
+  "calls": [
+    {
+      "prompt_sha256": "09927870fc846f0e9889dfd5a44a919e0a38273f49ef43f76eb3ec0c59296104",
+      "response": "[\n  {\n    \"file_path\": \"shop/repository.py\",\n    \"line_number\": 22,\n    \"category\": \"SQL Injection\",\n    \"severity\": \"critical\",\n    \"body\": \"The query is built using an f‑string that interpolates `order_id` directly into the SQL statement. If `order_id` originates from user input, an attacker can inject malicious SQL, leading to data leakage, modification, or destruction.\",\n    \"suggested_fix\": \"Use a parameterized query instead of string interpolation. For example:\\n```python\\nsql = \\\"SELECT * FROM orders WHERE id = %s\\\"\\ncur.execute(sql, (order_id,))\\n```\\nIf using a DB‑API that supports named parameters, you can also write:\\n```python\\nsql = \\\"SELECT * FROM orders WHERE id = :order_id\\\"\\ncur.execute(sql, {\\\"order_id\\\": order_id})\\n```\"\n  }\n]",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 398,
+      "completion_tokens": 298
+    },
+    {
+      "prompt_sha256": "8858cfea30a7e48ab36116607dbfbdd5455419e34f40f24207151a8e10459d6e",
+      "response": "[\n  {\n    \"file_path\": \"shop/repository.py\",\n    \"line_number\": 22,\n    \"category\": \"security\",\n    \"severity\": \"critical\",\n    \"body\": \"The query is built using an f‑string, directly interpolating `order_id` into the SQL statement. This opens the code to SQL injection attacks if `order_id` can be influenced by an attacker.\",\n    \"suggested_fix\": \"Use a parameterised query instead of string interpolation:\\n```python\\nsql = \\\"SELECT * FROM orders WHERE id = %s\\\"\\ncur.execute(sql, (order_id,))\\n```\"\n  },\n  {\n    \"file_path\": \"shop/repository.py\",\n    \"line_number\": 22,\n    \"category\": \"test\",\n    \"severity\": \"medium\",\n    \"body\": \"There are no tests verifying that the repository method uses a safe, parameterised query and that it correctly handles invalid or malicious `order_id` values.\",\n    \"suggested_fix\": \"Add unit tests that:\\n1. Mock the database cursor and assert `cur.execute` is called with a parameterised SQL string and a tuple containing `order_id`.\\n2. Pass a malicious value such as `\\\"1; DROP TABLE users;--\\\"` and confirm that the query is not executed as raw SQL.\\n3. Verify behaviour when `order_id` is `None` or of an unexpected type.\"\n  },\n  {\n    \"file_path\": \"shop/repository.py\",\n    \"line_number\": 22,\n    \"category\": \"correctness\",\n    \"severity\": \"low\",\n    \"body\": \"Using an f‑string may raise a `SyntaxError` or `ValueError` if `order_id` is not directly convertible to a string (e.g., a complex object).\",\n    \"suggested_fix\": \"Validate `order_id` before using it, or rely on the DB driver’s parameter handling which also performs type conversion safely.\"\n  }\n]",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 388,
+      "completion_tokens": 652
+    },
+    {
+      "prompt_sha256": "c41e98592187c45082ce8541ac0bce6a7149cfaa45675cccf0d55f961a273e97",
+      "response": "```json\n[\n  {\n    \"file_path\": \"shop/repository.py\",\n    \"line_number\": 22,\n    \"category\": \"security\",\n    \"severity\": \"critical\",\n    \"body\": \"The query is built using an f‑string with the raw `order_id` value, which introduces a SQL injection vulnerability. An attacker could supply a malicious `order_id` and alter the executed SQL.\",\n    \"suggested_fix\": \"Use a parameterised query instead of string interpolation:\\n```python\\nsql = \\\"SELECT * FROM orders WHERE id = %s\\\"\\ncur.execute(sql, (order_id,))\\n```\"\n  },\n  {\n    \"file_path\": \"shop/repository.py\",\n    \"line_number\": 22,\n    \"category\": \"code_quality\",\n    \"severity\": \"medium\",\n    \"body\": \"String interpolation for SQL makes the code harder to maintain and bypasses the database driver’s automatic escaping.\",\n    \"suggested_fix\": \"Adopt the driver’s placeholder syntax consistently throughout the repository. This also improves readability and future‑proofs the code if the query changes.\"\n  },\n  {\n    \"file_path\": \"shop/repository.py\",\n    \"line_number\": 20,\n    \"category\": \"error_handling\",\n    \"severity\": \"low\",\n    \"body\": \"The cursor is used without a context manager, so if an exception occurs the cursor may remain open.\",\n    \"suggested_fix\": \"Wrap cursor usage in a `with` block (or ensure it is closed in a finally clause):\\n```python\\nwith connection.cursor() as cur:\\n    sql = \\\"SELECT * FROM orders WHERE id = %s\\\"\\n    cur.execute(sql, (order_id,))\\n```\"\n  }\n]\n```",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 392,
+      "completion_tokens": 559
+    }
+  ]
+}

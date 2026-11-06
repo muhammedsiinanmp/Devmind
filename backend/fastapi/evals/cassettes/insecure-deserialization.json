@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "case_id": "insecure-deserialization",
+  "case_sha256": "3620dd20adac27094ab09d7c72402e17e73aa28f6a060de5836225a533a1a841",
+  "latency_ms": 2970,
+  "calls": [
+    {
+      "prompt_sha256": "68d677bae51d10a1d89a2105b46f6c54002a51a5409b01b2b0cdf74bd8563140",
+      "response": "[\n  {\n    \"file_path\": \"sync/handlers.py\",\n    \"line_number\": 9,\n    \"category\": \"security\",\n    \"severity\": \"critical\",\n    \"body\": \"Replaced `json.loads(request.body)` with `pickle.loads(request.body)`. Using `pickle` on data that originates from an HTTP request is unsafe because pickle can execute arbitrary code during deserialization, leading to remote code execution vulnerabilities.\",\n    \"suggested_fix\": \"Revert to a safe serialization format such as JSON. If binary data is required, consider using a safe library like `msgpack` with explicit type handling, or base64‑encode the payload. Example:\\n```python\\nimport json\\n\\n# Validate that the request body is UTF‑8 encoded JSON\\ntry:\\n    payload = request.body.decode('utf-8')\\n    state = json.loads(payload)\\nexcept (UnicodeDecodeError, json.JSONDecodeError) as e:\\n    return HttpResponseBadRequest('Invalid JSON payload')\\n```\\nIf you must accept a binary format, validate the content strictly and avoid `pickle` altogether.\"\n  }\n]",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 368,
+      "completion_tokens": 403
+    },
+    {
+      "prompt_sha256": "d58bc096db95e0c2bf880a6f3d35d86593d3843a99621a428ce1f583855181b4",
+      "response": "[\n  {\n    \"file_path\": \"sync/handlers.py\",\n    \"line_number\": 9,\n    \"category\": \"Unsafe deserialization\",\n    \"severity\": \"critical\",\n    \"body\": \"The code now uses `pickle.loads(request.body)` on data that originates from an HTTP request. Pickle can execute arbitrary code during deserialization, making the endpoint vulnerable to remote code execution if an attacker supplies a crafted payload.\",\n    \"suggested_fix\": \"Do not deserialize untrusted data with pickle. Use a safe format such as JSON (`json.loads`) or a strict schema validator (e.g., pydantic, marshmallow). If binary data is required, consider using a safe serialization library like `msgpack` with `use_list=False` and explicit type checking, or sign/encrypt the payload before deserialization. Example replacement:\\n```python\\nimport json\\n\\ntry:\\n    state = json.loads(request.body.decode('utf-8'))\\nexcept json.JSONDecodeError:\\n    return HttpResponseBadRequest('Invalid JSON')\\n```\\nIf pickle must be used for internal trusted communication, ensure the payload is authenticated (e.g., HMAC) and never accept it directly from external clients.\"\n  }\n]",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 374,
+      "completion_tokens": 424
+    },
+    {
+      "prompt_sha256": "da21283bab1e918469a54b379f307be10e40c06c46f1938614fc9c1620f21096",
+      "response": "[\n  {\n    \"file_path\": \"sync/handlers.py\",\n    \"line_number\": 9,\n    \"category\": \"security\",\n    \"severity\": \"critical\",\n    \"body\": \"The change replaces `json.loads(request.body)` with `pickle.loads(request.body)`. Deserializing untrusted request data with `pickle` can lead to arbitrary code execution, making the endpoint vulnerable to remote code execution attacks.\",\n    \"suggested_fix\": \"Revert to a safe serialization format (e.g., JSON) or implement a strict validation layer. If binary data is required, consider using a safe library like `json`, `msgpack` with explicit schema validation, or signed/encrypted tokens.\\n\\nExample fix:\\n```python\\nimport json\\nfrom django.http import HttpResponseBadRequest\\n\\ndef my_view(request):\\n    try:\\n        # Use JSON for safe deserialization\\n        state = json.loads(request.body.decode('utf-8'))\\n    except (json.JSONDecodeError, UnicodeDecodeError):\\n        return HttpResponseBadRequest('Invalid request payload')\\n    # ... continue processing state safely ...\\n```\"\n  },\n  {\n    \"file_path\": \"sync/handlers.py\",\n    \"line_number\": 9,\n    \"category\": \"test coverage\",\n    \"severity\": \"high\",\n    \"body\": \"There are no tests covering the new deserialization path, nor tests verifying that malformed or malicious payloads are rejected safely.\",\n    \"suggested_fix\": \"Add unit tests for the handler that:\\n1. Send a valid JSON payload and assert correct parsing.\\n2. Send an invalid JSON payload and assert a `400 Bad Request` response.\\n3. (If pickle must be used) Send a crafted malicious pickle payload and assert that the view does **not** execute it (e.g., by mocking `pickle.loads` to raise an exception) and returns an error.\\n\\nExample test (using Django's test client):\\n```python\\nfrom django.test import TestCase, Client\\nimport json\\n\\nclass HandlerTests(TestCase):\\n    def setUp(self):\\n        self.client = Client()\\n\\n    def test_valid_json(self):\\n        payload = {'key': 'value'}\\n        response = self.client.post('/sync/handler/', data=json.dumps(payload), content_type='application/json')\\n        self.assertEqual(response.status_code, 200)\\n        # additional assertions on response content\\n\\n    def test_invalid_json(self):\\n        response = self.client.post('/sync/handler/', data='not a json', content_type='application/json')\\n        self.assertEqual(response.status_code, 400)\\n```\"\n  }\n]",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 364,
+      "completion_tokens": 764
+    }
+  ]
+}

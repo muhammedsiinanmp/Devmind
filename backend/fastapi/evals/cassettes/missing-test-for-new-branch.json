@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "case_id": "missing-test-for-new-branch",
+  "case_sha256": "8e5851f14547f88b667f8d56f0bff5956ff10d73dde4b6fbc37fcf15fb0ce9d9",
+  "latency_ms": 3615,
+  "calls": [
+    {
+      "prompt_sha256": "6423441a3778218dd69193f283e356319eef25e8691f7dd3bcd1d1227a316952",
+      "response": "[]",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 427,
+      "completion_tokens": 257
+    },
+    {
+      "prompt_sha256": "3a0ddd153df30af0afb2033bab45d8acd0c93cfc1024fdcc9f8cb5bdbacd9679",
+      "response": "[\n  {\n    \"file_path\": \"cart/pricing.py\",\n    \"line_number\": 9,\n    \"category\": \"input-validation\",\n    \"severity\": \"medium\",\n    \"body\": \"Only the `quantity` parameter is validated. Passing a negative `price` or `discount` can lead to nonsensical results or negative line totals.\",\n    \"suggested_fix\": \"Add similar checks for `price` and `discount` and raise a clear exception if they are negative.\\n```python\\nif price < 0:\\n    raise ValueError(\\\"price must be non‑negative\\\")\\nif discount < 0:\\n    raise ValueError(\\\"discount must be non‑negative\\\")\\n```\"\n  },\n  {\n    \"file_path\": \"cart/pricing.py\",\n    \"line_number\": 12,\n    \"category\": \"business‑logic\",\n    \"severity\": \"high\",\n    \"body\": \"`line_total` can return a negative value when the discount exceeds the subtotal. The new test `test_line_total_never_negative` expects the function to clamp the result at zero.\",\n    \"suggested_fix\": \"Clamp the computed total to a minimum of zero before returning.\\n```python\\nsubtotal = price * quantity\\ntotal = subtotal - discount\\nreturn max(total, 0)\\n```\"\n  },\n  {\n    \"file_path\": \"cart/pricing.py\",\n    \"line_number\": 9,\n    \"category\": \"error‑handling\",\n    \"severity\": \"low\",\n    \"body\": \"Raising `ValueError` for a non‑positive `quantity` may be too harsh; a quantity of zero could be a valid scenario (e.g., an empty cart line).\",\n    \"suggested_fix\": \"Consider returning `0` for `quantity == 0` instead of raising, or document the decision clearly.\\n```python\\nif quantity < 0:\\n    raise ValueError(\\\"quantity cannot be negative\\\")\\nif quantity == 0:\\n    return 0\\n```\"\n  },\n  {\n    \"file_path\": \"cart/pricing.py\",\n    \"line_number\": 1,\n    \"category\": \"documentation\",\n    \"severity\": \"low\",\n    \"body\": \"The new validation logic is not reflected in the module's docstring or function docstring, which can confuse users.\",\n    \"suggested_fix\": \"Update the docstring to describe the accepted ranges for `price`, `quantity`, and `discount` and the exception raised for invalid input.\\n```python\\ndef line_total(price: float, quantity: int, discount: float = 0) -> float:\\n    \\\"\\\"\\\"Calculate the total price for a line item.\\n\\n    Args:\\n        price: Unit price (must be non‑negative).\\n        quantity: Number of units (must be positive).\\n        discount: Amount to subtract from the subtotal (must be non‑negative).\\n\\n    Returns:\\n        The line total, never less than ``0``.\\n\\n    Raises:\\n        ValueError: If ``price`` < 0, ``quantity`` <= 0, or ``discount`` < 0.\\n    \\\"\\\"\\\"\\n```\"\n  }\n]",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 421,
+      "completion_tokens": 1002
+    },
+    {
+      "prompt_sha256": "8f4bf48518595bc966635c5be38f9fbce9b9340a51d982a57d8ae8f334e2ff4f",
+      "response": "[\n  {\n    \"file_path\": \"tests/test_pricing.py\",\n    \"line_number\": 1,\n    \"category\": \"test coverage\",\n    \"severity\": \"high\",\n    \"body\": \"The new validation in `cart/pricing.py` raises a `ValueError` when `quantity` is zero or negative, but there is no test that verifies this behaviour. Missing tests for this edge case can let a regression slip through.\",\n    \"suggested_fix\": \"Add a test that asserts the exception is raised for non‑positive quantities, e.g.:\\n```python\\nimport pytest\\nfrom cart.pricing import line_total\\n\\n@pytest.mark.parametrize(\\\"qty\\\", [0, -1, -10])\\ndef test_line_total_invalid_quantity_raises(qty):\\n    with pytest.raises(ValueError, match=\\\"quantity must be positive\\\"):\\n        line_total(price=100, quantity=qty, discount=0)\\n```\"\n  },\n  {\n    \"file_path\": \"cart/pricing.py\",\n    \"line_number\": 8,\n    \"category\": \"test coverage\",\n    \"severity\": \"medium\",\n    \"body\": \"The function now validates `quantity`, but it still accepts a negative `discount`. A negative discount would increase the line total, which is likely unintended and not covered by tests.\",\n    \"suggested_fix\": \"Add input validation for `discount` and a corresponding test. Example implementation:\\n```python\\nif discount < 0:\\n    raise ValueError(\\\"discount cannot be negative\\\")\\n```\\nAnd a test:\\n```python\\n@pytest.mark.parametrize(\\\"disc\\\", [-1, -100])\\ndef test_line_total_negative_discount_raises(disc):\\n    with pytest.raises(ValueError, match=\\\"discount cannot be negative\\\"):\\n        line_total(price=100, quantity=1, discount=disc)\\n```\"\n  },\n  {\n    \"file_path\": \"tests/test_pricing.py\",\n    \"line_number\": 4,\n    \"category\": \"test coverage\",\n    \"severity\": \"low\",\n    \"body\": \"The existing test only checks that the line total never goes negative when the discount exceeds the subtotal. It does not verify the exact behaviour for a discount equal to the subtotal (expected result is 0).\",\n    \"suggested_fix\": \"Add an explicit assertion for the edge case where discount equals the subtotal:\\n```python\\ndef test_line_total_zero_when_discount_equals_subtotal():\\n    assert line_total(price=50, quantity=2, discount=100) == 0\\n```\"\n  }\n]",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 417,
+      "completion_tokens": 799
+    }
+  ]
+}

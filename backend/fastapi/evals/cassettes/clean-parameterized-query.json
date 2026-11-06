@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "case_id": "clean-parameterized-query",
+  "case_sha256": "fc3dcb343771e7ed2c33cf978a4765159b39e1cde12b7023d6bf9394e4d5a3ec",
+  "latency_ms": 3319,
+  "calls": [
+    {
+      "prompt_sha256": "b9fe40f625c4c1dabd6bca149d5e1b2790818a5814af9f87d18c3bae167b0dd7",
+      "response": "[\n]",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 394,
+      "completion_tokens": 198
+    },
+    {
+      "prompt_sha256": "4854d10b66c27fcda454f1aa25dbec6c31f702234d5ac693d94be1cbc083d10c",
+      "response": "[\n  {\n    \"file_path\": \"shop/repository.py\",\n    \"line_number\": 22,\n    \"category\": \"code_quality\",\n    \"severity\": \"medium\",\n    \"body\": \"The query now uses a parameterized placeholder, which mitigates SQL injection. However, it still uses `SELECT *`, which can fetch unnecessary columns, increase memory usage, and make the code harder to maintain.\",\n    \"suggested_fix\": \"Specify the required columns explicitly, e.g.\\n```python\\ncur.execute(\\n    \\\"SELECT id, user_id, total_price, status FROM orders WHERE id = %s\\\",\\n    (order_id,)\\n)\\n```\"\n  },\n  {\n    \"file_path\": \"shop/repository.py\",\n    \"line_number\": 22,\n    \"category\": \"best_practice\",\n    \"severity\": \"low\",\n    \"body\": \"The cursor is used without a context manager, which may leave resources open if an exception occurs.\",\n    \"suggested_fix\": \"Wrap cursor usage in a `with` block:\\n```python\\nwith conn.cursor() as cur:\\n    cur.execute(\\n        \\\"SELECT id, user_id, total_price, status FROM orders WHERE id = %s\\\",\\n        (order_id,)\\n    )\\n    order = cur.fetchone()\\n```\"\n  }\n]",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 388,
+      "completion_tokens": 532
+    },
+    {
+      "prompt_sha256": "a7b0555338624739426eefb7d5fa8a2623b93ae16e10ea1d4bdfdcc95eec8bc3",
+      "response": "```json\n[\n  {\n    \"file_path\": \"shop/repository.py\",\n    \"line_number\": 22,\n    \"category\": \"test-coverage\",\n    \"severity\": \"high\",\n    \"body\": \"There is no unit test that verifies the SQL query uses a parameterized statement. The recent change replaces string interpolation with a placeholder, which mitigates SQL‑injection, but without a test the protection could be unintentionally broken in the future.\",\n    \"suggested_fix\": \"Add a test that mocks the database cursor and asserts that `cur.execute` is called with a query containing a `%s` placeholder and a tuple of parameters, e.g.:\\n```python\\n@patch('shop.repository.get_connection')\\ndef test_get_order_uses_parameterized_query(mock_conn):\\n    mock_cur = MagicMock()\\n    mock_conn.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value = mock_cur\\n    repo = OrderRepository()\\n    repo.get_order(123)\\n    mock_cur.execute.assert_called_once_with(\\n        \\\"SELECT * FROM orders WHERE id = %s\\\",\\n        (123,)\\n    )\\n```\"\n  },\n  {\n    \"file_path\": \"shop/repository.py\",\n    \"line_number\": 22,\n    \"category\": \"test-coverage\",\n    \"severity\": \"medium\",\n    \"body\": \"Missing test for the case where `order_id` does not exist. The method should return `None` or raise a domain‑specific exception, but the current test suite does not cover this scenario.\",\n    \"suggested_fix\": \"Add a test that simulates an empty result set and asserts the expected behaviour, e.g.:\\n```python\\n@patch('shop.repository.get_connection')\\ndef test_get_order_not_found(mock_conn):\\n    mock_cur = MagicMock()\\n    mock_cur.fetchone.return_value = None\\n    mock_conn.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value = mock_cur\\n    repo = OrderRepository()\\n    result = repo.get_order(999)\\n    assert result is None  # or assert raises OrderNotFoundError\\n```\"\n  },\n  {\n    \"file_path\": \"shop/repository.py\",\n    \"line_number\": 22,\n    \"category\": \"test-coverage\",\n    \"severity\": \"low\",\n    \"body\": \"No test covers database‑error handling (e.g., connection loss or query execution error). Without such a test, regressions could cause uncaught exceptions to propagate to the user layer.\",\n    \"suggested_fix\": \"Add a test that forces `cur.execute` to raise an exception (e.g., `psycopg2.OperationalError`) and verifies that the repository method either translates it into a custom exception or handles it gracefully.\\n```python\\n@patch('shop.repository.get_connection')\\ndef test_get_order_db_error(mock_conn):\\n    mock_cur = MagicMock()\\n    mock_cur.execute.side_effect = psycopg2.OperationalError('db down')\\n    mock_conn.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value = mock_cur\\n    repo = OrderRepository()\\n    with pytest.raises(DatabaseError):\\n        repo.get_order(1)\\n```\"\n  }\n]\n```",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 384,
+      "completion_tokens": 946
+    }
+  ]
+}

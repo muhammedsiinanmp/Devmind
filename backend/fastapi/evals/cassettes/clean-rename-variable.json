@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "case_id": "clean-rename-variable",
+  "case_sha256": "b2d764c04c2858371718b4f763864a02407bd2f6174c6edad1b15e3527ce3c83",
+  "latency_ms": 2994,
+  "calls": [
+    {
+      "prompt_sha256": "0df21723cabfe38e8d7769e6a3bd7b9d7177309718fa6f43108ec5d1f2a85be6",
+      "response": "```json\n[\n  {\n    \"file_path\": \"stats/summary.py\",\n    \"line_number\": 4,\n    \"category\": \"readability/performance\",\n    \"severity\": \"low\",\n    \"body\": \"The function computes `sum(values)` before checking whether `values` is empty. While `sum([])` is safe, it performs an unnecessary iteration when the list is empty.\",\n    \"suggested_fix\": \"Return early for an empty sequence before calling `sum`. For example:\\n```python\\nif not values:\\n    return 0.0\\n\\ntotal = sum(values)\\nreturn total / len(values)\\n```\"\n  }\n]\n```",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 394,
+      "completion_tokens": 328
+    },
+    {
+      "prompt_sha256": "1101d03d7d77d46b4b4c67cc1f8cd8417c7bfbed26379ecbb22d914ae085ae4e",
+      "response": "[\n  {\n    \"file_path\": \"stats/summary.py\",\n    \"line_number\": 4,\n    \"category\": \"code_quality\",\n    \"severity\": \"low\",\n    \"body\": \"The variable name change from `s` to `total` improves readability, but the function could be simplified further by using the standard library's `statistics.mean`, which handles empty sequences and provides clearer intent.\",\n    \"suggested_fix\": \"Replace the custom implementation with:\\n```python\\nimport statistics\\n\\ndef average(values):\\n    \\\"\\\"\\\"Return the arithmetic mean of *values* or 0.0 for an empty iterable.\\\"\\\"\\\"\\n    try:\\n        return statistics.mean(values)\\n    except statistics.StatisticsError:\\n        return 0.0\\n```\"\n  }\n]",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 400,
+      "completion_tokens": 357
+    },
+    {
+      "prompt_sha256": "e694edce2e5f77befd0d30435c1d56dc8ec24397bbde4ca46d7925651c72e68e",
+      "response": "```json\n[\n  {\n    \"file_path\": \"stats/summary.py\",\n    \"line_number\": 5,\n    \"category\": \"test-coverage\",\n    \"severity\": \"medium\",\n    \"body\": \"There is no unit test that verifies the function returns `0.0` when `values` is an empty iterable. The conditional `if values else 0.0` is a corner‑case that should be explicitly exercised.\",\n    \"suggested_fix\": \"Add a test case such as:\\n```python\\ndef test_average_empty_list():\\n    assert summary([]) == 0.0\\n```\"\n  },\n  {\n    \"file_path\": \"stats/summary.py\",\n    \"line_number\": 5,\n    \"category\": \"test-coverage\",\n    \"severity\": \"low\",\n    \"body\": \"The function's behaviour for a single‑element list is not covered. While mathematically trivial, a test guards against accidental changes (e.g., integer division).\",\n    \"suggested_fix\": \"Add a test like:\\n```python\\ndef test_average_single_element():\\n    assert summary([42]) == 42.0\\n```\"\n  },\n  {\n    \"file_path\": \"stats/summary.py\",\n    \"line_number\": 5,\n    \"category\": \"test-coverage\",\n    \"severity\": \"low\",\n    \"body\": \"Mixed‑type numeric inputs (ints and floats) are not exercised. A test ensures the function correctly promotes to float and handles precision.\",\n    \"suggested_fix\": \"Add a test such as:\\n```python\\ndef test_average_mixed_types():\\n    data = [1, 2.5, 3]\\n    assert summary(data) == pytest.approx(2.1666666667)\\n```\"\n  },\n  {\n    \"file_path\": \"stats/summary.py\",\n    \"line_number\": 5,\n    \"category\": \"test-coverage\",\n    \"severity\": \"high\",\n    \"body\": \"The function does not validate that all elements are numeric. Passing a non‑numeric value will raise a `TypeError` from `sum()`. Currently there is no test confirming the expected failure mode, which is important for API stability.\",\n    \"suggested_fix\": \"Add a negative test case:\\n```python\\nimport pytest\\n\\ndef test_average_non_numeric_raises():\\n    with pytest.raises(TypeError):\\n        summary([1, \\\"a\\\", 3])\\n```\"\n  },\n  {\n    \"file_path\": \"stats/summary.py\",\n    \"line_number\": 5,\n    \"category\": \"test-coverage\",\n    \"severity\": \"low\",\n    \"body\": \"The function accepts any iterable, but tests only use list literals. Adding a test that passes a generator ensures the implementation works with any iterable and does not rely on list‑specific methods.\",\n    \"suggested_fix\": \"Add a test like:\\n```python\\ndef test_average_generator():\\n    gen = (i for i in range(1, 5))  # 1,2,3,4\\n    assert summary(gen) == 2.5\\n```\"\n  }\n]\n```",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 390,
+      "completion_tokens": 898
+    }
+  ]
+}

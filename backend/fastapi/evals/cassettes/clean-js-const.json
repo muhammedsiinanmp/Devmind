@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "case_id": "clean-js-const",
+  "case_sha256": "20ed78c28f7439f82d5f935e4d599285caf0bc859637de4c532399ce2e5e420f",
+  "latency_ms": 3622,
+  "calls": [
+    {
+      "prompt_sha256": "5eff4cf89a9300222797934ad0c8396eb8c62022f834283cab5158db2b4a4b06",
+      "response": "```json\n[]\n```",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 421,
+      "completion_tokens": 115
+    },
+    {
+      "prompt_sha256": "8808326e3d62330c318791f892a66878a08b361436caee2b17a08e2209adac94",
+      "response": "[\n  {\n    \"file_path\": \"web/src/format.js\",\n    \"line_number\": 1,\n    \"category\": \"correctness\",\n    \"severity\": \"medium\",\n    \"body\": \"The function assumes `cents` is a non‑negative integer. If a negative or non‑numeric value is passed, `Math.floor` and the modulo operation will produce unexpected results (e.g., \\\"-5\\\" becomes \\\"-5\\\" after `padStart`).\",\n    \"suggested_fix\": \"Validate the input before performing calculations, e.g.:\\n```javascript\\nif (typeof cents !== 'number' || !Number.isInteger(cents) || cents < 0) {\\n  throw new TypeError('cents must be a non‑negative integer');\\n}\\n```\"\n  },\n  {\n    \"file_path\": \"web/src/format.js\",\n    \"line_number\": 2,\n    \"category\": \"maintainability\",\n    \"severity\": \"low\",\n    \"body\": \"`rest` is stored as a string because of `padStart`. If later code expects a numeric value, this implicit type change could cause bugs.\",\n    \"suggested_fix\": \"If a numeric remainder is needed, keep it as a number and format it only when rendering:\\n```javascript\\nconst remainder = cents % 100;\\nconst rest = remainder.toString().padStart(2, '0'); // for display only\\n```\"\n  }\n]",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 415,
+      "completion_tokens": 537
+    },
+    {
+      "prompt_sha256": "a1fda7611c78b407d10acca22b0c0ec32870e4b59bb988b8cbb9d60bfe358ec2",
+      "response": "```json\n[\n  {\n    \"file_path\": \"web/src/format.js\",\n    \"line_number\": 2,\n    \"category\": \"test coverage\",\n    \"severity\": \"high\",\n    \"body\": \"There are no unit tests that verify how the function behaves when `cents` is a negative number. The current implementation will produce a negative dollar amount and a padded remainder (e.g., -150 → -2 dollars, \\\"50\\\"), which may be undesirable or cause UI bugs.\",\n    \"suggested_fix\": \"Add a test case that passes a negative value and asserts the expected outcome (e.g., throws, returns a formatted string with a leading minus sign, or normalizes to zero). If negative values are invalid, guard the function with an input check and throw a clear error.\"\n  },\n  {\n    \"file_path\": \"web/src/format.js\",\n    \"line_number\": 2,\n    \"category\": \"test coverage\",\n    \"severity\": \"medium\",\n    \"body\": \"The function is not tested with non‑integer numbers (e.g., `cents = 123.45`). `Math.floor` will truncate the fractional part, which may hide bugs if callers accidentally pass floats.\",\n    \"suggested_fix\": \"Create a test that supplies a floating‑point value and verifies that it is either correctly rounded/truncated or that the function throws a type‑validation error. Consider adding an explicit `Number.isInteger(cents)` guard if fractions are not allowed.\"\n  },\n  {\n    \"file_path\": \"web/src/format.js\",\n    \"line_number\": 2,\n    \"category\": \"test coverage\",\n    \"severity\": \"medium\",\n    \"body\": \"The code lacks tests for non‑numeric inputs such as strings, `null`, `undefined`, or objects. JavaScript will coerce some of these to `NaN`, leading to `NaN` in the output.\",\n    \"suggested_fix\": \"Add test cases for each non‑numeric type and decide on the desired behavior (e.g., throw a `TypeError`). Implement a runtime check like `if (typeof cents !== 'number' || !Number.isFinite(cents)) throw new TypeError('cents must be a finite number');` and verify it with tests.\"\n  },\n  {\n    \"file_path\": \"web/src/format.js\",\n    \"line_number\": 2,\n    \"category\": \"test coverage\",\n    \"severity\": \"low\",\n    \"body\": \"Very large integer values (greater than `Number.MAX_SAFE_INTEGER`) are not exercised in the test suite. While unlikely, they could cause precision loss in the division/modulo operations.\",\n    \"suggested_fix\": \"Add a test that uses a value close to `Number.MAX_SAFE_INTEGER` and asserts that the formatted output is mathematically correct. If handling such large numbers is out of scope, document the limitation.\"\n  },\n  {\n    \"file_path\": \"web/src/format.js\",\n    \"line_number\": 3,\n    \"category\": \"test coverage\",\n    \"severity\": \"low\",\n    \"body\": \"The padding logic (`padStart(2, \\\"0\\\")`) is not verified for edge cases where the remainder is a single digit (e.g., `cents = 105`).\",\n    \"suggested_fix\": \"Add a test that checks formatting of values where `cents % 100` yields a one‑digit number, ensuring the output string includes a leading zero (e.g., `1.05`).\"\n  }\n]\n```",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 411,
+      "completion_tokens": 1009
+    }
+  ]
+}

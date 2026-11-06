@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "case_id": "clean-config-timeout",
+  "case_sha256": "ba50ce09a7cb7b0fd5a816927edd8a3e3779c2c4cd6fc0115b8114134a6c5cb5",
+  "latency_ms": 2321,
+  "calls": [
+    {
+      "prompt_sha256": "c9b68d2922e00c5582d171560f37a35d3cd99a27362666281bc592a22b6306fa",
+      "response": "[\n  {\n    \"file_path\": \"integrations/settings.py\",\n    \"line_number\": 2,\n    \"category\": \"hardcoded_configuration\",\n    \"severity\": \"low\",\n    \"body\": \"The request timeout value is hard‑coded in source code. While increasing the timeout from 10 to 20 seconds is not a direct security vulnerability, hard‑coded limits make it harder to adjust behavior per environment and can contribute to resource‑exhaustion attacks if the value is set too high.\",\n    \"suggested_fix\": \"Move the timeout setting to a configurable source (environment variable, config file, or command‑line flag) with a sensible default and validation. Example:\\n```python\\nimport os\\n\\n# Default timeout in seconds\\nDEFAULT_TIMEOUT = 10\\n\\n# Read from environment, fallback to default, ensure it is an int and within acceptable bounds\\nREQUEST_TIMEOUT_SECONDS = int(os.getenv('REQUEST_TIMEOUT_SECONDS', DEFAULT_TIMEOUT))\\nif not 1 <= REQUEST_TIMEOUT_SECONDS <= 60:\\n    raise ValueError('REQUEST_TIMEOUT_SECONDS must be between 1 and 60 seconds')\\n```\"\n  }\n]",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 371,
+      "completion_tokens": 410
+    },
+    {
+      "prompt_sha256": "10532ae502da3ca5395fe98c56776fdd0bb6d2c7f297f4bf436646ab2705506f",
+      "response": "[\n  {\n    \"file_path\": \"integrations/settings.py\",\n    \"line_number\": 2,\n    \"category\": \"maintainability\",\n    \"severity\": \"low\",\n    \"body\": \"The timeout value is hard‑coded as a magic number (20). This makes it harder to adjust the timeout without modifying code and can lead to inconsistencies across environments.\",\n    \"suggested_fix\": \"Replace the literal with a configurable constant, e.g. read from an environment variable or a central configuration module, and add a comment explaining its purpose.\\n```python\\nimport os\\n\\n# Timeout for external requests (seconds). Can be overridden via the REQUEST_TIMEOUT_SECONDS env var.\\nREQUEST_TIMEOUT_SECONDS = int(os.getenv('REQUEST_TIMEOUT_SECONDS', 20))\\n```\"\n  }\n]",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 365,
+      "completion_tokens": 342
+    },
+    {
+      "prompt_sha256": "2354766d80098b9dd4a32b40eab9d2df2bad97cbd8cecb2d9045ac9d4634b9cb",
+      "response": "[\n  {\n    \"file_path\": \"integrations/settings.py\",\n    \"line_number\": 2,\n    \"category\": \"test coverage\",\n    \"severity\": \"medium\",\n    \"body\": \"The timeout constant was increased from 10 to 20 seconds, but there are no unit or integration tests that verify the effect of this change on network‑related code. Without tests, regressions (e.g., unexpected long waits or premature timeouts) may go unnoticed.\",\n    \"suggested_fix\": \"Add tests that exercise the code paths which rely on `REQUEST_TIMEOUT_SECONDS`. For example, mock a network request (using `requests` or the HTTP client used in the project) and assert that the request is aborted after the configured timeout. If the project uses a timeout parameter, verify that the value passed equals `settings.REQUEST_TIMEOUT_SECONDS`.\\n```python\\nimport pytest\\nfrom unittest import mock\\nfrom integrations import settings\\n\\n@mock.patch('my_module.http_client')\\ndef test_request_uses_configured_timeout(mock_http):\\n    # Arrange: make the client raise a timeout after the configured period\\n    mock_http.get.side_effect = requests.exceptions.Timeout\\n\\n    # Act & Assert: the call should raise Timeout and the timeout value should match the setting\\n    with pytest.raises(requests.exceptions.Timeout):\\n        my_module.fetch_data()\\n    mock_http.get.assert_called_once()\\n    args, kwargs = mock_http.get.call_args\\n    assert kwargs.get('timeout') == settings.REQUEST_TIMEOUT_SECONDS\\n```\\nInclude similar tests for any other functions that rely on the constant, and run them in CI to guard against future accidental changes.\"\n  }\n]",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 361,
+      "completion_tokens": 492
+    }
+  ]
+}

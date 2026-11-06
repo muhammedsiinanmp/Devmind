@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "case_id": "clean-docstring",
+  "case_sha256": "281206231bdcd7abd7fdec98355262b70fd735d75354f0fbe60d549c3e6bc7d2",
+  "latency_ms": 2550,
+  "calls": [
+    {
+      "prompt_sha256": "3725b053e7fe3d7e21e926bfa66e382641ae3ca87384b188ed96243adab7aaba",
+      "response": "[\n]",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 372,
+      "completion_tokens": 61
+    },
+    {
+      "prompt_sha256": "734eec7513da125d1e3c51e89e484fa3003c1e03e670f000e4db521aeea1ab1c",
+      "response": "[\n  {\n    \"file_path\": \"geo/distance.py\",\n    \"line_number\": 7,\n    \"category\": \"Documentation\",\n    \"severity\": \"low\",\n    \"body\": \"The added docstring is brief and does not follow the project's docstring conventions (PEP 257). It lacks information about the function parameters, return value, and possible exceptions, which reduces code readability and maintainability.\",\n    \"suggested_fix\": \"Replace the single‑line docstring with a full description, e.g.:\\n```python\\ndef manhattan_distance(p1: Tuple[int, int], p2: Tuple[int, int]) -> int:\\n    \\\"\\\"\\\"Return the Manhattan distance between two (x, y) points.\\n\\n    Args:\\n        p1: A tuple ``(x1, y1)`` representing the first point.\\n        p2: A tuple ``(x2, y2)`` representing the second point.\\n\\n    Returns:\\n        The Manhattan distance as an ``int`` calculated as ``abs(x1 - x2) + abs(y1 - y2)``.\\n    \\\"\\\"\\\"\\n    return abs(p1[0] - p2[0]) + abs(p1[1] - p2[1])\\n```\"\n  }\n]",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 366,
+      "completion_tokens": 409
+    },
+    {
+      "prompt_sha256": "631c54afd4bf7c2529a42312f385289575981712ac69fbd029166612f046abf2",
+      "response": "[\n  {\n    \"file_path\": \"geo/distance.py\",\n    \"line_number\": 7,\n    \"category\": \"test coverage\",\n    \"severity\": \"high\",\n    \"body\": \"The newly added Manhattan distance function now has a docstring but no corresponding unit tests. Without tests, regressions or edge‑case bugs (e.g., handling of negative coordinates, non‑numeric inputs, very large values, or type errors) could go unnoticed.\",\n    \"suggested_fix\": \"Create a test module (e.g., `tests/test_distance.py`) that includes:\\n```python\\nimport pytest\\nfrom geo.distance import manhattan_distance\\n\\n@pytest.mark.parametrize(\\n    \\\"p1, p2, expected\\\",\\n    [\\n        ((0, 0), (0, 0), 0),                     # identical points\\n        ((1, 2), (3, 4), 4),                     # basic positive case\\n        ((-1, -2), (3, 4), 10),                  # negative coordinates\\n        ((1.5, 2.5), (3.5, 4.5), 4.0),           # float coordinates\\n        ((1e9, 1e9), (0, 0), 2e9),               # large numbers\\n    ],\\n)\\ndef test_manhattan_distance(p1, p2, expected):\\n    assert manhattan_distance(p1, p2) == expected\\n\\ndef test_invalid_input():\\n    with pytest.raises(TypeError):\\n        manhattan_distance((1, 2), \\\"invalid\\\")\\n```\\nThese tests cover normal operation, edge cases, and error handling, ensuring the function behaves correctly now and after future changes.\"\n  }\n]",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 362,
+      "completion_tokens": 633
+    }
+  ]
+}
