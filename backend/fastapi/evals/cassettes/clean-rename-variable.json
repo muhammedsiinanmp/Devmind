@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "case_id": "clean-rename-variable",
+  "case_sha256": "b2d764c04c2858371718b4f763864a02407bd2f6174c6edad1b15e3527ce3c83",
+  "latency_ms": 2733,
+  "calls": [
+    {
+      "prompt_sha256": "7d6fbfcd509894aa3f6760108d992b236d1fabcf93da06f6c09e8b52c60846c4",
+      "response": "{\"findings\": []}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 691,
+      "completion_tokens": 109
+    },
+    {
+      "prompt_sha256": "58451cd8a497c70bd6522e68ceb9c751ae1f5a79f8ed7ebf4f3462206a270c46",
+      "response": "{\"findings\": [{\"file_path\": \"stats/summary.py\", \"line_number\": 5, \"category\": \"test coverage\", \"severity\": \"warning\", \"body\": \"The `mean` function now returns 0.0 for empty input, but there is no test verifying this edge case. Adding a test for an empty list ensures the conditional logic works as intended.\", \"suggested_fix\": \"Add a unit test, e.g.\\n\\n```python\\ndef test_mean_empty():\\n    assert summary.mean([]) == 0.0\\n```\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 681,
+      "completion_tokens": 308
+    },
+    {
+      "prompt_sha256": "fcf7de564f3ef76208df44170550647dc9192dba47604716e14b6bb5f91224a0",
+      "response": "{\"findings\": [{\"file_path\": \"stats/summary.py\", \"line_number\": 5, \"category\": \"quality\", \"severity\": \"info\", \"body\": \"Introduces an unnecessary variable 'total' when the value can be used directly in the return expression, adding minor overhead and reducing readability.\", \"suggested_fix\": \"Replace lines 5-6 with:\\n    return sum(values) / len(values) if values else 0.0\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 685,
+      "completion_tokens": 460
+    }
+  ]
+}

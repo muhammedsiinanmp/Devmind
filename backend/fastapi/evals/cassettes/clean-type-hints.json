@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "case_id": "clean-type-hints",
+  "case_sha256": "53983b7e25c59c023045d5fa1344f79ddedafb0de6aa01115857a962ffc6e284",
+  "latency_ms": 2252,
+  "calls": [
+    {
+      "prompt_sha256": "d932b94871e285429599786185fbe949814659430816fce8f3df4c5effd00c04",
+      "response": "{\"findings\": []}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 702,
+      "completion_tokens": 86
+    },
+    {
+      "prompt_sha256": "d1b3374571cb1d90c5262c273edadd33fafd72e71620314384e7f8fb8149ca5c",
+      "response": "{\"findings\": [{\"file_path\": \"inventory/stock.py\", \"line_number\": 11, \"category\": \"quality\", \"severity\": \"warning\", \"body\": \"The function does not validate that 'qty' is a positive integer. Passing a negative quantity would incorrectly increase stock.\", \"suggested_fix\": \"if qty <= 0:\\n    return False  # or raise ValueError('Quantity must be positive')\\n\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 696,
+      "completion_tokens": 383
+    },
+    {
+      "prompt_sha256": "07f35ea97859ab6174df6d157ebed3936821446676dd7889b758789f5f3bb4c8",
+      "response": "{\"findings\":[{\"file_path\":\"inventory/stock.py\",\"line_number\":10,\"category\":\"test coverage\",\"severity\":\"warning\",\"body\":\"Current implementation allows negative qty, which will increase stock. No tests cover this edge case, risking unintended behavior.\",\"suggested_fix\":\"Add input validation to reject negative qty (e.g., if qty < 0: return False) and create tests for negative and zero qty scenarios.\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 692,
+      "completion_tokens": 486
+    }
+  ]
+}

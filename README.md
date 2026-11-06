@@ -102,7 +102,7 @@ START -> [analyze_security | analyze_quality | analyze_tests] -> synthesize -> E
 
 **Line-anchored comments** (`backend/fastapi/services/comment_anchoring.py`):
 
-- The diff parser records the new-file line number of every added and context line. The prompt shows each diff line with that number (`L42 + code`) and asks the model to use only numbers it was shown. No evaluation has measured how often the model follows this yet.
+- The diff parser records the new-file line number of every added and context line. The prompt shows each diff line with that number (`L42 + code`) and asks the model to use only numbers it was shown. On the 27 eval cases, all 64 findings in the after run pointed at a line shown in the diff, compared with 139 of 152 before (valid-line rate, see [Review quality](#review-quality)).
 - The rendered diff is capped at 120 lines per hunk and 200 per file, and the diff's token budget is whatever the retrieved-pattern sections leave. Every file first gets its most important line (while the line budget has one per file), so a deletion-only file stays visible. Then added lines are kept before removed lines, then context, and each tier is shared evenly between files. Markers say how many lines and files were left out.
 - Before the response is built, each comment is checked against the diff:
   - A comment on an added or context line stays inline.
@@ -137,13 +137,14 @@ START -> [analyze_security | analyze_quality | analyze_tests] -> synthesize -> E
 | FastAPI (pytest) | ruff, black, pytest (no external services) |
 | Frontend (typecheck, build, lint) | `tsc`, `vite build`, `eslint`, `vitest run` |
 | Compose (profiles) | `docker compose config` with `.env.example`: Flower, Prometheus and Grafana appear only under the `ops` profile |
+| Evals (replay) | Pull requests only, and only when they change FastAPI agent, service, model, router, core or eval code: `make eval` replay compared with the committed after-fixes results, posted as one PR comment (see [Evals](#evals)) |
 
 Measured locally on this branch:
 
 | Suite | Tests | Line coverage |
 |---|---|---|
 | Django | 225 passed | 86% |
-| FastAPI | 425 passed | 94% |
+| FastAPI | 433 passed | 94% |
 
 Coverage method: `pytest --cov`, then `coverage report --omit='*/tests/*,*/migrations/*,*conftest.py'`, so test files, migrations and conftest are excluded. Including the test files would give a higher figure.
 
@@ -245,38 +246,58 @@ make eval-record EVAL_ARGS="--provider groq --pause 75"
 
 Cassettes store only the SHA-256 of each prompt, the response text, the model name and provider, token counts and the recording time. They don't store prompts, headers or keys, and recording stops if a configured key appears in a response.
 
-**Replay can't measure a prompt change.** Cassettes are keyed by prompt hash, so replay only re-scores responses that were already recorded. After the agent's prompts or a case's diff change, replay reports those cases as stale. Measuring the effect of a prompt or model change needs a live run (`make eval-record`). Replay is for re-scoring a recorded run, for example after a change to the scorer or the labels. This branch holds no cassettes, and `make eval` exits with a message until you record some.
+**Replay can't measure a prompt change.** Cassettes are keyed by prompt hash, so replay only re-scores responses that were already recorded. After the agent's prompts or a case's diff change, replay reports those cases as stale. Measuring the effect of a prompt or model change needs a live run (`make eval-record`). Replay is for re-scoring a recorded run, for example after a change to the scorer or the labels. `evals/cassettes/` holds the recordings of the "after" run below, so `make eval` replays them by default. They match the current prompts; once a change alters a prompt, re-record them.
+
+**CI.** On a pull request that changes `backend/fastapi/{agents,services,models,routers,core,evals}/**` (or `scripts/eval_compare.py`), the `Evals (replay)` job runs `make eval` against the committed cassettes and compares the result with `evals/results/after-fixes.json` using `scripts/eval_compare.py`. It posts one PR comment with the marker `<!-- devmind-eval-report -->` and updates that comment on later pushes. The comment says one of three things:
+- **No metric changed.**
+- **Metrics changed**, with a before/after table of the changes. This happens when the change touches scoring, labels or post-processing but not prompts.
+- **Prompt changed: replay can't measure this PR.** Some prompts have no recording, so nothing is scored. Re-record with `make eval-record EVAL_ARGS="--provider groq --pause 75"`, which needs provider keys in `.env`. Commit the new cassettes and the results file, and copy the results file over `after-fixes.json` if it becomes the new reference.
+
+The job needs no secrets and doesn't fail because of eval results. It fails only if the harness or the comparison can't run. On pull requests from forks it writes the report to the job summary and doesn't comment. To compare two results files locally, run `cd backend/fastapi && uv run python -m scripts.eval_compare BASE.json CURRENT.json`.
 
 The test suite checks the scoring against hand-written fixture responses in `backend/fastapi/tests/fixtures/evals/`. Those are test data, not model output.
 
 ### Review quality
 
-Baseline for the review agent **before** the A-series fixes. The responses were recorded live and are scored with the current harness:
+The same 27 cases (9 clean, 18 labeled defects), scored with the same harness, for the review agent before the A-series fixes and for the agent on `dev` after them. Both runs used `groq/openai/gpt-oss-120b` for every model call. Every number in the table comes from [`baseline-pre-fix.json`](backend/fastapi/evals/results/baseline-pre-fix.json) and [`after-fixes.json`](backend/fastapi/evals/results/after-fixes.json) in `backend/fastapi/evals/results/`. The table is the output of `scripts/eval_compare.py` on those two files, and a test (`tests/test_eval_compare.py`) checks that it still matches them.
 
-| Metric | Baseline (pre-fix) |
-|---|---|
-| Precision, exact location | 0.066 (10 of 152 posted findings) |
-| Precision, duplicates collapsed | 0.081 (10 of 123 unique findings) |
-| Precision, location-tolerant | 0.112 (17 of 152) |
-| Recall, exact line | 0.556 (10 of 18 labeled findings) |
-| Recall, location-tolerant | 0.944 (17 of 18) |
-| False-positive rate on clean diffs | 1.000 (9 of 9 clean cases had findings) |
-| Valid-line rate | 0.914 (139 of 152 findings on a line shown in the diff) |
-| Analyzer parse failures | unknown: the pre-fix agent doesn't report them |
-| Anchoring | none: the pre-fix code had no anchoring step |
-| Model calls | 81 |
-| Latency per case (Groq only) | mean 3545 ms, p50 3319 ms, max 5566 ms |
-| Cost | not priced |
+| Metric | Before (pre-fix) | After (dev) | Change |
+|---|---|---|---|
+| Recall, exact line | 0.556 (10/18) | 1.000 (18/18) | +0.444 |
+| Precision, exact location | 0.066 (10/152) | 0.281 (18/64) | +0.215 |
+| Precision, duplicates collapsed | 0.081 (10/123) | 0.300 (18/60) | +0.219 |
+| Precision, location-tolerant | 0.112 (17/152) | 0.281 (18/64) | +0.169 |
+| Recall, location-tolerant | 0.944 (17/18) | 1.000 (18/18) | +0.056 |
+| False-positive rate on clean diffs | 1.000 (9/9) | 1.000 (9/9) | no change |
+| Findings on clean diffs | 42 | 16 | -26 |
+| Findings on clean diffs at critical or error severity | 1 | 0 | -1 |
+| Findings posted | 152 | 64 | -88 |
+| Valid-line rate (agent output, before anchoring) | 0.914 (139/152) | 1.000 (64/64) | +0.086 |
+| Analyzer parse failures | not reported by this code | 0 | n/a |
+| Anchoring (anchored / snapped / file-level) | not applied | 64 / 0 / 0 | n/a |
+| Cases scored | 27 of 27 | 27 of 27 | no change |
 
-Provenance:
+How to read it:
+- **Recall and precision.** After the fixes, all 18 labeled defects get a finding on the labeled line, compared with 10 before. Precision is still low: 46 of the 64 posted findings match no label. Precision counts a real issue nobody labeled as an extra, so it is a lower bound.
+- **Clean diffs.** The false-positive rate on clean diffs didn't change: each of the 9 clean diffs still gets at least one comment. There are fewer of them (16, down from 42), and none is critical or error. Before, there were 41 warnings and 1 critical. After, there are 13 warnings and 3 info. By folded category, 9 of the 16 are tests (mostly "no test covers this") and 7 are quality (input validation, indentation, a hard-coded timeout, an extra variable).
+- **Analyzer parse failures.** The pre-fix agent doesn't report whether a reply parsed, so the before count can't be observed. After, 0 analyzer runs failed to parse.
+- **Latency: not compared.** Both results record per-case latency (before: mean 3545 ms, after: mean 2307 ms), but they aren't comparable. The before run went through the server chain with Google first and Google's daily quota exhausted, so its times may include failed Google calls before the failover to Groq. The cassettes don't record this. The after run used only Groq.
+- **Tokens.** Model calls: 81 in both runs. Prompt tokens went from 31353 to 56463 and completion tokens from 52786 to 27612.
+- **Small, synthetic set.** 27 hand-written diffs, and each run was recorded once. The numbers show what this agent and model did on these cases. They are not an estimate of performance on real pull requests.
+
+After-run provenance:
+- **Code:** recorded with the E1 harness at commit `40b8853` (an ancestor of `dev`). Its `agents/`, `services/`, `models/`, `core/` and `routers/` code is identical to `dev` at `bccc370`: `git diff --stat 40b8853 bccc370` on those directories is empty.
+- **Model:** `groq/openai/gpt-oss-120b` for all 81 calls (`models_used` in the results file).
+- **Recording:** all 27 cases recorded live on 2026-11-06. The cassettes are in `backend/fastapi/evals/cassettes/` (commit `01095e3`). The `40b8853` harness didn't store the provider or recording time in cassettes, so the results file has no date (`date_source: not stored in cassettes`). The 2026-11-06 date is the commit date. The first live pass was interrupted by a network (DNS) outage after 14 cases; the remaining 13 were recorded in a second pass with the same harness, model and flags. The 40b8853 cassettes store no timestamps, so this comes from the recording session's logs, not from a committed artifact. No case was dropped: all 27 are scored.
+- **Scoring:** [`after-fixes.md`](backend/fastapi/evals/results/after-fixes.md) and `.json`, from replaying those cassettes on a clean checkout of `01095e3` (`dirty_worktree: false`). The results file has `harness_sha256` `eaac3e46…` and `case_set_sha256` `00dad82d…`, the same as the baseline, so both runs were scored by the same code on the same cases and labels. A replay on this branch gives the same metrics.
+
+Baseline provenance:
 - **Code:** commit `8e606d6` on branch `eval/baseline-prefix` is the first version of this harness on top of `dev` at `ebb335a` (the pre-fix agent). It changes only the model IDs in `services/llm_client.py`, because the original models could no longer be called. `gemini-2.0-flash` became `gemini-3.5-flash`, `llama-3.3-70b-versatile` became `openai/gpt-oss-120b`, and GitHub Models was disabled (retired 2026-07-30). These are the same model IDs #96 adopted.
 - **Model:** `groq/openai/gpt-oss-120b` only. Google's free daily quota had run out, so every call went to Groq.
 - **Recording:** all 27 cases (9 clean), recorded on 2026-11-06 (the commit date of `6e5638a`; the cassettes from that run don't store a timestamp). Cases were run one at a time from a shell loop with a pause between them, because `--pause` didn't exist yet; the pause length isn't recorded in any artifact. The cassettes are in commit `6e5638a` on the same branch. They're keyed to the pre-fix prompts, so they replay only against that code.
 - **Scoring:** [`backend/fastapi/evals/results/baseline-pre-fix.md`](backend/fastapi/evals/results/baseline-pre-fix.md) and `.json`. These come from replaying those cassettes on a checkout of `6e5638a` whose `evals/` directory (harness code and case labels only, no agent code) was replaced with this branch's. That's why the results file shows commit `6e5638a` with uncommitted files present. Its `harness_sha256` (`eaac3e46…`) and `case_set_sha256` (`00dad82d…`) match this branch's `evals/` code and cases. Replaying produced the same agent output, case for case, as the original run.
 - **Why the numbers moved from the first report** (precision 0.059, recall 0.500, 9 matches): one more exact match comes from the alternative location added to `missing-test-for-new-branch` (`tests/test_pricing.py`), and the new location-tolerant bucket counts 7 near matches that were previously misses.
 - **Caveat on that extra exact match:** the finding it credits (`tests/test_pricing.py:4`) is about a different untested case (a discount equal to the subtotal). The finding that names the labeled defect (the untested quantity `ValueError`) is at line 1, just outside the alternative range, and would have been a near match. Read by hand, the split is 9 exact and 8 near. Tolerant recall (17/18) is unaffected. The matcher matches on location, category and severity, not on the finding's text, so this can happen whenever several findings share a category in one hunk.
-
-The "after" numbers for the current agent will come from E2 (#73).
 
 ## Configuration
 

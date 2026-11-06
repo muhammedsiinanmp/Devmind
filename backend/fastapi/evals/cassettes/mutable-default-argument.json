@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "case_id": "mutable-default-argument",
+  "case_sha256": "6bf125542c7cf5169281ec5482a0ff77ac63b5abde8368bd75be879e5b6b2bf0",
+  "latency_ms": 1525,
+  "calls": [
+    {
+      "prompt_sha256": "2fa808750d0e1fc66538a079b43d3763e4fdb919b2d93356d3324de7e8027270",
+      "response": "{\"findings\": [{\"file_path\": \"tags/util.py\", \"line_number\": 1, \"category\": \"quality\", \"severity\": \"warning\", \"body\": \"Using a mutable default argument (tags=[]) can cause state to be shared across function calls, leading to unexpected behavior.\", \"suggested_fix\": \"def add_tag(tag, tags=None):\\n    if tags is None:\\n        tags = []\\n    tags.append(tag)\\n    return tags\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 674,
+      "completion_tokens": 254
+    },
+    {
+      "prompt_sha256": "e4d2db08fc0b380aa78344d0ab4d890ba05e3cb54354071e18450bc351f16ee3",
+      "response": "{\"findings\": [{\"file_path\": \"tags/util.py\", \"line_number\": 1, \"category\": \"quality\", \"severity\": \"error\", \"body\": \"Using a mutable default argument (tags=[]) can cause unexpected state sharing between calls, leading to bugs where tags accumulate across invocations.\", \"suggested_fix\": \"def add_tag(tag, tags=None):\\n    if tags is None:\\n        tags = []\\n    tags.append(tag)\\n    return tags\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 668,
+      "completion_tokens": 257
+    },
+    {
+      "prompt_sha256": "57684d646690a2ae1d1aaff07836b71041367671d418f7099b65b584147643d4",
+      "response": "{\"findings\": [{\"file_path\": \"tags/util.py\", \"line_number\": 1, \"category\": \"quality\", \"severity\": \"error\", \"body\": \"Using a mutable default argument (tags=[]) causes the list to be shared across function calls, leading to unexpected accumulation of tags.\", \"suggested_fix\": \"def add_tag(tag, tags=None):\\n    if tags is None:\\n        tags = []\\n    tags.append(tag)\\n    return tags\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 664,
+      "completion_tokens": 270
+    }
+  ]
+}

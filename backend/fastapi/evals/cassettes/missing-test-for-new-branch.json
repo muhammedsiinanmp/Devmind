@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "case_id": "missing-test-for-new-branch",
+  "case_sha256": "8e5851f14547f88b667f8d56f0bff5956ff10d73dde4b6fbc37fcf15fb0ce9d9",
+  "latency_ms": 2477,
+  "calls": [
+    {
+      "prompt_sha256": "cb0c28a57b0743f1ed93bc3fa32a8895afcd991b6eb8737b297890a6e1817e9b",
+      "response": "{\"findings\": []}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 792,
+      "completion_tokens": 113
+    },
+    {
+      "prompt_sha256": "efd2c7d1ecee9d21f1a8c84f5901c37e099556fef72be60efa5a8c84448253cd",
+      "response": "{\"findings\":[{\"file_path\":\"cart/pricing.py\",\"line_number\":9,\"category\":\"test coverage\",\"severity\":\"error\",\"body\":\"A new ValueError is raised for non‑positive quantity, but there is no test verifying this behavior. Add a test that asserts a ValueError is raised for quantity <= 0.\",\"suggested_fix\":\"def test_line_total_quantity_validation():\\n    import pytest\\n    with pytest.raises(ValueError):\\n        line_total(100, 0)\\n    with pytest.raises(ValueError):\\n        line_total(100, -1)\"},{\"file_path\":\"cart/pricing.py\",\"line_number\":11,\"category\":\"validation\",\"severity\":\"warning\",\"body\":\"The function accepts a negative discount, which would increase the total instead of decreasing it. Consider validating that discount is non‑negative or add tests to define expected behavior.\",\"suggested_fix\":\"if discount < 0:\\n        raise ValueError(\\\"discount must be non‑negative\\\")\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 782,
+      "completion_tokens": 550
+    },
+    {
+      "prompt_sha256": "80358ff0f56416752c8b1c9a237b75da4f9698fb0d97fd6970a7278aa12bbfec",
+      "response": "{\"findings\": [{\"file_path\": \"cart/pricing.py\", \"line_number\": 9, \"category\": \"quality\", \"severity\": \"info\", \"body\": \"Indentation appears to have an extra space before the 'if' statement, which may violate style guidelines.\", \"suggested_fix\": \"    if quantity <= 0:\"}, {\"file_path\": \"cart/pricing.py\", \"line_number\": 9, \"category\": \"validation\", \"severity\": \"warning\", \"body\": \"Function validates that quantity is positive but does not validate that discount is non‑negative, allowing negative discounts to increase the total.\", \"suggested_fix\": \"    if discount < 0:\\n        raise ValueError(\\\"discount must be non‑negative\\\")\"}, {\"file_path\": \"tests/test_pricing.py\", \"line_number\": 7, \"category\": \"testing\", \"severity\": \"error\", \"body\": \"The test file calls line_total without importing it, which will raise a NameError when the test runs.\", \"suggested_fix\": \"from cart.pricing import line_total\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 786,
+      "completion_tokens": 602
+    }
+  ]
+}
