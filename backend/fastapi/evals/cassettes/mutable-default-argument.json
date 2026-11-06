@@ -2,28 +2,32 @@
   "version": 1,
   "case_id": "mutable-default-argument",
   "case_sha256": "6bf125542c7cf5169281ec5482a0ff77ac63b5abde8368bd75be879e5b6b2bf0",
-  "latency_ms": 1525,
+  "latency_ms": 1707,
   "calls": [
     {
-      "prompt_sha256": "2fa808750d0e1fc66538a079b43d3763e4fdb919b2d93356d3324de7e8027270",
-      "response": "{\"findings\": [{\"file_path\": \"tags/util.py\", \"line_number\": 1, \"category\": \"quality\", \"severity\": \"warning\", \"body\": \"Using a mutable default argument (tags=[]) can cause state to be shared across function calls, leading to unexpected behavior.\", \"suggested_fix\": \"def add_tag(tag, tags=None):\\n    if tags is None:\\n        tags = []\\n    tags.append(tag)\\n    return tags\"}]}",
+      "prompt_sha256": "4e5e52ca37701aa4b225176c29d79ac3311dfc7e8fb214d15c850e6b8a315ec9",
+      "response": "{\"findings\": [{\"file_path\": \"tags/util.py\", \"line_number\": 1, \"category\": \"quality\", \"severity\": \"warning\", \"body\": \"Using a mutable default argument (tags=[]) can cause state to be shared across function calls, leading to unexpected behavior.\", \"suggested_fix\": \"def add_tag(tag, tags=None):\\n    tags = list(tags or [])\\n    tags.append(tag)\\n    return tags\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 674,
-      "completion_tokens": 254
+      "prompt_tokens": 712,
+      "completion_tokens": 254,
+      "provider": "groq"
     },
     {
-      "prompt_sha256": "e4d2db08fc0b380aa78344d0ab4d890ba05e3cb54354071e18450bc351f16ee3",
-      "response": "{\"findings\": [{\"file_path\": \"tags/util.py\", \"line_number\": 1, \"category\": \"quality\", \"severity\": \"error\", \"body\": \"Using a mutable default argument (tags=[]) can cause unexpected state sharing between calls, leading to bugs where tags accumulate across invocations.\", \"suggested_fix\": \"def add_tag(tag, tags=None):\\n    if tags is None:\\n        tags = []\\n    tags.append(tag)\\n    return tags\"}]}",
+      "prompt_sha256": "9240a25c5a9852b754e1be9a1807b5535c2307e2dbd03168ae0fae711a59d63e",
+      "response": "{\"findings\": [{\"file_path\": \"tags/util.py\", \"line_number\": 1, \"category\": \"quality\", \"severity\": \"error\", \"body\": \"Using a mutable default argument (tags=[]) causes the list to be shared across function calls, leading to unexpected accumulation of tags and potential bugs. It also fails when callers explicitly pass None.\", \"suggested_fix\": \"def add_tag(tag, tags=None):\\n    if tags is None:\\n        tags = []\\n    tags.append(tag)\\n    return tags\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 668,
-      "completion_tokens": 257
+      "prompt_tokens": 706,
+      "completion_tokens": 409,
+      "provider": "groq"
     },
     {
-      "prompt_sha256": "57684d646690a2ae1d1aaff07836b71041367671d418f7099b65b584147643d4",
-      "response": "{\"findings\": [{\"file_path\": \"tags/util.py\", \"line_number\": 1, \"category\": \"quality\", \"severity\": \"error\", \"body\": \"Using a mutable default argument (tags=[]) causes the list to be shared across function calls, leading to unexpected accumulation of tags.\", \"suggested_fix\": \"def add_tag(tag, tags=None):\\n    if tags is None:\\n        tags = []\\n    tags.append(tag)\\n    return tags\"}]}",
+      "prompt_sha256": "6cc8d6a2c27a16ed4fa8e0ea65671e6670f99bfa07390dbb0335ba39118425f9",
+      "response": "{\"findings\": [{\"file_path\": \"tags/util.py\", \"line_number\": 1, \"category\": \"quality\", \"severity\": \"error\", \"body\": \"Using a mutable default argument (tags=[]) causes the list to be shared across calls, leading to unexpected accumulation of tags.\", \"suggested_fix\": \"def add_tag(tag, tags=None):\\n    if tags is None:\\n        tags = []\\n    tags.append(tag)\\n    return tags\"}, {\"file_path\": \"tags/util.py\", \"line_number\": 1, \"category\": \"test coverage\", \"severity\": \"warning\", \"body\": \"No tests verify that calling add_tag without providing a tags list returns a fresh list each time, which is essential after fixing the mutable default bug.\", \"suggested_fix\": \"Add a unit test that calls add_tag('a') twice and asserts that the returned lists are independent (e.g., first call returns ['a'], second call returns ['a'] not ['a', 'a']).\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 664,
-      "completion_tokens": 270
+      "prompt_tokens": 702,
+      "completion_tokens": 478,
+      "provider": "groq"
     }
-  ]
+  ],
+  "recorded_utc": "2026-11-06T19:05:09Z"
 }

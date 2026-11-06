@@ -2,28 +2,32 @@
   "version": 1,
   "case_id": "missing-auth-check",
   "case_sha256": "8e622a532e4674284e501d53704427a28415ac1651f3dafe85e783c102777979",
-  "latency_ms": 2467,
+  "latency_ms": 1837,
   "calls": [
     {
-      "prompt_sha256": "2942091932d11132f85b9ce640e4c67f1db74adb0e01fd8b36ee52353cf180fb",
-      "response": "{\"findings\": [{\"file_path\": \"api/projects.py\", \"line_number\": 46, \"category\": \"security\", \"severity\": \"error\", \"body\": \"The new DELETE endpoint does not verify that the requesting user is authorized to delete the project. This allows any authenticated user to delete any project, leading to privilege escalation.\", \"suggested_fix\": \"Add an ownership/authorization check similar to the GET endpoint before performing the delete, e.g.\\n\\n```python\\n@router.delete(\\\"/projects/{project_id}\\\")\\ndef delete_project(project_id: int, user=Depends(current_user)):\\n    project = store.get(project_id)\\n    require_owner(project, user)  # <-- ensure the user owns the project\\n    store.delete(project)\\n    return {\\\"deleted\\\": project_id}\\n```\"}]}",
+      "prompt_sha256": "725c88d39574554f7cb36856d7d6fe22475fb306bea298392bf3fb38c4c2f523",
+      "response": "{\"findings\": [{\"file_path\": \"api/projects.py\", \"line_number\": 46, \"category\": \"security\", \"severity\": \"critical\", \"body\": \"The new delete endpoint does not verify that the requesting user is authorized to delete the project. It omits the require_owner check present in the read endpoint, allowing any authenticated user to delete any project.\", \"suggested_fix\": \"Add a permission check before deletion, e.g:\\n\\n@router.delete(\\\"/projects/{project_id}\\\")\\ndef delete_project(project_id: int, user=Depends(current_user)):\\n    project = store.get(project_id)\\n    require_owner(project, user)  # ensure user owns the project\\n    store.delete(project)\\n    return {\\\"deleted\\\": project_id}\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 748,
-      "completion_tokens": 353
+      "prompt_tokens": 786,
+      "completion_tokens": 328,
+      "provider": "groq"
     },
     {
-      "prompt_sha256": "56ffb09f62d8f19d0b3bbf4e4b48aeff0f7837fa2cd6d80aaf8cfbf47221cedd",
-      "response": "{\"findings\": [{\"file_path\": \"api/projects.py\", \"line_number\": 48, \"category\": \"security\", \"severity\": \"critical\", \"body\": \"The delete endpoint does not verify that the requesting user is authorized to delete the project, allowing any authenticated user to delete any project.\", \"suggested_fix\": \"Add a permission check similar to the read endpoint, e.g.,\\n\\n    require_owner(project, user)\\n\\nbefore calling store.delete(project).\"}, {\"file_path\": \"api/projects.py\", \"line_number\": 48, \"category\": \"correctness\", \"severity\": \"warning\", \"body\": \"If store.get(project_id) returns None (project not found), the code will raise an exception when passed to require_owner or store.delete.\", \"suggested_fix\": \"Check for None and raise HTTPException(status_code=404) if the project does not exist.\"}, {\"file_path\": \"api/projects.py\", \"line_number\": 50, \"category\": \"quality\", \"severity\": \"info\", \"body\": \"The endpoint returns a JSON body with the deleted ID but HTTP DELETE should typically return 204 No Content.\", \"suggested_fix\": \"Return Response(status_code=204) or adjust the response model accordingly.\"}]}",
+      "prompt_sha256": "618edd7fa0419bb4cb1e97cadf298be09376863566519a9cda2bd81124d3c439",
+      "response": "{\"findings\": [{\"file_path\": \"api/projects.py\", \"line_number\": 48, \"category\": \"security\", \"severity\": \"error\", \"body\": \"The delete endpoint does not verify that the requesting user is authorized to delete the project, allowing any authenticated user to delete any project.\", \"suggested_fix\": \"Add a permission check similar to the read endpoint, e.g.:\\n    require_owner(project, user)\"} ,{\"file_path\": \"api/projects.py\", \"line_number\": 48, \"category\": \"correctness\", \"severity\": \"warning\", \"body\": \"If store.get(project_id) returns None for a non‑existent project, the code will raise an exception when passed to store.delete.\", \"suggested_fix\": \"Handle the missing project case, e.g.:\\n    if project is None:\\n        raise HTTPException(status_code=404, detail=\\\"Project not found\\\")\"} ,{\"file_path\": \"api/projects.py\", \"line_number\": 50, \"category\": \"quality\", \"severity\": \"info\", \"body\": \"Returning a JSON body for a delete operation is acceptable but returning a 204 No Content response is more conventional for REST APIs.\", \"suggested_fix\": \"Replace the return statement with:\\n    return Response(status_code=204)\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 742,
-      "completion_tokens": 507
+      "prompt_tokens": 780,
+      "completion_tokens": 560,
+      "provider": "groq"
     },
     {
-      "prompt_sha256": "f2981f1af95abeef8c89253da896f2105c24ed07dffc31a92f9cc6bb850da580",
-      "response": "{\"findings\":[{\"file_path\":\"api/projects.py\",\"line_number\":46,\"category\":\"security\",\"severity\":\"critical\",\"body\":\"The new delete endpoint does not verify that the requesting user is the owner of the project before performing the deletion, allowing any authenticated user to delete any project.\",\"suggested_fix\":\"@router.delete(\\\"/projects/{project_id}\\\")\\ndef delete_project(project_id: int, user=Depends(current_user)):\\n    project = store.get(project_id)\\n    require_owner(project, user)  # <-- add permission check\\n    store.delete(project)\\n    return {\\\"deleted\\\": project_id}\"},{\"file_path\":\"api/projects.py\",\"line_number\":46,\"category\":\"testing\",\"severity\":\"error\",\"body\":\"No tests are provided for the newly added delete_project endpoint, so its behavior (including permission checks and error handling) is unverified.\",\"suggested_fix\":\"# Example pytest case\\ndef test_delete_project_authorized(client, auth_user, project):\\n    response = client.delete(f\\\"/projects/{project.id}\\\", headers={\\\"Authorization\\\": f\\\"Bearer {auth_user.token}\\\"})\\n    assert response.status_code == 200\\n    assert response.json() == {\\\"deleted\\\": project.id}\\n\\ndef test_delete_project_unauthorized(client, other_user, project):\\n    response = client.delete(f\\\"/projects/{project.id}\\\", headers={\\\"Authorization\\\": f\\\"Bearer {other_user.token}\\\"})\\n    assert response.status_code == 403\\n\"},{\"file_path\":\"api/projects.py\",\"line_number\":46,\"category\":\"quality\",\"severity\":\"warning\",\"body\":\"The delete endpoint returns a generic 200 OK with a JSON body but does not specify an appropriate HTTP status code (e.g., 204 No Content) or response model, which may be inconsistent with API design guidelines.\",\"suggested_fix\":\"@router.delete(\\\"/projects/{project_id}\\\", status_code=204)\\ndef delete_project(project_id: int, user=Depends(current_user)):\\n    project = store.get(project_id)\\n    require_owner(project, user)\\n    store.delete(project)\\n    return None\"}]}",
+      "prompt_sha256": "e7e86384bad4bcbc0f755cf5955b2b53e96ad1f2b061e41ed128626846be687c",
+      "response": "{\"findings\":[{\"file_path\":\"api/projects.py\",\"line_number\":47,\"category\":\"security\",\"severity\":\"error\",\"body\":\"The delete endpoint does not verify that the requesting user is the owner of the project before performing the deletion, allowing any authenticated user to delete any project.\",\"suggested_fix\":\"    require_owner(project, user)\"},{\"file_path\":\"api/projects.py\",\"line_number\":49,\"category\":\"correctness\",\"severity\":\"error\",\"body\":\"store.delete is called with the full project object; if the store API expects an ID, this will raise an error or delete the wrong record.\",\"suggested_fix\":\"    store.delete(project_id)  # or store.delete(project.id) depending on API\"},{\"file_path\":\"api/projects.py\",\"line_number\":50,\"category\":\"quality\",\"severity\":\"warning\",\"body\":\"The endpoint returns a JSON body with the deleted ID but does not set an appropriate HTTP status code (e.g., 204 No Content).\",\"suggested_fix\":\"    return Response(status_code=204)  # or return JSON with status_code=200 if desired\"},{\"file_path\":\"api/projects.py\",\"line_number\":46,\"category\":\"test coverage\",\"severity\":\"info\",\"body\":\"No tests are provided for the new DELETE /projects/{project_id} endpoint, including cases for successful deletion, unauthorized deletion, and deletion of non‑existent projects.\",\"suggested_fix\":\"Add unit/integration tests covering:\\n- Successful deletion by the owner (assert 204/200 response)\\n- Attempted deletion by a non‑owner (assert 403)\\n- Deletion of a missing project (assert 404)\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 738,
-      "completion_tokens": 607
+      "prompt_tokens": 776,
+      "completion_tokens": 652,
+      "provider": "groq"
     }
-  ]
+  ],
+  "recorded_utc": "2026-11-06T19:01:19Z"
 }

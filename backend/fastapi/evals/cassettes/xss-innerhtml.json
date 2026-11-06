@@ -2,28 +2,32 @@
   "version": 1,
   "case_id": "xss-innerhtml",
   "case_sha256": "60438f8742cdac1ce2d24d1ceff2306d79a83511b8d12634ddd19ae7fad38ea1",
-  "latency_ms": 2853,
+  "latency_ms": 2191,
   "calls": [
     {
-      "prompt_sha256": "bad6e4a295a640846c312d939d1c15f74ac030e7eb07cdfc97ff02785c6609d8",
-      "response": "{\"findings\":[{\"file_path\":\"web/src/comments.js\",\"line_number\":16,\"category\":\"security\",\"severity\":\"critical\",\"body\":\"Using innerHTML with unescaped user-provided data (comment.author and comment.text) introduces a cross‑site scripting (XSS) vulnerability. If either field contains malicious HTML/JS it will be executed in the browser.\",\"suggested_fix\":\"const authorEl = document.createElement('b');\\nauthorEl.textContent = comment.author;\\nconst textNode = document.createTextNode(`: ${comment.text}`);\\nel.appendChild(authorEl);\\nel.appendChild(textNode);\"}]}",
+      "prompt_sha256": "6026dd034a3ae4fada2fcab1cbef96aa08a41f3e2bd496f778404555a53c4d2d",
+      "response": "{\"findings\":[{\"file_path\":\"web/src/comments.js\",\"line_number\":16,\"category\":\"security\",\"severity\":\"error\",\"body\":\"Using innerHTML with unescaped user-provided data (comment.author and comment.text) introduces a reflected XSS vulnerability. The values are inserted directly into HTML without sanitization, allowing malicious scripts to be executed in the browser.\",\"suggested_fix\":\"Replace innerHTML with safe DOM manipulation, e.g.:\\n```javascript\\nconst authorEl = document.createElement('b');\\nauthorEl.textContent = comment.author;\\nconst textNode = document.createTextNode(`: ${comment.text}`);\\nel.appendChild(authorEl);\\nel.appendChild(textNode);\\n```\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 688,
-      "completion_tokens": 314
+      "prompt_tokens": 736,
+      "completion_tokens": 300,
+      "provider": "groq"
     },
     {
-      "prompt_sha256": "1acdacf4852591d6ae474b31c64071a0c4e7be8cd6f8e7ef3127edc21fda982f",
-      "response": "{\"findings\": [{\"file_path\": \"web/src/comments.js\", \"line_number\": 16, \"category\": \"security\", \"severity\": \"error\", \"body\": \"Using innerHTML with unescaped user-provided data (comment.author and comment.text) introduces a reflected XSS vulnerability.\", \"suggested_fix\": \"Replace innerHTML with safe DOM manipulation, e.g.,\\n```js\\nconst authorEl = document.createElement('b');\\nauthorEl.textContent = comment.author;\\nconst textNode = document.createTextNode(`: ${comment.text}`);\\nel.appendChild(authorEl);\\nel.appendChild(textNode);\\n```\"}]}",
+      "prompt_sha256": "72b572c4d5eb9f65baed7cdeb08fcde98015436630c3d6cc0ce5a69f43e0cbd9",
+      "response": "{\"findings\": [{\"file_path\": \"web/src/comments.js\", \"line_number\": 16, \"category\": \"security\", \"severity\": \"critical\", \"body\": \"Using innerHTML with unsanitized user data (comment.author and comment.text) opens a reflected XSS vulnerability. Malicious input could inject arbitrary HTML/JS into the page.\", \"suggested_fix\": \"Replace innerHTML with safe DOM manipulation, e.g.:\\n```javascript\\nconst authorEl = document.createElement('strong');\\nauthorEl.textContent = comment.author;\\nconst textNode = document.createTextNode(`: ${comment.text}`);\\nel.appendChild(authorEl);\\nel.appendChild(textNode);\\n```\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 698,
-      "completion_tokens": 262
+      "prompt_tokens": 726,
+      "completion_tokens": 369,
+      "provider": "groq"
     },
     {
-      "prompt_sha256": "831b2be67dbbf0ec2f688b1fe0c0fc3899c08d599d80da056e7ab18e6e8332fa",
-      "response": "{\"findings\":[{\"file_path\":\"web/src/comments.js\",\"line_number\":16,\"category\":\"security\",\"severity\":\"critical\",\"body\":\"Using innerHTML with unescaped user-provided data (comment.author and comment.text) introduces a cross‑site scripting (XSS) vulnerability. If either field contains malicious HTML/JS it will be executed in the browser.\",\"suggested_fix\":\"// Safely construct the comment without using innerHTML\\nconst authorEl = document.createElement('strong');\\nauthorEl.textContent = comment.author;\\nel.appendChild(authorEl);\\nel.appendChild(document.createTextNode(`: ${comment.text}`));\"}]}",
+      "prompt_sha256": "3496e5cf8a54c6960187c2a41ffdb32302da8054909c8c22aa473f5706e8578e",
+      "response": "{\"findings\":[{\"file_path\":\"web/src/comments.js\",\"line_number\":16,\"category\":\"security\",\"severity\":\"critical\",\"body\":\"Using innerHTML with template literals inserts comment.author and comment.text directly into the DOM, which can lead to XSS if those values contain malicious HTML. textContent should be used for untrusted data, or the values must be properly escaped.\",\"suggested_fix\":\"const authorEl = document.createElement('b');\\nauthorEl.textContent = comment.author;\\nconst textNode = document.createTextNode(`: ${comment.text}`);\\nel.appendChild(authorEl);\\nel.appendChild(textNode);\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 692,
-      "completion_tokens": 434
+      "prompt_tokens": 730,
+      "completion_tokens": 472,
+      "provider": "groq"
     }
-  ]
+  ],
+  "recorded_utc": "2026-11-06T19:15:26Z"
 }

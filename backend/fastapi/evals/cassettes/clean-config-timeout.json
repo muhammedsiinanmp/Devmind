@@ -2,28 +2,32 @@
   "version": 1,
   "case_id": "clean-config-timeout",
   "case_sha256": "ba50ce09a7cb7b0fd5a816927edd8a3e3779c2c4cd6fc0115b8114134a6c5cb5",
-  "latency_ms": 1499,
+  "latency_ms": 1432,
   "calls": [
     {
-      "prompt_sha256": "9a394816b79ce30bee132df426be742b544faee886b3683f9e6f8ff352c3e152",
+      "prompt_sha256": "65142190cab1239e5b1d9dcf636618abc3cdd43ee559263e93e312c358ecc63e",
       "response": "{\"findings\": []}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 673,
-      "completion_tokens": 59
+      "prompt_tokens": 711,
+      "completion_tokens": 63,
+      "provider": "groq"
     },
     {
-      "prompt_sha256": "a106b1cf290d218ad6ba9439a28085d04ae53fef61cb3e53987b4fd81d271446",
-      "response": "{\"findings\": [{\"file_path\": \"integrations/settings.py\", \"line_number\": 3, \"category\": \"quality\", \"severity\": \"info\", \"body\": \"The timeout value is hard‑coded as a magic number. Consider making it configurable via environment variable or a settings file to improve flexibility across environments.\", \"suggested_fix\": \"import os\\nREQUEST_TIMEOUT_SECONDS = int(os.getenv('REQUEST_TIMEOUT_SECONDS', '20'))\"}]}",
+      "prompt_sha256": "69a524eb42bbb96cd9d74b8a333b42010085571c5af461b3bf659ea0b70b9855",
+      "response": "{\"findings\": [{\"file_path\": \"integrations/settings.py\", \"line_number\": 3, \"category\": \"quality\", \"severity\": \"warning\", \"body\": \"The timeout value is a magic number hard‑coded in the source. Consider making it configurable (e.g., via environment variable or config file) and add a comment explaining its purpose.\", \"suggested_fix\": \"import os\\n\\n# Timeout for API requests (seconds). Can be overridden with the REQUEST_TIMEOUT_SECONDS env var.\\nREQUEST_TIMEOUT_SECONDS = int(os.getenv(\\\"REQUEST_TIMEOUT_SECONDS\\\", 20))\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 667,
-      "completion_tokens": 200
+      "prompt_tokens": 705,
+      "completion_tokens": 271,
+      "provider": "groq"
     },
     {
-      "prompt_sha256": "0e76be2eb4478a4f340ff73312b82e72a0cdae85373979f3a5241921cb776785",
-      "response": "{\"findings\": [{\"file_path\": \"integrations/settings.py\", \"line_number\": 3, \"category\": \"test coverage\", \"severity\": \"warning\", \"body\": \"The timeout constant REQUEST_TIMEOUT_SECONDS was increased, but there are no tests verifying that the new value is used by HTTP clients or that request behavior respects the updated timeout.\", \"suggested_fix\": \"Add a unit test that imports the settings module and asserts REQUEST_TIMEOUT_SECONDS == 20, and optionally mock an HTTP request to ensure the timeout parameter is passed correctly.\"}]}",
+      "prompt_sha256": "ea1641d8750d043e9f5ce958593b133f333e72d67d0bcc6f5a54b5aabe789e9d",
+      "response": "{\"findings\": [{\"file_path\": \"integrations/settings.py\", \"line_number\": 3, \"category\": \"test coverage\", \"severity\": \"warning\", \"body\": \"The REQUEST_TIMEOUT_SECONDS constant was increased from 10 to 20, but there are no tests verifying that the new timeout value is correctly applied in HTTP requests. Lack of coverage may allow regressions if the timeout handling logic changes.\", \"suggested_fix\": \"Add a unit test that imports REQUEST_TIMEOUT_SECONDS and asserts it is used by the HTTP client (e.g., mock the client and verify the timeout argument equals integrations.settings.REQUEST_TIMEOUT_SECONDS).\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 663,
-      "completion_tokens": 245
+      "prompt_tokens": 701,
+      "completion_tokens": 337,
+      "provider": "groq"
     }
-  ]
+  ],
+  "recorded_utc": "2026-11-06T17:51:48Z"
 }

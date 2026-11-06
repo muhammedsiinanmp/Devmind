@@ -2,28 +2,32 @@
   "version": 1,
   "case_id": "clean-parameterized-query",
   "case_sha256": "fc3dcb343771e7ed2c33cf978a4765159b39e1cde12b7023d6bf9394e4d5a3ec",
-  "latency_ms": 2554,
+  "latency_ms": 1662,
   "calls": [
     {
-      "prompt_sha256": "7c4faf02b9da48360b13faf9d595fe8fbb87ce239f690b6decd3153fb39eefcf",
+      "prompt_sha256": "b09b69eab1cea9a713307ed04caea993db214b7b432bd88440b55db415d91770",
       "response": "{\"findings\": []}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 699,
-      "completion_tokens": 125
+      "prompt_tokens": 737,
+      "completion_tokens": 97,
+      "provider": "groq"
     },
     {
-      "prompt_sha256": "a848ea677cbba6dfe7d8aee2173ea52fcc141b423afdb76bef345f622b8d08e2",
-      "response": "{\"findings\": []}",
+      "prompt_sha256": "3c1011389fee8bed2551acfd3b6f100990a13991b1e6f97186dc9af29aca2bf0",
+      "response": "{\"findings\": [{\"file_path\": \"shop/repository.py\", \"line_number\": 20, \"category\": \"quality\", \"severity\": \"warning\", \"body\": \"The cursor is created without a context manager, which may leave it open if an exception occurs. Use a 'with' block to ensure the cursor is closed promptly.\", \"suggested_fix\": \"def find_order(conn, order_id):\\n    with conn.cursor() as cur:\\n        cur.execute(\\\"SELECT * FROM orders WHERE id = %s\\\", (order_id,))\\n        return cur.fetchone()\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 693,
-      "completion_tokens": 126
+      "prompt_tokens": 731,
+      "completion_tokens": 427,
+      "provider": "groq"
     },
     {
-      "prompt_sha256": "0b156717f2e591a971052afab49bd9fde6d2e3274feafc2f759b92dd0bf4bbcc",
-      "response": "{\"findings\": [{\"file_path\": \"shop/repository.py\", \"line_number\": 22, \"category\": \"test coverage\", \"severity\": \"warning\", \"body\": \"The change introduces parameterized SQL to prevent injection, but there is no test verifying that malicious input is safely handled. Add a unit test that supplies a crafted order_id (e.g., \\\"1; DROP TABLE orders;\\\") and asserts that the cursor receives the value as a parameter rather than interpolated into the query.\", \"suggested_fix\": \"def test_find_order_sql_injection(monkeypatch):\\n    mock_cursor = mock.Mock()\\n    mock_conn = mock.Mock()\\n    mock_conn.cursor.return_value = mock_cursor\\n    repo.find_order(mock_conn, \\\"1; DROP TABLE orders;\\\")\\n    mock_cursor.execute.assert_called_once_with(\\n        \\\"SELECT * FROM orders WHERE id = %s\\\", (\\\"1; DROP TABLE orders;\\\",)\\n    )\\n\"}]}",
+      "prompt_sha256": "4a9d02a11cb4110f9f2f0d12d080e49609a928559f8708476b71e6eed1478a61",
+      "response": "{\"findings\": [{\"file_path\": \"shop/repository.py\", \"line_number\": 22, \"category\": \"test coverage\", \"severity\": \"warning\", \"body\": \"The updated find_order function now uses parameterized queries, but there are no tests verifying that the function correctly handles various input types, rejects SQL injection attempts, and behaves as expected for missing or invalid order IDs. Add unit tests covering valid IDs, non‑integer inputs, None, and malicious strings to ensure security and correctness.\", \"suggested_fix\": \"Create tests such as:\\n\\n```python\\ndef test_find_order_valid_id(db_conn):\\n    # insert known order, then call find_order and assert result\\n    \\ndef test_find_order_sql_injection(db_conn):\\n    malicious_id = \\\"1; DROP TABLE orders;--\\\"\\n    result = repository.find_order(db_conn, malicious_id)\\n    # assert that no exception is raised and no injection occurs\\n\\ndef test_find_order_invalid_type(db_conn):\\n    with pytest.raises(TypeError):\\n        repository.find_order(db_conn, None)\\n```\\nThese tests will confirm the parameterization works and improve coverage.\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 689,
-      "completion_tokens": 397
+      "prompt_tokens": 727,
+      "completion_tokens": 452,
+      "provider": "groq"
     }
-  ]
+  ],
+  "recorded_utc": "2026-11-06T17:58:14Z"
 }

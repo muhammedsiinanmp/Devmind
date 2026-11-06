@@ -167,6 +167,18 @@ def test_missing_cassette_counts_as_a_miss(tmp_path, after):
     assert "Prompt changed" in eval_compare.render(after, current)
 
 
+def test_committed_cassettes_replay_to_the_reference_run():
+    """The CI reference (after-a7.json) is what the committed cassettes give."""
+    reference = json.loads((RESULTS / "after-a7.json").read_text())
+    current = _replay(CASSETTES, None)
+    assert current["errors"] == {}
+    report = eval_compare.render(reference, current, "after-a7.json")
+    assert "**No metric changed** against after-a7.json." in report
+    assert [c["posted_findings"] for c in current["cases"]] == [
+        c["posted_findings"] for c in reference["cases"]
+    ]
+
+
 def test_main_prints_report_and_rejects_bad_input(tmp_path, capsys):
     base = str(RESULTS / "after-fixes.json")
     assert eval_compare.main([base, base]) == 0
