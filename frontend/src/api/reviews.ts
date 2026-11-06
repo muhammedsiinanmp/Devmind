@@ -1,4 +1,5 @@
 import apiClient from "./client";
+import type { CommentFeedback } from "../lib/commentFeedback";
 
 export interface Review {
   id: number;
@@ -21,6 +22,7 @@ export interface ReviewComment {
   severity: "info" | "warning" | "error" | "critical";
   body: string;
   suggested_fix: string | null;
+  feedback?: CommentFeedback | null;
 }
 
 export interface ReviewDetail extends Review {
