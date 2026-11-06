@@ -47,9 +47,4 @@ export const repositoriesApi = {
     const response = await apiClient.post("/repositories/connect/");
     return response.data;
   },
-
-  triggerScan: async (id: number): Promise<{ message: string; scan_id: number }> => {
-    const response = await apiClient.post(`/repositories/${id}/scan/`);
-    return response.data;
-  },
 };

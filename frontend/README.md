@@ -1,6 +1,6 @@
 # DevMind frontend
 
-The React single-page app for DevMind. You use it to sign in with GitHub, sync repositories and turn reviews on or off, browse AI reviews with a diff viewer, view scan reports and manage your own LLM provider keys (BYOK).
+The React single-page app for DevMind. You use it to sign in with GitHub, sync repositories and turn reviews on or off, browse AI reviews with a diff viewer and manage your own LLM provider keys (BYOK).
 
 ## Stack
 
@@ -27,7 +27,7 @@ pnpm lint       # eslint .
 pnpm preview    # serve the production build locally
 ```
 
-CI (`.github/workflows/ci.yml`) runs `pnpm exec tsc -p tsconfig.app.json --noEmit`, `pnpm build`, `pnpm lint` and `pnpm test`. `pnpm test` runs Vitest, which currently covers only the review status polling loop (`src/lib/reviewStatusPolling.test.ts`).
+CI (`.github/workflows/ci.yml`) runs `pnpm exec tsc -p tsconfig.app.json --noEmit`, `pnpm build`, `pnpm lint` and `pnpm test`. `pnpm test` runs Vitest, which currently covers only the review status polling loop (`src/lib/reviewStatusPolling.test.ts`) and a check that the removed scan page and API stay removed (`src/api/scanRemoved.test.ts`).
 
 ## How it talks to the backend
 
@@ -51,7 +51,6 @@ Routes come from `src/App.tsx`. Every route except `/login` and `/auth/callback`
 | `/`, `/dashboard` | Review list |
 | `/reviews/:id` | Review detail with diff and inline comments |
 | `/repositories` | Connected repositories, GitHub sync, per-repo review toggle |
-| `/scans/:id` | Scan status/report, with a re-scan button |
 | `/settings` | BYOK LLM provider management |
 
 ## Docker

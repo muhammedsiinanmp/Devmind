@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.utils.html import format_html
 
-from apps.reviews.models import RepoScan, Review, ReviewComment, ReviewRun
+from apps.reviews.models import Review, ReviewComment, ReviewRun
 
 
 class ReviewCommentInline(admin.TabularInline):
@@ -183,62 +183,4 @@ class ReviewAdmin(admin.ModelAdmin):
         return True
 
 
-class RepoScanAdmin(admin.ModelAdmin):
-    """Admin for RepoScan model."""
-
-    list_display = [
-        "id",
-        "repository",
-        "triggered_by",
-        "status",
-        "progress_bar",
-        "created_at",
-    ]
-    list_filter = ["status"]
-    search_fields = ["repository__full_name"]
-    readonly_fields = [
-        "id",
-        "repository",
-        "triggered_by",
-        "status",
-        "progress",
-        "total_files",
-        "files_scanned",
-        "total_issues",
-        "critical_count",
-        "warning_count",
-        "info_count",
-        "scan_duration_ms",
-        "created_at",
-        "completed_at",
-    ]
-    ordering = ["-created_at"]
-
-    @admin.display(description="Progress")
-    def progress_bar(self, obj: RepoScan) -> str:
-        """Display progress as progress bar."""
-        if obj.total_files == 0:
-            return format_html("0%")
-
-        return format_html(
-            '<div style="width: 100px; background-color: #e9ecef; '
-            'border-radius: 4px; overflow: hidden;">'
-            '<div style="width: {}%; background-color: #28a745; '
-            'height: 20px; text-align: center; color: white; font-size: 12px;">'
-            "{}%"
-            "</div></div>",
-            obj.progress,
-            obj.progress,
-        )
-
-    def has_add_permission(self, request) -> bool:
-        return False
-
-    def has_change_permission(self, request, obj=None) -> bool:
-        if obj is None:
-            return True
-        return obj.status != "completed"
-
-
 admin.site.register(Review, ReviewAdmin)
-admin.site.register(RepoScan, RepoScanAdmin)
