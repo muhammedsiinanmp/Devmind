@@ -2,28 +2,32 @@
   "version": 1,
   "case_id": "jwt-signature-disabled",
   "case_sha256": "0b5b658ee1d8fcbabfa287905a25db1181ed0a714fbb517a1c2e28ee3d39c16f",
-  "latency_ms": 2088,
+  "latency_ms": 1261,
   "calls": [
     {
-      "prompt_sha256": "e701404ef64ce2ab17cb30a171f1dd764f1d13a4e9478648cc92fc480f24fff2",
-      "response": "{\"findings\":[{\"file_path\":\"auth/tokens.py\",\"line_number\":12,\"category\":\"security\",\"severity\":\"critical\",\"body\":\"Disabling JWT signature verification (options={\\\"verify_signature\\\": False}) allows attackers to forge tokens and bypass authentication, creating a severe security vulnerability.\",\"suggested_fix\":\"claims = jwt.decode(token, SECRET, algorithms=[\\\"HS256\\\"])\"}]}",
+      "prompt_sha256": "8bb5351586a5c0d8f59a4a46e03cd6cfba1670ea2247004ec4f1361e04494a87",
+      "response": "{\"findings\": [{\"file_path\": \"auth/tokens.py\", \"line_number\": 12, \"category\": \"security\", \"severity\": \"critical\", \"body\": \"Signature verification is disabled by passing options={\\\"verify_signature\\\": False}. This allows attackers to forge tokens and bypass authentication.\", \"suggested_fix\": \"claims = jwt.decode(token, SECRET, algorithms=[\\\"HS256\\\"])\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 673,
-      "completion_tokens": 240
+      "prompt_tokens": 715,
+      "completion_tokens": 252,
+      "provider": "groq"
     },
     {
-      "prompt_sha256": "d27feaa3237ed7ad06a509eb6bfb4182e1d3b29c7e5aa4b747313d780bdd2ba6",
-      "response": "{\"findings\": [{\"file_path\": \"auth/tokens.py\", \"line_number\": 12, \"category\": \"security\", \"severity\": \"critical\", \"body\": \"Signature verification is disabled by passing options={\\\"verify_signature\\\": False} to jwt.decode, allowing forged tokens and authentication bypass.\", \"suggested_fix\": \"Replace with jwt.decode(token, SECRET, algorithms=[\\\"HS256\\\"]) and ensure SECRET is securely managed.\"}]}",
+      "prompt_sha256": "adbfe577ada8820626b142eceb55d69488c6061f5bb1d9bb033dbdbbba2bdd06",
+      "response": "{\"findings\": [{\"file_path\": \"auth/tokens.py\", \"line_number\": 12, \"category\": \"security\", \"severity\": \"critical\", \"body\": \"Signature verification is disabled by passing options={\\\"verify_signature\\\": False} to jwt.decode, allowing forged tokens and authentication bypass.\", \"suggested_fix\": \"claims = jwt.decode(token, SECRET, algorithms=[\\\"HS256\\\"])\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 683,
-      "completion_tokens": 236
+      "prompt_tokens": 721,
+      "completion_tokens": 237,
+      "provider": "groq"
     },
     {
-      "prompt_sha256": "d099e5ce2e069f375c1694dbbb6f5cb9dd2748186968d3bad7587443168f034f",
-      "response": "{\"findings\": [{\"file_path\": \"auth/tokens.py\", \"line_number\": 12, \"category\": \"security\", \"severity\": \"critical\", \"body\": \"The change disables JWT signature verification by passing options={\\\"verify_signature\\\": False}. This allows attackers to forge tokens and bypass authentication, creating a severe security vulnerability.\", \"suggested_fix\": \"Replace the insecure decode with a verified one, e.g.:\\n```python\\nclaims = jwt.decode(token, SECRET, algorithms=[\\\"HS256\\\"])\\n```\\nHandle possible exceptions (e.g., jwt.InvalidTokenError) to ensure malformed or tampered tokens are rejected.\"}]}",
+      "prompt_sha256": "8c521f354009da0701fb7660210305b170ce8379fdd5b51484aa62d9f2432dec",
+      "response": "{\"findings\": [{\"file_path\": \"auth/tokens.py\", \"line_number\": 12, \"category\": \"security\", \"severity\": \"critical\", \"body\": \"Signature verification is disabled by passing options={\\\"verify_signature\\\": False} to jwt.decode, allowing attackers to forge tokens and bypass authentication.\", \"suggested_fix\": \"claims = jwt.decode(token, SECRET, algorithms=[\\\"HS256\\\"])\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 677,
-      "completion_tokens": 289
+      "prompt_tokens": 711,
+      "completion_tokens": 283,
+      "provider": "groq"
     }
-  ]
+  ],
+  "recorded_utc": "2026-11-06T19:00:03Z"
 }

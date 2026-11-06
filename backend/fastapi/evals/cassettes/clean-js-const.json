@@ -2,28 +2,32 @@
   "version": 1,
   "case_id": "clean-js-const",
   "case_sha256": "20ed78c28f7439f82d5f935e4d599285caf0bc859637de4c532399ce2e5e420f",
-  "latency_ms": 3920,
+  "latency_ms": 1497,
   "calls": [
     {
-      "prompt_sha256": "8465b7f17dbefdcda59bcfc0f1de58bb8e7d9f3652c8500353fc80cc1ae1238b",
+      "prompt_sha256": "fbeef4e7616e8979db6525082effe1b09f6dd264f425a477265d52399a117602",
       "response": "{\"findings\": []}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 731,
-      "completion_tokens": 85
+      "prompt_tokens": 769,
+      "completion_tokens": 61,
+      "provider": "groq"
     },
     {
-      "prompt_sha256": "62d7db4120897d8ebd4d76f7c7c377524d0e71fc257d46239819fa8c89ca74cd",
-      "response": "{\"findings\":[{\"file_path\":\"web/src/format.js\",\"line_number\":1,\"category\":\"quality\",\"severity\":\"info\",\"body\":\"The function does not validate its input. If `cents` is not a number or is negative, the output may be incorrect or misleading.\",\"suggested_fix\":\"export function formatPrice(cents) {\\n  if (typeof cents !== 'number' || cents < 0 || !Number.isInteger(cents)) {\\n    throw new TypeError('cents must be a non‑negative integer');\\n  }\\n  const dollars = Math.floor(cents / 100);\\n  const rest = String(cents % 100).padStart(2, \\\"0\\\");\\n  return `$${dollars}.${rest}`;\\n}\"}]}",
+      "prompt_sha256": "adaaac051dbcd1841ef750742839540257ddbe6e713716a3811e11a850ea11aa",
+      "response": "{\"findings\": []}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 725,
-      "completion_tokens": 335
+      "prompt_tokens": 763,
+      "completion_tokens": 118,
+      "provider": "groq"
     },
     {
-      "prompt_sha256": "c1ddea27930cd66679cb9814c9bc1f00ec8d335dab5ed164d42214919dbcdb3b",
-      "response": "{\"findings\":[{\"file_path\":\"web/src/format.js\",\"line_number\":1,\"category\":\"testing\",\"severity\":\"warning\",\"body\":\"The function formatPrice lacks input validation (e.g., non‑numeric or negative values) and there are no unit tests covering these edge cases, which may lead to runtime errors or incorrect formatting.\",\"suggested_fix\":\"// Example validation\\nexport function formatPrice(cents) {\\n  if (typeof cents !== 'number' || !Number.isFinite(cents)) {\\n    throw new TypeError('cents must be a finite number');\\n  }\\n  if (cents < 0) {\\n    throw new RangeError('cents cannot be negative');\\n  }\\n  const dollars = Math.floor(cents / 100);\\n  const rest = String(cents % 100).padStart(2, \\\"0\\\");\\n  return `$${dollars}.${rest}`;\\n}\\n\\n// Add corresponding Jest tests covering:\\n// - typical values (e.g., 123 => $1.23)\\n// - zero cents\\n// - large numbers\\n// - negative input (expect error)\\n// - non‑numeric input (expect error)\"}]}",
+      "prompt_sha256": "3ff103104f809e2445b3dd9e28371b86e98a8353fad7e0fc6a6b941400da9df7",
+      "response": "{\"findings\": [{\"file_path\": \"web/src/format.js\", \"line_number\": 2, \"category\": \"test\", \"severity\": \"warning\", \"body\": \"The `formatPrice` function lacks test coverage for edge cases such as negative values, non‑numeric inputs, and non‑integer cents. Without tests, regressions or unexpected behavior may go unnoticed.\", \"suggested_fix\": null}]}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 721,
-      "completion_tokens": 489
+      "prompt_tokens": 759,
+      "completion_tokens": 324,
+      "provider": "groq"
     }
-  ]
+  ],
+  "recorded_utc": "2026-11-06T17:55:41Z"
 }

@@ -2,28 +2,32 @@
   "version": 1,
   "case_id": "clean-rename-variable",
   "case_sha256": "b2d764c04c2858371718b4f763864a02407bd2f6174c6edad1b15e3527ce3c83",
-  "latency_ms": 2733,
+  "latency_ms": 2171,
   "calls": [
     {
-      "prompt_sha256": "7d6fbfcd509894aa3f6760108d992b236d1fabcf93da06f6c09e8b52c60846c4",
+      "prompt_sha256": "5a058c887d351f5cbccdea2ba65a8ae6916b5399c529427ca812bff5e11345e0",
       "response": "{\"findings\": []}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 691,
-      "completion_tokens": 109
+      "prompt_tokens": 729,
+      "completion_tokens": 107,
+      "provider": "groq"
     },
     {
-      "prompt_sha256": "58451cd8a497c70bd6522e68ceb9c751ae1f5a79f8ed7ebf4f3462206a270c46",
-      "response": "{\"findings\": [{\"file_path\": \"stats/summary.py\", \"line_number\": 5, \"category\": \"test coverage\", \"severity\": \"warning\", \"body\": \"The `mean` function now returns 0.0 for empty input, but there is no test verifying this edge case. Adding a test for an empty list ensures the conditional logic works as intended.\", \"suggested_fix\": \"Add a unit test, e.g.\\n\\n```python\\ndef test_mean_empty():\\n    assert summary.mean([]) == 0.0\\n```\"}]}",
+      "prompt_sha256": "ffc09d32e3d62cb039bd61a0a0a97b6a9b2a97bd03c83992dc82c96dbb2df7aa",
+      "response": "{\"findings\":[{\"file_path\":\"stats/summary.py\",\"line_number\":5,\"category\":\"performance\",\"severity\":\"info\",\"body\":\"Computes sum before checking if values is empty, causing unnecessary work for empty iterables.\",\"suggested_fix\":\"if not values:\\n    return 0.0\\ntotal = sum(values)\\nreturn total / len(values)\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 681,
-      "completion_tokens": 308
+      "prompt_tokens": 723,
+      "completion_tokens": 442,
+      "provider": "groq"
     },
     {
-      "prompt_sha256": "fcf7de564f3ef76208df44170550647dc9192dba47604716e14b6bb5f91224a0",
-      "response": "{\"findings\": [{\"file_path\": \"stats/summary.py\", \"line_number\": 5, \"category\": \"quality\", \"severity\": \"info\", \"body\": \"Introduces an unnecessary variable 'total' when the value can be used directly in the return expression, adding minor overhead and reducing readability.\", \"suggested_fix\": \"Replace lines 5-6 with:\\n    return sum(values) / len(values) if values else 0.0\"}]}",
+      "prompt_sha256": "8af7f26a83a9b4df67aa7fb2fe321246dbb00ea39253f4a6d1199edc01cfc113",
+      "response": "{\"findings\": [{\"file_path\": \"stats/summary.py\", \"line_number\": 4, \"category\": \"test coverage\", \"severity\": \"warning\", \"body\": \"The `mean` function lacks unit tests for several edge cases: empty input, single-element lists, lists with negative or floating‑point numbers, and non‑numeric inputs that should raise a TypeError. Adding these tests will ensure the recent refactor does not introduce regressions.\", \"suggested_fix\": \"Create or extend tests, e.g.\\n```python\\nimport pytest\\nfrom stats.summary import mean\\n\\ndef test_mean_empty():\\n    assert mean([]) == 0.0\\n\\ndef test_mean_single():\\n    assert mean([5]) == 5.0\\n\\ndef test_mean_multiple():\\n    assert mean([1, 2, 3, 4]) == 2.5\\n\\ndef test_mean_negative_and_floats():\\n    assert mean([-1.5, 2.5, 3]) == pytest.approx(1.3333333333)\\n\\ndef test_mean_non_numeric_raises():\\n    with pytest.raises(TypeError):\\n        mean([1, 'a', 3])\\n```\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 685,
-      "completion_tokens": 460
+      "prompt_tokens": 719,
+      "completion_tokens": 686,
+      "provider": "groq"
     }
-  ]
+  ],
+  "recorded_utc": "2026-11-06T17:59:31Z"
 }

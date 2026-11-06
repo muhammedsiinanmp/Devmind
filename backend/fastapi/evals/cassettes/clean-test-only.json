@@ -2,28 +2,32 @@
   "version": 1,
   "case_id": "clean-test-only",
   "case_sha256": "6de7d5b76d4fd64e38a38ed71f9a46b98cc3aab88945af803a060f243ccb1d18",
-  "latency_ms": 2075,
+  "latency_ms": 2290,
   "calls": [
     {
-      "prompt_sha256": "a44ced53e676b639974122ac6131a0e67c440daebd7a9051a3edd0fcc734afa4",
+      "prompt_sha256": "c8fd529af96fe2ecb2385870df4e1cc0b666062889c6bbc939de8c13db281109",
       "response": "{\"findings\": []}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 718,
-      "completion_tokens": 70
+      "prompt_tokens": 756,
+      "completion_tokens": 70,
+      "provider": "groq"
     },
     {
-      "prompt_sha256": "b6473f760f33a73fbd6580631c7c363804b809d82c36b9add0925fd03e1a3123",
+      "prompt_sha256": "cad1a4b98891f50ecb47acfc7ba8c21a7de0476c369fd59387e36a1d62d295a0",
+      "response": "{\"findings\": [{\"file_path\": \"tests/test_window.py\", \"line_number\": 10, \"category\": \"coverage\", \"severity\": \"warning\", \"body\": \"The new test only covers the case where the window width equals the list length. Edge cases such as width greater than the list length, width of zero, empty input list, and width of one are not tested, potentially leaving bugs undiscovered.\", \"suggested_fix\": \"Add additional test cases, e.g.\\n\\n```python\\ndef test_moving_sum_width_greater_than_length():\\n    # Assuming the function should raise a ValueError when width > len(seq)\\n    with pytest.raises(ValueError):\\n        moving_sum([1, 2, 3], 5)\\n\\ndef test_moving_sum_width_zero():\\n    with pytest.raises(ValueError):\\n        moving_sum([1, 2, 3], 0)\\n\\ndef test_moving_sum_empty_list():\\n    assert moving_sum([], 3) == []\\n\\ndef test_moving_sum_width_one():\\n    assert moving_sum([1, 2, 3], 1) == [1, 2, 3]\\n```\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 746,
+      "completion_tokens": 538,
+      "provider": "groq"
+    },
+    {
+      "prompt_sha256": "835b3d8cf2c825a29d86d0416c3131a154a9a5939c4a79ec7805997c3fa9f776",
       "response": "{\"findings\": []}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 712,
-      "completion_tokens": 230
-    },
-    {
-      "prompt_sha256": "4b73ce3b41d03d7b66715ec8070a58db200c03ee575e319ceeb9fc0180ef9299",
-      "response": "{\"findings\":[{\"file_path\":\"tests/test_window.py\",\"line_number\":10,\"category\":\"test coverage\",\"severity\":\"warning\",\"body\":\"The new test only covers the case where the window width equals the list length. Additional edge cases are not tested, such as width zero, width larger than the list, empty input list, negative or non‑integer width, and invalid input types. These scenarios are important for robust behavior and error handling.\",\"suggested_fix\":\"def test_moving_sum_width_zero():\\n    with pytest.raises(ValueError):\\n        moving_sum([1, 2, 3], 0)\\n\\ndef test_moving_sum_width_greater_than_length():\\n    assert moving_sum([1, 2], 5) == []\\n\\ndef test_moving_sum_empty_list():\\n    assert moving_sum([], 3) == []\\n\\ndef test_moving_sum_negative_width():\\n    with pytest.raises(ValueError):\\n        moving_sum([1, 2, 3], -1)\\n\\ndef test_moving_sum_non_integer_width():\\n    with pytest.raises(TypeError):\\n        moving_sum([1, 2, 3], 2.5)\\n\\ndef test_moving_sum_invalid_input_type():\\n    with pytest.raises(TypeError):\\n        moving_sum('123', 2)\\n\"}]}",
-      "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 708,
-      "completion_tokens": 552
+      "prompt_tokens": 750,
+      "completion_tokens": 245,
+      "provider": "groq"
     }
-  ]
+  ],
+  "recorded_utc": "2026-11-06T18:00:48Z"
 }

@@ -2,28 +2,32 @@
   "version": 1,
   "case_id": "clean-docstring",
   "case_sha256": "281206231bdcd7abd7fdec98355262b70fd735d75354f0fbe60d549c3e6bc7d2",
-  "latency_ms": 2149,
+  "latency_ms": 3196,
   "calls": [
     {
-      "prompt_sha256": "aef4b21cac01da2db4c8921f2223fbe577f94392bc5cc7769b695afa51619f07",
+      "prompt_sha256": "bb9f853991e519cc11f1bf81473140a9c8b18f52262c2da794fb38a6fce2ec25",
       "response": "{\"findings\": []}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 685,
-      "completion_tokens": 49
+      "prompt_tokens": 723,
+      "completion_tokens": 59,
+      "provider": "groq"
     },
     {
-      "prompt_sha256": "3a58103979bc0843598cfb44add499d87de7c080e5e429381d66e9b9ff2faa20",
-      "response": "{\"findings\": [{\"file_path\": \"geo/distance.py\", \"line_number\": 8, \"category\": \"quality\", \"severity\": \"warning\", \"body\": \"Docstring indentation uses 5 spaces, which is inconsistent with the standard 4‑space indentation and may cause style violations.\", \"suggested_fix\": \"    \\\"\\\"\\\"Return the Manhattan distance between two (x, y) points.\\\"\\\"\\\"\"}, {\"file_path\": \"geo/distance.py\", \"line_number\": 9, \"category\": \"quality\", \"severity\": \"warning\", \"body\": \"The return statement is indented with only two spaces, breaking PEP 8 indentation rules.\", \"suggested_fix\": \"    return abs(a[0] - b[0]) + abs(a[1] - b[1])\"}]}",
+      "prompt_sha256": "6656f826ddf78c62caaf3d640e21bd79cd41693811c9427b384c124fedbd10c7",
+      "response": "{\"findings\": [{\"file_path\": \"geo/distance.py\", \"line_number\": 8, \"category\": \"quality\", \"severity\": \"warning\", \"body\": \"Indentation of the added docstring line is inconsistent with the function body (5 spaces instead of 4), which may cause an IndentationError.\", \"suggested_fix\": \"    \\\"\\\"\\\"Return the Manhattan distance between two (x, y) points.\\\"\\\"\\\"\"}, {\"file_path\": \"geo/distance.py\", \"line_number\": 9, \"category\": \"quality\", \"severity\": \"info\", \"body\": \"The function lacks type hints and input validation for the expected tuple/list of length 2.\", \"suggested_fix\": \"def manhattan(a: tuple[float, float], b: tuple[float, float]) -> float:\\n    \\\"\\\"\\\"Return the Manhattan distance between two (x, y) points.\\\"\\\"\\\"\\n    if len(a) != 2 or len(b) != 2:\\n        raise ValueError(\\\"Both points must be 2-dimensional.\\\")\\n    return abs(a[0] - b[0]) + abs(a[1] - b[1])\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 679,
-      "completion_tokens": 414
+      "prompt_tokens": 717,
+      "completion_tokens": 472,
+      "provider": "groq"
     },
     {
-      "prompt_sha256": "f320d2de9485258a9766e50dddffa1d5fd35fddf7022d9d5762c5d78ff83dab5",
-      "response": "{\"findings\":[{\"file_path\":\"geo/distance.py\",\"line_number\":7,\"category\":\"test coverage\",\"severity\":\"warning\",\"body\":\"The manhattan function lacks dedicated unit tests, risking undetected bugs for edge cases such as negative coordinates or identical points.\",\"suggested_fix\":\"Add tests in tests/test_distance.py, e.g.,\\n\\ndef test_manhattan_basic():\\n    assert manhattan((0,0), (3,4)) == 7\\n\\ndef test_manhattan_negative():\\n    assert manhattan((-1,-2), (3,4)) == 10\\n\\ndef test_manhattan_same_point():\\n    assert manhattan((5,5), (5,5)) == 0\"}]}",
+      "prompt_sha256": "8e4443709513be80450d89c0daad2f7085c7aee5158c86900822d7ceea0112b5",
+      "response": "{\"findings\": [{\"file_path\": \"geo/distance.py\", \"line_number\": 7, \"category\": \"test coverage\", \"severity\": \"warning\", \"body\": \"The manhattan function now has a docstring but there are no unit tests exercising it. Tests should cover typical cases (e.g., (0,0)-(1,2)), edge cases (zero distance, negative coordinates, large values) and invalid inputs (non‑numeric or wrong length sequences) to ensure correctness and robust error handling.\", \"suggested_fix\": \"Create tests in tests/test_distance.py, e.g.:\\n\\n```python\\nimport pytest\\nfrom geo.distance import manhattan\\n\\ndef test_manhattan_basic():\\n    assert manhattan((0, 0), (1, 2)) == 3\\n    assert manhattan((-1, -2), (3, 4)) == 10\\n\\ndef test_manhattan_zero():\\n    assert manhattan((5, 5), (5, 5)) == 0\\n\\ndef test_manhattan_invalid():\\n    with pytest.raises(TypeError):\\n        manhattan((1, 2, 3), (4, 5))\\n    with pytest.raises(TypeError):\\n        manhattan('a', (1, 2))\\n```\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 675,
-      "completion_tokens": 574
+      "prompt_tokens": 713,
+      "completion_tokens": 564,
+      "provider": "groq"
     }
-  ]
+  ],
+  "recorded_utc": "2026-11-06T17:53:05Z"
 }

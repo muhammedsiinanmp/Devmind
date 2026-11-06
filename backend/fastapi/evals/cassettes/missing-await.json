@@ -2,28 +2,32 @@
   "version": 1,
   "case_id": "missing-await",
   "case_sha256": "f26f705d591fc3d7bbc491df8d7909ca926e8fbcb4ce693c4c42629c1ac07c97",
-  "latency_ms": 1886,
+  "latency_ms": 1402,
   "calls": [
     {
-      "prompt_sha256": "0a5d71d9cd62d50f26a1c2d252ab39a6fab75dfb56118340d684892b5d49d234",
-      "response": "{\"findings\":[{\"file_path\":\"web/src/settings.ts\",\"line_number\":22,\"category\":\"quality\",\"severity\":\"warning\",\"body\":\"The async function onSubmit no longer awaits the promise returned by api.saveSettings, which can lead to unhandled promise rejections and the toast being shown before the settings are actually saved.\",\"suggested_fix\":\"    try {\\n        await api.saveSettings(form);\\n        toast(\\\"Saved\\\");\\n    } catch (error) {\\n        console.error('Failed to save settings:', error);\\n        toast('Failed to save settings');\\n    }\"}]}",
+      "prompt_sha256": "ad69ac350203b752c6c1e036e32f21e40cd4a80491e3b72d25f093f0f50842e7",
+      "response": "{\"findings\": []}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 685,
-      "completion_tokens": 281
+      "prompt_tokens": 723,
+      "completion_tokens": 119,
+      "provider": "groq"
     },
     {
-      "prompt_sha256": "d47f0fb5568ca79506c2c41174a14a589827c26fd56b3cb28ecaf040f2105eb6",
-      "response": "{\"findings\":[{\"file_path\":\"web/src/settings.ts\",\"line_number\":22,\"category\":\"correctness\",\"severity\":\"error\",\"body\":\"The call to api.saveSettings(form) is no longer awaited, causing the function to continue before the settings are saved and potentially leading to unhandled promise rejections. This also means the toast is shown regardless of success or failure of the save operation.\",\"suggested_fix\":\"await api.saveSettings(form);\"}]}",
+      "prompt_sha256": "e940dc6536e2f2e61c72b3f5d467302293ff516cae6be71be89c1d059041ed40",
+      "response": "{\"findings\": [{\"file_path\": \"web/src/settings.ts\", \"line_number\": 22, \"category\": \"correctness\", \"severity\": \"error\", \"body\": \"The removal of 'await' before api.saveSettings means the function no longer waits for the settings to be saved before showing the toast. This can lead to the UI indicating success before the operation completes and any errors from saveSettings will be unhandled, potentially causing silent failures.\", \"suggested_fix\": \"await api.saveSettings(form);\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 679,
-      "completion_tokens": 291
+      "prompt_tokens": 717,
+      "completion_tokens": 313,
+      "provider": "groq"
     },
     {
-      "prompt_sha256": "9f37a7d21c246a9d59b76d16394a2e91a6af6b28d90b99d0dc00007dce15677d",
-      "response": "{\"findings\":[{\"file_path\":\"web/src/settings.ts\",\"line_number\":22,\"category\":\"correctness\",\"severity\":\"error\",\"body\":\"The await before api.saveSettings was removed, turning the call into a fire‑and‑forget promise. onSubmit may return before the settings are persisted, causing the toast to show prematurely and any rejection to be unhandled.\",\"suggested_fix\":\"await api.saveSettings(form);\"},{\"file_path\":\"web/src/settings.ts\",\"line_number\":20,\"category\":\"test coverage\",\"severity\":\"warning\",\"body\":\"There is no test verifying that onSubmit waits for api.saveSettings to complete before showing the toast or handling errors. This behavior is now broken by the change.\",\"suggested_fix\":\"Add a unit test that mocks api.saveSettings to return a resolved/rejected promise and asserts that toast is called only after the promise resolves and that errors are propagated or handled appropriately.\"}]}",
+      "prompt_sha256": "4e77d416b4c4b49232d07dcbba19da6e9f40e9bc62ebe180ce360794d363ec52",
+      "response": "{\"findings\": [{\"file_path\": \"web/src/settings.ts\", \"line_number\": 22, \"category\": \"test coverage\", \"severity\": \"error\", \"body\": \"The removal of `await` changes the function's asynchronous behavior, causing `toast(\\\"Saved\\\")` to execute before `api.saveSettings` completes. Existing tests may not verify this timing, leading to flaky UI behavior and unhandled promise rejections.\", \"suggested_fix\": \"Reintroduce `await` or add proper promise handling, e.g.,\\n```ts\\nawait api.saveSettings(form);\\n``` and ensure tests assert that the toast appears only after the save resolves.\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 675,
-      "completion_tokens": 439
+      "prompt_tokens": 713,
+      "completion_tokens": 331,
+      "provider": "groq"
     }
-  ]
+  ],
+  "recorded_utc": "2026-11-06T19:02:36Z"
 }
