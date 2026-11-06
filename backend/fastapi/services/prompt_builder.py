@@ -511,8 +511,15 @@ def render_diff(chunks: list, max_tokens: int) -> str:
     Shrinks the line budget until the rendering fits, so every file keeps its
     fair share. If file and hunk headers alone are too big, the text is cut
     at a line boundary as a last resort.
+
+    The line budget starts at the lines the diff can show (after the per-hunk
+    and per-file caps), not MAX_DIFF_LINES, so scaling it down shrinks the
+    rendering even when the diff is one large file.
     """
-    max_lines = MAX_DIFF_LINES
+    shown = sum(
+        len(_ranked_file_lines(c.hunks)) for c in chunks if getattr(c, "hunks", None)
+    )
+    max_lines = min(MAX_DIFF_LINES, shown) or MAX_DIFF_LINES
     text = format_diff_chunks(chunks, max_lines)
     for _ in range(6):
         tokens = count_tokens(text)
