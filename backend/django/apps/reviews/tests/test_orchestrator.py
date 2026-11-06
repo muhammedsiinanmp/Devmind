@@ -2,6 +2,7 @@
 Tests for Review Orchestrator.
 """
 
+import httpx
 import pytest
 from unittest.mock import Mock, patch, MagicMock
 from django.test import override_settings
@@ -127,7 +128,7 @@ class TestFastAPICall:
             assert len(result.comments) == 1
 
     @pytest.mark.django_db
-    def test_call_fastapi_503_error(self):
+    def test_call_fastapi_503_error(self, no_retry_wait):
         review = MagicMock()
         review.repository.full_name = "owner/repo"
 
@@ -236,3 +237,93 @@ class TestOrchestratorIntegration:
             review.refresh_from_db()
             assert review.status == "completed"
             assert result is not None
+
+
+@pytest.fixture
+def no_retry_wait():
+    """Skip tenacity's back-off sleeps; attempts are still counted."""
+    with patch.object(
+        ReviewOrchestrator._attempt_fastapi_call.retry, "sleep", lambda seconds: None
+    ):
+        yield
+
+
+def _orchestrator_with_client(mock_client) -> tuple[ReviewOrchestrator, MagicMock]:
+    review = MagicMock()
+    review.repository.full_name = "owner/repo"
+    review.pk = 1
+    post = mock_client.return_value.__enter__.return_value.post
+    return ReviewOrchestrator(review), post
+
+
+def _ok_response():
+    response = MagicMock(status_code=200)
+    response.json.return_value = {
+        "repo_full_name": "owner/repo",
+        "pr_number": 1,
+        "comments": [],
+        "risk_score": 0,
+        "files_reviewed": ["app.py"],
+        "files_skipped": [],
+    }
+    return response
+
+
+class TestFastAPIRetryPolicy:
+    def test_read_timeout_is_not_retried(self, no_retry_wait):
+        with patch("httpx.Client") as mock_client:
+            orchestrator, post = _orchestrator_with_client(mock_client)
+            post.side_effect = httpx.ReadTimeout("read timed out")
+
+            with pytest.raises(FastAPIError, match="may still be running"):
+                orchestrator._call_fastapi("diff")
+
+        assert post.call_count == 1
+
+    def test_connect_error_is_retried_then_succeeds(self, no_retry_wait):
+        with patch("httpx.Client") as mock_client:
+            orchestrator, post = _orchestrator_with_client(mock_client)
+            post.side_effect = [httpx.ConnectError("refused"), _ok_response()]
+
+            result = orchestrator._call_fastapi("diff")
+
+        assert post.call_count == 2
+        assert result.files_reviewed == ["app.py"]
+
+    @pytest.mark.parametrize("status_code", [429, 500, 502, 503, 504])
+    def test_429_and_5xx_are_retried_three_times(self, no_retry_wait, status_code):
+        with patch("httpx.Client") as mock_client:
+            orchestrator, post = _orchestrator_with_client(mock_client)
+            post.return_value = MagicMock(status_code=status_code)
+
+            with pytest.raises(FastAPIError, match="after 3 attempts"):
+                orchestrator._call_fastapi("diff")
+
+        assert post.call_count == 3
+
+    @pytest.mark.parametrize("status_code", [400, 403, 422])
+    def test_other_errors_are_not_retried(self, no_retry_wait, status_code):
+        with patch("httpx.Client") as mock_client:
+            orchestrator, post = _orchestrator_with_client(mock_client)
+            post.return_value = MagicMock(status_code=status_code, text="no")
+
+            with pytest.raises(FastAPIError):
+                orchestrator._call_fastapi("diff")
+
+        assert post.call_count == 1
+
+
+class TestTimeoutCheck:
+    def test_default_timeout_is_above_the_review_deadline(self):
+        from apps.reviews.checks import check_fastapi_timeout_exceeds_review_deadline
+
+        assert check_fastapi_timeout_exceeds_review_deadline(None) == []
+
+    @override_settings(FASTAPI_TIMEOUT_SECONDS=60, REVIEW_DEADLINE_SECONDS=100)
+    def test_warns_when_timeout_is_not_above_the_deadline(self):
+        from django.core.checks import run_checks
+
+        warnings = [w for w in run_checks() if w.id == "reviews.W001"]
+
+        assert len(warnings) == 1
+        assert "FASTAPI_TIMEOUT_SECONDS (60)" in warnings[0].msg

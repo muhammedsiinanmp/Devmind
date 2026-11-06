@@ -20,7 +20,12 @@ logger = logging.getLogger(__name__)
 
 
 class _RetryableFastAPIError(Exception):
-    """Transient error (503 / timeout) that tenacity should retry."""
+    """
+    Error that tenacity should retry: FastAPI couldn't be reached, or it
+    answered 429 or 5xx. A read timeout is not retryable: the request was
+    sent, so FastAPI may still be reviewing, and a retry would start a second
+    review of the same diff.
+    """
 
     pass
 
@@ -151,8 +156,8 @@ class ReviewOrchestrator:
             raise FastAPIError(f"Failed to fetch diff: {e}")
 
     def _call_fastapi(self, diff: str) -> ReviewResult:
-        """Call FastAPI /review/analyze. Transient 503/timeout errors are
-        retried with exponential back-off via tenacity."""
+        """Call FastAPI /review/analyze. Connection errors, 429 and 5xx are
+        retried with exponential back-off via tenacity; a read timeout isn't."""
         if not self.fastapi_secret:
             raise FastAPIError(
                 "FASTAPI_INTERNAL_SECRET is empty — the FastAPI service will "
@@ -191,8 +196,14 @@ class ReviewOrchestrator:
                     json=payload,
                     headers=headers,
                 )
+        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout) as exc:
+            # Nothing reached FastAPI, so retrying can't start a second review.
+            raise _RetryableFastAPIError(f"could not reach FastAPI: {exc}")
         except httpx.TimeoutException:
-            raise _RetryableFastAPIError(f"FastAPI timed out after {self.timeout}s")
+            raise FastAPIError(
+                f"FastAPI did not answer within {self.timeout:g}s. The review "
+                "may still be running, so it is not retried now."
+            )
         except httpx.HTTPError as exc:
             raise FastAPIError(f"FastAPI HTTP error: {exc}")
 
@@ -221,12 +232,14 @@ class ReviewOrchestrator:
             )
 
         if response.status_code == 429:
-            raise FastAPIError(
-                "LLM providers rate limited (429). Celery will retry in 60s."
+            raise _RetryableFastAPIError(
+                f"LLM providers rate limited (429) for review_id={self.review.pk}"
             )
 
-        if response.status_code == 503:
-            raise _RetryableFastAPIError(f"FastAPI 503 for review_id={self.review.pk}")
+        if response.status_code >= 500:
+            raise _RetryableFastAPIError(
+                f"FastAPI {response.status_code} for review_id={self.review.pk}"
+            )
 
         raise FastAPIError(
             f"FastAPI error {response.status_code}: {response.text[:200]}"
