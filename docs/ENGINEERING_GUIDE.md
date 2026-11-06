@@ -73,6 +73,8 @@ docker compose exec fastapi uv run python -m scripts.providers_check
 
 For each provider with a key set, it lists the provider's models and sends one chat request of a few tokens, then prints the provider, model, whether the model is listed, the result (`ok`, or the HTTP status, with `model_not_found` for 404 and `rate_limited` for 429) and the latency. On a 404 it also prints the first 150 characters of the provider's error message, with keys redacted before truncation. It never prints keys or other response bodies. It exits 1 if no provider completes the chat request.
 
+When `GOOGLE_AI_API_KEY` is set, it also embeds one short text through `VectorStore`, the code path reviews use. It prints the embedding model, HTTP status, returned dimension against the expected one (`768/768`), latency and the result. Any error, or a dimension other than 768, prints `EMBEDDING CHECK FAILED` and makes it exit 1, even when a chat provider works. The dimension is checked, not just the status, because on 2026-11-06 the API accepted `taskType` / `outputDimensionality` nested in `embedContentConfig` (the shape the v1beta discovery document prefers), ignored them, and returned 3072 values with HTTP 200. That's why `services/vector_store.py` still sends the deprecated top-level fields.
+
 **"Listed" doesn't mean usable.** Google lists models that are closed to new keys. For example, `gemini-2.5-flash` is listed but a newer key gets a 404 ("no longer available to new users"). The chat request in `make providers-check` is the authoritative check. The `listed` field in `/health` only shows that the provider still publishes the model ID.
 
 There's no server-side OpenAI provider. OpenAI keys can be added per user through the BYOK settings.
