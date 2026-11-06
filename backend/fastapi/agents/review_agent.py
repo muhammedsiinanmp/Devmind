@@ -4,13 +4,19 @@ LangGraph Review Agent.
 Three analyzers (security, quality, tests) run in parallel, one LLM call each,
 then synthesize deduplicates and ranks their findings. An analyzer repeats its
 call once only when the model's response can't be parsed.
+
+A diff too big for one prompt is split into batches of whole files
+(services/diff_batching.py); the graph runs once per batch and
+run_review_agent merges the batches' findings.
 """
 
+import asyncio
 import hashlib
 import json
 import logging
 import re
 import time
+from dataclasses import asdict
 from typing import Any
 
 from langgraph.graph import END, START, StateGraph
@@ -19,10 +25,12 @@ from agents.states import AnalyzerRun, ReviewState, ReviewComment
 from core.config import get_settings
 from models.review import ReviewFinding, ReviewFindings, Severity
 from services.code_parser import parse_diff
+from services.diff_batching import SKIP_DEADLINE, ReviewDeadlineError, plan_batches
 from services.llm_client import llm_client
 from services.prompt_builder import (
     PromptContext,
     build_review_prompt,
+    diff_token_budget,
     REVIEW_SYSTEM_PROMPT,
 )
 
@@ -277,26 +285,11 @@ async def synthesize(state: ReviewState) -> dict[str, Any]:
     """
     logger.info("synthesize")
 
-    all_comments = (
+    unique_comments = _dedupe_and_rank(
         state.get("security_comments", [])
         + state.get("quality_comments", [])
         + state.get("test_comments", [])
     )
-
-    seen = set()
-    unique_comments = []
-
-    for comment in all_comments:
-        key = (
-            comment.get("file_path", ""),
-            comment.get("line_number", 0),
-            comment.get("category", ""),
-        )
-        if key not in seen:
-            seen.add(key)
-            unique_comments.append(comment)
-
-    unique_comments.sort(key=lambda c: SEVERITY_ORDER.get(c.get("severity", "info"), 4))
 
     logger.info("synthesize unique=%d", len(unique_comments))
 
@@ -314,6 +307,25 @@ async def synthesize(state: ReviewState) -> dict[str, Any]:
         "synthesized_comments": unique_comments,
         "model_used": model_used,
     }
+
+
+def _dedupe_and_rank(comments: list[ReviewComment]) -> list[ReviewComment]:
+    """Keep the first comment per (file, line, category), most severe first."""
+    seen = set()
+    unique_comments = []
+
+    for comment in comments:
+        key = (
+            comment.get("file_path", ""),
+            comment.get("line_number", 0),
+            comment.get("category", ""),
+        )
+        if key not in seen:
+            seen.add(key)
+            unique_comments.append(comment)
+
+    unique_comments.sort(key=lambda c: SEVERITY_ORDER.get(c.get("severity", "info"), 4))
+    return unique_comments
 
 
 def build_review_graph():
@@ -341,6 +353,52 @@ def build_review_graph():
 review_graph = build_review_graph()
 
 
+def _merge_runs(runs: list[AnalyzerRun]) -> AnalyzerRun:
+    """One analyzer's runs over all batches: counts summed, parsed if all were."""
+    merged: AnalyzerRun = {
+        "model": next((r["model"] for r in runs if r.get("model")), ""),
+        "latency_ms": sum(r.get("latency_ms", 0) for r in runs),
+        "prompt_tokens": None,
+        "completion_tokens": None,
+        "attempts": sum(r.get("attempts", 0) for r in runs),
+        "parsed": all(r.get("parsed", False) for r in runs),
+    }
+    for key in ("prompt_tokens", "completion_tokens"):
+        values = [r[key] for r in runs if r.get(key) is not None]
+        if values:
+            merged[key] = sum(values)
+    return merged
+
+
+def _merge_batch_results(results: list[dict[str, Any]]) -> dict[str, Any]:
+    """
+    Combine the final states of several batches into one result.
+
+    Comments are deduplicated and ranked again over all batches, analyzer_runs
+    are summed per analyzer and model_used is the first batch's.
+    """
+    if len(results) == 1:
+        return dict(results[0])
+    merged: dict[str, Any] = {
+        key: [c for result in results for c in result.get(key, [])]
+        for key in ("security_comments", "quality_comments", "test_comments")
+    }
+    merged["synthesized_comments"] = _dedupe_and_rank(
+        [c for result in results for c in result.get("synthesized_comments", [])]
+    )
+    names = [n for n in ANALYZER_ORDER if any(n in r["analyzer_runs"] for r in results)]
+    merged["analyzer_runs"] = {
+        name: _merge_runs(
+            [r["analyzer_runs"][name] for r in results if name in r["analyzer_runs"]]
+        )
+        for name in names
+    }
+    merged["model_used"] = next(
+        (r["model_used"] for r in results if r.get("model_used")), ""
+    )
+    return merged
+
+
 async def run_review_agent(
     diff_text: str,
     repo_full_name: str,
@@ -348,10 +406,24 @@ async def run_review_agent(
     user_id: int = 0,
     diff_chunks: list | None = None,
     similar_patterns: list[str] | None = None,
-    prebuilt_prompt: str = "",
+    share_prompt: bool = False,
+    deadline_seconds: float | None = None,
 ) -> dict[str, Any]:
     """
     Run the full review agent.
+
+    The diff's files are planned into batches (services/diff_batching.py):
+    generated and vendored files are skipped, and the rest are packed into
+    batches that each fit one prompt. The analyzer graph runs once per batch,
+    at most review_max_concurrent_batches at a time, and the results are
+    merged. A diff that fits in one batch is reviewed exactly as before.
+
+    Batches still running when the deadline passes are cancelled; the
+    findings of finished batches are returned and the unfinished batches'
+    files are reported as skipped with reason "deadline". If no batch
+    finished (or the deadline had passed before any started),
+    ReviewDeadlineError is raised instead. If a batch fails, the other
+    batches are cancelled and its exception is raised.
 
     Args:
         diff_text: Git diff text
@@ -360,27 +432,142 @@ async def run_review_agent(
         user_id: User ID
         diff_chunks: Pre-parsed diff chunks (parsed from diff_text if empty)
         similar_patterns: Retrieved similar code for the security prompt
-        prebuilt_prompt: Prompt built by the router; overrides per-node prompts
+        share_prompt: Give all three analyzers the security prompt (the
+            batch's diff plus similar_patterns), as the router does
+        deadline_seconds: Time the batches may take (default:
+            review_deadline_seconds)
 
     Returns:
-        Final state, including synthesized_comments, analyzer_runs and
-        model_used
+        Final state, including synthesized_comments, analyzer_runs,
+        model_used, files_reviewed and files_skipped
+        (``[{"file_path", "reason"}]``)
     """
-    initial_state: ReviewState = {
-        "diff_text": diff_text,
-        "repo_full_name": repo_full_name,
-        "pr_number": pr_number,
-        "user_id": user_id,
-        "diff_chunks": diff_chunks or [],
-        "similar_patterns": similar_patterns or [],
-        "prebuilt_prompt": prebuilt_prompt,
-        "security_comments": [],
-        "quality_comments": [],
-        "test_comments": [],
-        "synthesized_comments": [],
-        "analyzer_runs": {},
-        "model_used": "",
-    }
+    settings = get_settings()
+    chunks = diff_chunks or parse_diff(diff_text)
+    patterns = similar_patterns or []
+    plan = plan_batches(
+        chunks,
+        diff_token_budget(PromptContext(diff_chunks=chunks, similar_patterns=patterns)),
+        settings.review_skip_patterns,
+        settings.review_max_batches,
+    )
+    if len(plan.batches) > 1 or plan.files_skipped:
+        logger.info(
+            "review.batches repo=%s pr=%s batches=%d reviewed=%d skipped=%d",
+            repo_full_name,
+            pr_number,
+            len(plan.batches),
+            len(plan.files_reviewed),
+            len(plan.files_skipped),
+        )
 
-    result = await review_graph.ainvoke(initial_state)
+    if deadline_seconds is None:
+        deadline_seconds = settings.review_deadline_seconds
+    semaphore = asyncio.Semaphore(settings.review_max_concurrent_batches)
+    # Set when a batch fails or the deadline passes, so a batch that was
+    # waiting for a slot doesn't start its LLM calls before it is cancelled.
+    stopped = False
+
+    async def review_batch(batch: list) -> dict[str, Any] | None:
+        nonlocal stopped
+        prompt = ""
+        if share_prompt:
+            prompt = build_review_prompt(
+                PromptContext(diff_chunks=batch, similar_patterns=patterns)
+            )
+        initial_state: ReviewState = {
+            "diff_text": diff_text,
+            "repo_full_name": repo_full_name,
+            "pr_number": pr_number,
+            "user_id": user_id,
+            "diff_chunks": batch,
+            "similar_patterns": patterns,
+            "prebuilt_prompt": prompt,
+            "security_comments": [],
+            "quality_comments": [],
+            "test_comments": [],
+            "synthesized_comments": [],
+            "analyzer_runs": {},
+            "model_used": "",
+        }
+        async with semaphore:
+            if stopped:
+                return None
+            try:
+                return await review_graph.ainvoke(initial_state)
+            except BaseException:
+                stopped = True
+                raise
+
+    if plan.batches and deadline_seconds <= 0:
+        # Don't start calls (or take rate-limit tokens) for a review that's over.
+        raise ReviewDeadlineError(
+            f"review deadline passed before any of {len(plan.batches)} batches started"
+        )
+    tasks = [asyncio.create_task(review_batch(batch)) for batch in plan.batches]
+    pending: set[asyncio.Task] = set()
+    try:
+        if tasks:
+            _, pending = await asyncio.wait(
+                tasks,
+                timeout=max(deadline_seconds, 0),
+                return_when=asyncio.FIRST_EXCEPTION,
+            )
+    finally:
+        # Also runs if this coroutine is cancelled, so no batch outlives it.
+        unfinished = [task for task in tasks if not task.done()]
+        if unfinished:
+            stopped = True
+            for task in unfinished:
+                task.cancel()
+            await asyncio.gather(*unfinished, return_exceptions=True)
+
+    failed = [
+        task
+        for task in tasks
+        if task not in pending and not task.cancelled() and task.exception()
+    ]
+    if failed:
+        # Its own exception, so callers can still catch it by type.
+        raise failed[0].exception()
+
+    finished = [
+        (batch, task.result())
+        for batch, task in zip(plan.batches, tasks)
+        if task not in pending and task.result() is not None
+    ]
+    timed_out = [batch for batch, task in zip(plan.batches, tasks) if task in pending]
+    if timed_out:
+        logger.warning(
+            "review.deadline repo=%s pr=%s deadline_s=%s finished=%d unfinished=%d",
+            repo_full_name,
+            pr_number,
+            deadline_seconds,
+            len(finished),
+            len(timed_out),
+        )
+    if timed_out and not finished:
+        # An empty result would look like a clean review of an unreviewed diff.
+        raise ReviewDeadlineError(
+            f"review deadline ({deadline_seconds:.0f}s) passed before any of "
+            f"{len(timed_out)} batches finished"
+        )
+
+    if finished:
+        result = _merge_batch_results([batch_result for _, batch_result in finished])
+    else:
+        result = {
+            "security_comments": [],
+            "quality_comments": [],
+            "test_comments": [],
+            "synthesized_comments": [],
+            "analyzer_runs": {},
+            "model_used": "",
+        }
+    result["files_reviewed"] = [c.file_path for batch, _ in finished for c in batch]
+    result["files_skipped"] = [asdict(skipped) for skipped in plan.files_skipped] + [
+        {"file_path": c.file_path, "reason": SKIP_DEADLINE}
+        for batch in timed_out
+        for c in batch
+    ]
     return result

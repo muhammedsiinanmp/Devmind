@@ -193,7 +193,11 @@ FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:5173")
 # FastAPI Internal
 FASTAPI_BASE_URL = env("FASTAPI_BASE_URL", default="http://fastapi:8001")
 FASTAPI_INTERNAL_SECRET = env("FASTAPI_INTERNAL_SECRET", default="")
-FASTAPI_TIMEOUT_SECONDS = env.int("FASTAPI_TIMEOUT_SECONDS", default=60)
+# How long the worker waits for POST /review/analyze. It must exceed
+# FastAPI's REVIEW_DEADLINE_SECONDS (read from the same .env), after which
+# FastAPI returns the batches it finished; check reviews.W001 warns if not.
+FASTAPI_TIMEOUT_SECONDS = env.int("FASTAPI_TIMEOUT_SECONDS", default=120)
+REVIEW_DEADLINE_SECONDS = env.float("REVIEW_DEADLINE_SECONDS", default=100)
 
 # Sentry
 SENTRY_DSN = env("SENTRY_DSN_DJANGO", default="")

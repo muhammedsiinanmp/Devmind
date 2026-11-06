@@ -371,3 +371,27 @@ class TestDiffBudget:
         assert "lines omitted from this diff]" in prompt
         for n in range(11):
             assert f"File: pkg/module_{n}.py" in prompt
+
+
+def test_one_oversized_file_shrinks_instead_of_being_cut():
+    # One 100-line file whose rendering is 1.2x the budget. Scaling the line
+    # budget down from 600 never got below its 100 lines, so the text was
+    # cut at a line boundary; starting from the file's own lines shrinks it.
+    from services.code_parser import parse_diff
+    from services.prompt_builder import render_diff
+
+    added = [
+        f"+value_{i} = compute(" + ", ".join(f"arg_{i}_{j}" for j in range(10)) + ")"
+        for i in range(1, 101)
+    ]
+    chunks = parse_diff(
+        "diff --git a/big.py b/big.py\n--- /dev/null\n+++ b/big.py\n"
+        "@@ -0,0 +1,100 @@\n" + "\n".join(added) + "\n"
+    )
+    budget = int(count_tokens(format_diff_chunks(chunks)) / 1.2)
+
+    text = render_diff(chunks, budget)
+
+    assert count_tokens(text) <= budget
+    assert "omitted to fit the prompt" not in text
+    assert text.endswith("lines omitted from this diff]")

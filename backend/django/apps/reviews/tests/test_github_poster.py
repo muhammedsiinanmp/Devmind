@@ -316,3 +316,127 @@ class TestPostGithubCommentsFunction:
 
         assert result == []
         mock_poster_class.assert_not_called()
+
+
+class TestCoverageLine:
+    def test_counts_reviewed_of_all_files(self):
+        from apps.reviews.services.github_poster import coverage_line
+
+        assert coverage_line(["a.py", "b.py"], []) == "Reviewed 2 of 2 files."
+
+    def test_names_skipped_files_with_reason(self):
+        from apps.reviews.services.github_poster import coverage_line
+
+        line = coverage_line(
+            ["a.py"],
+            [
+                {"file_path": "uv.lock", "reason": "generated"},
+                {"file_path": "z.py", "reason": "batch_limit"},
+            ],
+        )
+
+        assert line == (
+            "Reviewed 1 of 3 files. Not reviewed: `uv.lock` (generated or "
+            "vendored), `z.py` (over the review's batch limit)."
+        )
+
+    def test_long_skip_list_is_counted_after_twenty_names(self):
+        from apps.reviews.services.github_poster import coverage_line
+
+        skipped = [
+            {"file_path": f"vendor/m{i}.go", "reason": "generated"} for i in range(25)
+        ]
+
+        line = coverage_line([], skipped)
+
+        assert line.startswith("Reviewed 0 of 25 files.")
+        assert "`vendor/m19.go`" in line
+        assert "`vendor/m20.go`" not in line
+        assert line.endswith(", 5 more.")
+
+    def test_no_line_when_coverage_is_not_reported(self):
+        from apps.reviews.services.github_poster import coverage_line
+
+        assert coverage_line(None, []) == ""
+
+
+class TestPostedSummaryIncludesCoverage:
+    @pytest.mark.django_db
+    def test_posted_review_body_says_reviewed_x_of_y_files(self):
+        """FastAPI's coverage goes through the orchestrator into the posted body."""
+        from apps.reviews.services.github_poster import post_github_comments
+        from apps.reviews.services.orchestrator import ReviewOrchestrator
+
+        review = ReviewFactory(status="pending")
+        fastapi_response = Mock(status_code=200)
+        fastapi_response.json.return_value = {
+            "repo_full_name": review.repository.full_name,
+            "pr_number": review.pr_number,
+            "comments": [
+                {
+                    "file_path": "app.py",
+                    "line_number": 2,
+                    "category": "security",
+                    "severity": "critical",
+                    "body": "Command injection",
+                }
+            ],
+            "risk_score": 70,
+            "model_used": "groq/model",
+            "provider": "groq",
+            "latency_ms": 10,
+            "files_reviewed": ["app.py", "lib.py"],
+            "files_skipped": [{"file_path": "uv.lock", "reason": "generated"}],
+        }
+        with (
+            patch("httpx.Client") as client,
+            patch.object(ReviewOrchestrator, "_fetch_diff", return_value="diff"),
+            patch.object(ReviewOrchestrator, "_trigger_github_post"),
+        ):
+            client.return_value.__enter__.return_value.post.return_value = (
+                fastapi_response
+            )
+            ReviewOrchestrator(review).run()
+
+        with patch(
+            "apps.reviews.services.github_poster.requests.Session"
+        ) as session_class:
+            session = session_class.return_value
+            session.headers = {}
+            session.post.return_value = Mock(status_code=200)
+            assert post_github_comments(review.pk) == [200]
+
+        body = session.post.call_args.kwargs["json"]["body"]
+        assert body == (
+            "1 critical\n\nReviewed 2 of 3 files. Not reviewed: `uv.lock` "
+            "(generated or vendored)."
+        )
+
+
+class TestCoverageLineEscaping:
+    def test_deadline_reason_is_named(self):
+        from apps.reviews.services.github_poster import coverage_line
+
+        line = coverage_line(["a.py"], [{"file_path": "b.py", "reason": "deadline"}])
+
+        assert line == (
+            "Reviewed 1 of 2 files. Not reviewed: `b.py` "
+            "(not reached before the review deadline)."
+        )
+
+    @pytest.mark.parametrize(
+        "path, span",
+        [
+            ("docs/a`b.md", "``docs/a`b.md``"),
+            ("x``y.py", "```x``y.py```"),
+            ("`edge`.py", "`` `edge`.py ``"),
+        ],
+    )
+    def test_backticks_in_paths_cannot_end_the_code_span(self, path, span):
+        from apps.reviews.services.github_poster import coverage_line
+
+        line = coverage_line([], [{"file_path": path, "reason": "generated"}])
+
+        assert line == (
+            f"Reviewed 0 of 1 files. Not reviewed: {span} (generated or vendored)."
+        )

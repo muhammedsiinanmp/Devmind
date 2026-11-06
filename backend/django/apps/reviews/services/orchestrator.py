@@ -14,12 +14,33 @@ from tenacity import (
 )
 
 from apps.reviews.models import Review, ReviewComment, ReviewRun
+from apps.reviews.services.github_poster import coverage_line
 
 logger = logging.getLogger(__name__)
 
 
+# Statuses retried by tenacity: the proxy or service was briefly unavailable.
+# Not 500 (it can come after all of a review's LLM calls, which a retry would
+# repeat), 504 (FastAPI's review deadline) or 429 (left to the Celery retry).
+RETRYABLE_STATUS_CODES = frozenset({502, 503})
+
+
+def _error_code(response) -> str:
+    """The "error" of a FastAPI HTTPException body ({"detail": {"error": ...}})."""
+    try:
+        detail = response.json().get("detail")
+    except Exception:
+        return ""
+    return detail.get("error", "") if isinstance(detail, dict) else ""
+
+
 class _RetryableFastAPIError(Exception):
-    """Transient error (503 / timeout) that tenacity should retry."""
+    """
+    Error that tenacity should retry: FastAPI couldn't be reached, or it
+    answered 502 or 503. A read timeout is not retryable: the request was
+    sent, so FastAPI may still be reviewing, and a retry would start a second
+    review of the same diff.
+    """
 
     pass
 
@@ -55,6 +76,10 @@ class ReviewResult:
     prompt_tokens: int = 0
     completion_tokens: int = 0
     agent_iterations: int = 1
+    # Coverage reported by FastAPI. files_reviewed is None if the response
+    # doesn't include it; files_skipped items are {"file_path", "reason"}.
+    files_reviewed: list[str] | None = None
+    files_skipped: list[dict] = field(default_factory=list)
 
 
 class ReviewOrchestrator:
@@ -104,6 +129,9 @@ class ReviewOrchestrator:
             self.review.status = "completed"
             self.review.risk_score = result.risk_score
             self.review.summary = self._build_summary(result.comments)
+            coverage = coverage_line(result.files_reviewed, result.files_skipped)
+            if coverage:
+                self.review.summary += f"\n\n{coverage}"
             self.review.completed_at = timezone.now()
             self.review.save(
                 update_fields=["status", "risk_score", "summary", "completed_at"]
@@ -143,8 +171,8 @@ class ReviewOrchestrator:
             raise FastAPIError(f"Failed to fetch diff: {e}")
 
     def _call_fastapi(self, diff: str) -> ReviewResult:
-        """Call FastAPI /review/analyze. Transient 503/timeout errors are
-        retried with exponential back-off via tenacity."""
+        """Call FastAPI /review/analyze. Connection errors, 502 and 503 are
+        retried with exponential back-off via tenacity; nothing else is."""
         if not self.fastapi_secret:
             raise FastAPIError(
                 "FASTAPI_INTERNAL_SECRET is empty — the FastAPI service will "
@@ -183,8 +211,14 @@ class ReviewOrchestrator:
                     json=payload,
                     headers=headers,
                 )
+        except (httpx.ConnectError, httpx.ConnectTimeout, httpx.PoolTimeout) as exc:
+            # Nothing reached FastAPI, so retrying can't start a second review.
+            raise _RetryableFastAPIError(f"could not reach FastAPI: {exc}")
         except httpx.TimeoutException:
-            raise _RetryableFastAPIError(f"FastAPI timed out after {self.timeout}s")
+            raise FastAPIError(
+                f"FastAPI did not answer within {self.timeout:g}s. The review "
+                "may still be running, so it is not retried now."
+            )
         except httpx.HTTPError as exc:
             raise FastAPIError(f"FastAPI HTTP error: {exc}")
 
@@ -201,6 +235,8 @@ class ReviewOrchestrator:
                 prompt_tokens=data.get("prompt_tokens", 0),
                 completion_tokens=data.get("completion_tokens", 0),
                 agent_iterations=data.get("agent_iterations", 1),
+                files_reviewed=data.get("files_reviewed"),
+                files_skipped=data.get("files_skipped") or [],
             )
 
         if response.status_code == 403:
@@ -211,12 +247,24 @@ class ReviewOrchestrator:
             )
 
         if response.status_code == 429:
+            # FastAPI asks for 60 s; the Celery task's retry waits that long.
             raise FastAPIError(
                 "LLM providers rate limited (429). Celery will retry in 60s."
             )
 
-        if response.status_code == 503:
-            raise _RetryableFastAPIError(f"FastAPI 503 for review_id={self.review.pk}")
+        if response.status_code == 504 and _error_code(response) == "review_deadline":
+            # FastAPI stopped at its deadline before any batch finished, so
+            # nothing was reviewed. Not retried here; the Celery retry runs
+            # after FastAPI has stopped.
+            raise FastAPIError(
+                "FastAPI reached its review deadline before any file batch "
+                "finished, so nothing was reviewed."
+            )
+
+        if response.status_code in RETRYABLE_STATUS_CODES:
+            raise _RetryableFastAPIError(
+                f"FastAPI {response.status_code} for review_id={self.review.pk}"
+            )
 
         raise FastAPIError(
             f"FastAPI error {response.status_code}: {response.text[:200]}"

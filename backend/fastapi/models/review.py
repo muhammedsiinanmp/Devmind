@@ -123,6 +123,18 @@ class AnalyzerRun(BaseModel):
     )
 
 
+class SkippedFile(BaseModel):
+    """A changed file the review did not look at, and why."""
+
+    file_path: str
+    reason: str = Field(
+        description=(
+            "generated: matched a skip pattern (lockfile, minified, snapshot, "
+            "vendored); batch_limit: beyond the review's batch cap"
+        )
+    )
+
+
 class ReviewResponse(BaseModel):
     """Response from review analysis."""
 
@@ -141,6 +153,12 @@ class ReviewResponse(BaseModel):
     snapped: int = Field(default=0, description="Comments moved to a nearby diff line")
     unanchored: int = Field(
         default=0, description="Comments turned into file-level notes (line 0)"
+    )
+    files_reviewed: list[str] = Field(
+        default_factory=list, description="Changed files the review looked at"
+    )
+    files_skipped: list[SkippedFile] = Field(
+        default_factory=list, description="Changed files not reviewed, with reason"
     )
 
 

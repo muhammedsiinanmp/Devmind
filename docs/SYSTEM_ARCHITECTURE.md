@@ -166,12 +166,12 @@ sequenceDiagram
     CW->>GH: GET pull request diff (user's OAuth token)
     CW->>FA: POST /review/analyze {diff, repo_full_name, pr_number, user_id}
     FA->>FA: parse diff, similarity search per hunk (excluding this PR)
-    FA->>FA: build prompt (8192-token budget), run LangGraph agent
-    FA-->>CW: {comments[], risk_score, model_used, provider, latency_ms, analyzer_runs}
+    FA->>FA: skip generated files, batch files to fit prompts (8192-token budget), run LangGraph agent per batch
+    FA-->>CW: {comments[], risk_score, model_used, provider, latency_ms, analyzer_runs, files_reviewed, files_skipped}
     FA->>FA: background task: embed this PR's hunks (source_ref PR#<n>)
 
     CW->>PG: INSERT ReviewRun (+ diff_text) and ReviewComment rows
-    CW->>PG: Review.status = completed, risk_score, summary, completed_at
+    CW->>PG: Review.status = completed, risk_score, summary (+ "Reviewed X of Y files"), completed_at
     CW->>RD: enqueue post_github_comments_task
 
     CW->>GH: POST /repos/{owner}/{repo}/pulls/{pr}/reviews (event COMMENT)
@@ -208,7 +208,20 @@ flowchart TD
     SY --> END([Return state])
 ```
 
-**One pass.** The graph has no loop. A review makes one LLM call per analyzer, so 3 calls in total whether or not anything is found, unless a response can't be parsed (below).
+**One pass.** The graph has no loop. A batch makes one LLM call per analyzer, so 3 calls whether or not anything is found, unless a response can't be parsed (below). A diff that fits one prompt is one batch.
+
+**File batches.** `run_review_agent` plans the diff with `plan_batches` (`services/diff_batching.py`) before running the graph:
+
+- Files whose path or name matches a glob in `REVIEW_SKIP_PATTERNS` (lockfiles, `*.min.js`, `*.map`, `*.snap`, `*_snapshot.json`, `*_pb2.py`, `vendor/`, `node_modules/` and similar) are skipped with reason `generated`. A diff of only such files makes no LLM call.
+- The other files are packed in diff order. A file's cost is the lines it shows on its own (after the 120-per-hunk and 200-per-file caps) and the tokens of that rendering. A batch takes files while their lines total at most 600 and their tokens at most the prompt's diff budget (`diff_token_budget`, computed with the retrieved patterns). A file too big on its own gets its own batch and is trimmed by the caps as before.
+- At most `REVIEW_MAX_BATCHES` (default 6) batches run; files in later batches are skipped with reason `batch_limit`.
+- Batches run as concurrent tasks, at most `REVIEW_MAX_CONCURRENT_BATCHES` (default 2) at a time, so at most 6 analyzer calls are in flight. If one batch fails (for example every provider is rate limited), the others are cancelled, no partial result is returned and that batch's exception is raised, so the router still returns 429 for `AllProvidersDownError`. A batch that was waiting for a slot checks a shared flag before starting, so no batch makes calls after another has failed.
+- **Deadline.** The batches must finish within `REVIEW_DEADLINE_SECONDS` (default 100), counted from the start of `POST /review/analyze` (retrieval included). Batches still running then are cancelled, the findings of finished batches are returned, and the unfinished batches' files are listed in `files_skipped` with reason `deadline`. If no batch finished, including when the deadline ran out during retrieval (then no batch is started and no LLM call is made), nothing was reviewed: the agent raises `ReviewDeadlineError` and the router returns 504 `{"error": "review_deadline"}` instead of an empty review. Django marks the review `failed` with that reason, and the Celery task retries it 60 s later, after FastAPI has stopped. No batch task outlives the request.
+- **Calls per review.** 3 per batch, so 3 to 18 with the defaults, and up to twice that when every reply needs its one parse retry. With 2 batches at a time, 6 batches run in 3 rounds. Google's server key allows 15 requests per minute and Groq's 30 (`rpm_limit` in `services/llm_client.py`), and the rate limiter makes a call wait for the next minute window when the current one is full, so a 6-batch review on Google alone can wait up to 60 s once. The 100 s deadline covers that wait plus the rounds; Django's `FASTAPI_TIMEOUT_SECONDS` (default 120) leaves 20 s after it for anchoring, the response and the network. These defaults are reasoned from the rate limits above, not measured on real large PRs.
+- The batches' findings are deduplicated and sorted again over the whole diff. `analyzer_runs` keeps one entry per analyzer, summing latency, tokens and attempts over batches; `parsed` is true only if every batch's reply parsed. `model_used` is the first batch's.
+- The response lists `files_reviewed` and `files_skipped`. These count the files `parse_diff` returns, which are the files with added or removed lines; binary, rename-only and mode-only changes aren't counted. Django appends "Reviewed X of Y files." and the skipped files with their reasons (`coverage_line` in `apps/reviews/services/github_poster.py`) to the review summary, which is the body of the GitHub review.
+
+A diff that fits in one batch with nothing skipped gets exactly the prompts it got before batching; `tests/test_review_golden.py` compares them byte for byte with prompts captured before the change.
 
 **One output schema.** `ReviewFindings` and `ReviewFinding` in `models/review.py` define the reply: a JSON object `{"findings": [...]}` whose items have `file_path`, `line_number`, `category`, `severity` (the `Severity` enum: `critical`, `error`, `warning`, `info`), `body` and `suggested_fix`. `output_format_text()` generates the "Output format" part of `REVIEW_SYSTEM_PROMPT` from these models, and the parser validates every item with `ReviewFinding`, so the prompt and the parser can't disagree.
 
@@ -247,11 +260,13 @@ merge results                          -> drop untagged rows with file_path "PR#
                                           drop results whose whitespace-normalized text equals a hunk
                                           of this diff, dedupe by text (keep highest similarity),
                                           keep the top 5
-build_review_prompt(...)               -> user message, 8192-token budget (tiktoken cl100k_base; the
+plan_batches(chunks, ...)             -> skip generated files, pack the rest into batches that each
+                                          fit one prompt (see "File batches")
+build_review_prompt(...)  per batch   -> user message, 8192-token budget (tiktoken cl100k_base; the
                                           system prompt is sent separately and not counted); diff first,
                                           then similar patterns, quality patterns, past reviews, conventions,
                                           each in untrusted-data delimiters
-run_review_agent(...)
+run_review_agent(...)                  -> the graph once per batch, results merged
 anchor_comments(chunks, comments)      -> keep comments on added/context lines; see "Comment anchoring"
 store_review_async(...)                -> background task after the response is built: of up to 20
                                           chunks, drop those whose sha256 is already stored, embed
@@ -262,7 +277,7 @@ store_review_async(...)                -> background task after the response is 
                                           the task
 ```
 
-Nothing is stored before the search, and rows tagged with the current PR's `source_ref` are filtered out in SQL (`source_ref IS DISTINCT FROM 'PR#<n>'`, so untagged rows are kept). That keeps a review, including a re-review after a new push, from retrieving its own diff. When `pr_number` is 0, chunks are stored with no `source_ref` and nothing is excluded. The duplicate check compares against every hunk in the diff, even though only the first 20 are used as queries.
+Nothing is stored before the search, and rows tagged with the current PR's `source_ref` are filtered out in SQL (`source_ref IS DISTINCT FROM 'PR#<n>'`, so untagged rows are kept). That keeps a review, including a re-review after a new push, from retrieving its own diff. When `pr_number` is 0, chunks are stored with no `source_ref` and nothing is excluded. The duplicate check compares against every hunk in the diff, even though only the first 20 are used as queries. Files matching `REVIEW_SKIP_PATTERNS` aren't used as queries, so a lockfile can't take query slots. Retrieval runs once per review, and every batch's prompt gets the same retrieved patterns.
 
 **Transition gap:** rows written before `source_ref` existed carry no tag, and hunk rows used real file paths. If a PR was reviewed before the change and gets a new push afterwards, its old hunks can still be retrieved for it, unless their text exactly matches a hunk in the new diff.
 
@@ -280,7 +295,7 @@ The rendered diff is trimmed to fit the prompt:
 - Every file first gets its best line (an added line, else a removed line, else context), as long as the total allows one line per file, so a deletion-only file isn't hidden by other files' added lines. The rest of the total is spent on added lines, then removed lines, then context lines nearest a change. Each of those is shared evenly between files, so context lines in early files can't crowd out changes in later ones.
 - The token budget for the diff is what's left after the diff's delimiters, the predicted size of the similar-pattern, quality-pattern, past-review and conventions sections (each with its header and delimiters), and a 200-token margin. It is never less than half the prompt.
 - Retrieved sections get at most 2000 (similar patterns), 1500 (quality patterns), 1000 (past reviews) and 500 (conventions) tokens of text, counted after their header and delimiters. A section that doesn't fit is left out. If the assembled prompt is still over budget, it is cut at a line boundary and an untrusted block left open by the cut is closed.
-- If the rendering is over that budget, the line total is lowered and the diff is rendered again. If headers alone are too big, the text is cut at a line boundary with a marker.
+- If the rendering is over that budget, the line total is lowered and the diff is rendered again, scaling down from the lines the diff can show (at most 600), so a single large file shrinks too. If headers alone are too big, the text is cut at a line boundary with a marker.
 - Each gap is marked `... N lines omitted`, and a final `[N files / M lines omitted from this diff]` line says how much was left out.
 
 `anchor_comments` (`services/comment_anchoring.py`) runs on the agent's comments before the risk score is computed:
@@ -596,7 +611,7 @@ There are B-tree indexes on `repo_full_name`, `language`, `review_id`, `user_id`
 
 | Layer | Mechanism |
 |---|---|
-| Orchestrator to FastAPI | tenacity: 3 attempts, exponential backoff 5-60s, on timeout or 503 only. 403, 429 and other errors fail immediately. |
+| Orchestrator to FastAPI | tenacity: 3 attempts, exponential backoff 5-60s, on connection errors (connect error, connect or pool timeout), 502 and 503 only. Not retried there: a read timeout (FastAPI may still be reviewing, and a retry would start a second review), 500 (it can come after all of a review's LLM calls, up to 18, which a retry would repeat), 504 `review_deadline` (nothing was reviewed in time), 429 (FastAPI asks for 60 s) and 403. The Celery task's own retry, 60 s later, handles these. Django warns at startup (`reviews.W001`) unless `FASTAPI_TIMEOUT_SECONDS` is at least 10 s above `REVIEW_DEADLINE_SECONDS`; the check reads `REVIEW_DEADLINE_SECONDS` from Django's environment, so it assumes both services share it through the same `.env`, as they do in docker-compose. One rare duplicate-work path remains: if retrieval hangs past Django's timeout, the Celery retry can start while the first request is still running, since the deadline only cuts off batches. |
 | `apps.reviews.tasks.trigger_review_task` | Celery `max_retries=3`, 60s delay. Resets a `failed` review to `pending` before each retry; on the final attempt it stays `failed`. |
 | `post_github_comments_task` | Celery `max_retries=3`, independent of the review task |
 | `repositories.trigger_review` | Celery `max_retries=3`, `acks_late=True` |

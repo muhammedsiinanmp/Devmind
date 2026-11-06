@@ -220,6 +220,26 @@ def _truncate_keeping_blocks_closed(text: str, max_tokens: int) -> str:
     return cut
 
 
+CODE_CHANGES_HEADER = "=== CODE CHANGES ==="
+
+
+def diff_token_budget(context: PromptContext, max_tokens: int = MAX_TOKENS) -> int:
+    """
+    Tokens the rendered diff may use in a prompt built from ``context``.
+
+    The diff gets whatever the context sections will not use, but never less
+    than half the prompt, since it has the highest priority.
+    """
+    return max(
+        max_tokens
+        - count_tokens(CODE_CHANGES_HEADER)
+        - count_tokens(wrap_untrusted("diff", ""))
+        - _context_sections_tokens(context)
+        - PROMPT_MARGIN_TOKENS,
+        max_tokens // 2,
+    )
+
+
 def build_review_prompt(
     context: PromptContext,
     max_tokens: int = MAX_TOKENS,
@@ -244,19 +264,10 @@ def build_review_prompt(
     Returns:
         Complete prompt string within token budget
     """
-    parts: list[str] = ["=== CODE CHANGES ==="]
+    parts: list[str] = [CODE_CHANGES_HEADER]
 
     if context.diff_chunks:
-        # The diff gets whatever the context sections below will not use, but
-        # never less than half the prompt, since it has the highest priority.
-        diff_budget = max(
-            max_tokens
-            - count_tokens(parts[0])
-            - count_tokens(wrap_untrusted("diff", ""))
-            - _context_sections_tokens(context)
-            - PROMPT_MARGIN_TOKENS,
-            max_tokens // 2,
-        )
+        diff_budget = diff_token_budget(context, max_tokens)
         parts.append(
             wrap_untrusted("diff", render_diff(context.diff_chunks, diff_budget))
         )
@@ -399,6 +410,18 @@ def select_diff_lines(files: list[list], max_lines: int) -> list[list[set[int]]]
     ]
 
 
+def file_render_cost(chunk) -> tuple[int, int]:
+    """
+    ``(lines, tokens)`` one file's chunk uses when rendered on its own.
+
+    Lines are those kept after the per-hunk and per-file caps, the share of
+    MAX_DIFF_LINES the file would take in a batch. Tokens include the newline
+    that joins it to the next file.
+    """
+    lines = len(_ranked_file_lines(getattr(chunk, "hunks", None) or []))
+    return lines, count_tokens(format_diff_chunks([chunk])) + 1
+
+
 def format_hunk_lines(hunk, keep: Optional[set[int]] = None) -> list[str]:
     """
     Render a hunk with new-file line numbers.
@@ -488,8 +511,15 @@ def render_diff(chunks: list, max_tokens: int) -> str:
     Shrinks the line budget until the rendering fits, so every file keeps its
     fair share. If file and hunk headers alone are too big, the text is cut
     at a line boundary as a last resort.
+
+    The line budget starts at the lines the diff can show (after the per-hunk
+    and per-file caps), not MAX_DIFF_LINES, so scaling it down shrinks the
+    rendering even when the diff is one large file.
     """
-    max_lines = MAX_DIFF_LINES
+    shown = sum(
+        len(_ranked_file_lines(c.hunks)) for c in chunks if getattr(c, "hunks", None)
+    )
+    max_lines = min(MAX_DIFF_LINES, shown) or MAX_DIFF_LINES
     text = format_diff_chunks(chunks, max_lines)
     for _ in range(6):
         tokens = count_tokens(text)
