@@ -1,9 +1,20 @@
 import { useEffect, useState, useRef } from "react";
-import { CheckCircle, Clock, XCircle, RefreshCw } from "lucide-react";
+import { AlertTriangle, CheckCircle, Clock, XCircle, RefreshCw } from "lucide-react";
 import { reviewsApi } from "../../api/reviews";
-import { isTerminalStatus, startReviewStatusPolling, type ReviewStatusValue } from "../../lib/reviewStatusPolling";
+import {
+  isTerminalStatus,
+  startReviewStatusPolling,
+  type ReviewPollError,
+  type ReviewStatusValue,
+} from "../../lib/reviewStatusPolling";
 
 type ReviewStatusType = ReviewStatusValue;
+
+const POLL_ERROR_MESSAGES: Record<ReviewPollError, string> = {
+  forbidden: "You no longer have access to this review.",
+  not_found: "This review no longer exists.",
+  gave_up: "The server could not be reached. Reload the page to try again.",
+};
 
 interface ReviewStatusProps {
   reviewId?: number;
@@ -13,6 +24,7 @@ interface ReviewStatusProps {
 
 export default function ReviewStatus({ reviewId, initialStatus, onStatusChange }: ReviewStatusProps) {
   const [status, setStatus] = useState<ReviewStatusType>(initialStatus || "pending");
+  const [pollError, setPollError] = useState<ReviewPollError | null>(null);
   // Keep the latest callback without restarting the poll when it changes
   const onStatusChangeRef = useRef(onStatusChange);
   const statusRef = useRef(status);
@@ -23,7 +35,8 @@ export default function ReviewStatus({ reviewId, initialStatus, onStatusChange }
   }, [onStatusChange]);
 
   // Poll the review detail endpoint while the review is pending or processing.
-  // Polling stops on a terminal status and when the component unmounts.
+  // Polling stops on a terminal status, on an error it can't recover from
+  // (403, 404, or 10 consecutive failures) and when the component unmounts.
   useEffect(() => {
     if (!reviewId || done) return;
 
@@ -35,6 +48,7 @@ export default function ReviewStatus({ reviewId, initialStatus, onStatusChange }
         setStatus(next);
         onStatusChangeRef.current?.(next);
       },
+      onError: setPollError,
     });
   }, [reviewId, done]);
 
@@ -48,10 +62,27 @@ export default function ReviewStatus({ reviewId, initialStatus, onStatusChange }
   const config = configs[status];
   const Icon = config.icon;
 
-  return (
+  const badge = (
     <span className={`badge inline-flex items-center gap-1.5 px-3 py-1.5 ${config.className}`}>
-      <Icon className={`w-3.5 h-3.5 ${status === "processing" ? "animate-spin" : ""}`} />
+      <Icon className={`w-3.5 h-3.5 ${status === "processing" && !pollError ? "animate-spin" : ""}`} />
       {config.label}
+    </span>
+  );
+
+  if (!pollError) return badge;
+
+  return (
+    <span className="inline-flex items-center gap-2">
+      {badge}
+      <span
+        role="status"
+        title={POLL_ERROR_MESSAGES[pollError]}
+        className="inline-flex items-center gap-1 text-xs"
+        style={{ color: "var(--error)" }}
+      >
+        <AlertTriangle className="w-3.5 h-3.5" />
+        Status updates stopped
+      </span>
     </span>
   );
 }
