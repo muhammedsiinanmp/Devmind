@@ -3,10 +3,8 @@ import { useAuthStore } from "./store/index";
 import Layout from "./components/layout/Layout";
 import Dashboard from "./pages/Dashboard";
 import ReviewDetail from "./pages/ReviewDetail";
-import ScanReport from "./pages/ScanReport";
 import Settings from "./pages/Settings";
 import Repositories from "./pages/Repositories";
-import Analytics from "./pages/Analytics";
 import Login from "./pages/Login";
 import AuthCallback from "./pages/AuthCallback";
 
@@ -49,14 +47,6 @@ function App() {
           }
         />
         <Route
-          path="/scans/:id"
-          element={
-            <ProtectedRoute>
-              <ScanReport />
-            </ProtectedRoute>
-          }
-        />
-        <Route
           path="/settings"
           element={
             <ProtectedRoute>
@@ -69,14 +59,6 @@ function App() {
           element={
             <ProtectedRoute>
               <Repositories />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/analytics"
-          element={
-            <ProtectedRoute>
-              <Analytics />
             </ProtectedRoute>
           }
         />

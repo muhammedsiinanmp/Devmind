@@ -15,20 +15,9 @@ CELERY_TASK_EAGER_PROPAGATES = True
 # Disable throttling in tests
 REST_FRAMEWORK["DEFAULT_THROTTLE_CLASSES"] = []  # noqa: F405
 
-# Use in-memory channel layer instead of Redis
-CHANNEL_LAYERS = {
-    "default": {
-        "BACKEND": "channels.layers.InMemoryChannelLayer",
-    },
-}
-
 # FastAPI settings for test environment
 FASTAPI_BASE_URL = "http://localhost:8001"
 FASTAPI_INTERNAL_SECRET = "test-secret"
-
-# Disable Supabase in tests
-SUPABASE_URL = ""
-SUPABASE_SERVICE_KEY = ""
 
 # Skip outbound provider validation calls for BYOK create tests
 SKIP_LLM_KEY_VALIDATION = True

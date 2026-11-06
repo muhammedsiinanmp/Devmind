@@ -1,14 +1,17 @@
 # ─── Infrastructure ───────────────────────────────────────────
+# up: app stack (migrations run first). up-ops: also Flower, Prometheus, Grafana.
 up:
 	docker compose up -d
+up-ops:
+	docker compose --profile ops up -d
 down:
-	docker compose down
+	docker compose --profile ops down
 build:
 	docker compose build
 logs:
 	docker compose logs -f
 reset:
-	docker compose down -v && docker compose up -d
+	docker compose --profile ops down -v && docker compose up -d
 
 # ─── Shell Access ──────────────────────────────────────────────
 shell-django:
@@ -67,5 +70,9 @@ prometheus-targets:
 	@echo "Prometheus targets status:" && curl -s http://localhost:9090/api/v1/targets | python3 -c "import sys,json; d=json.load(sys.stdin); [print(f'  {t[\"labels\"][\"job\"]}: {t[\"health\"]}') for t in d['data']['activeTargets']]"
 
 # ─── Development Utilities ────────────────────────────────────
+# List each keyed server LLM provider's models and send one tiny chat request.
+# Reads keys from .env; prints provider, model, listed, result and latency only.
+providers-check:
+	cd backend/fastapi && uv run python -m scripts.providers_check
 ngrok:
 	ngrok http 8000

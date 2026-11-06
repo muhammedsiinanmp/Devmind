@@ -4,12 +4,15 @@ LLM Client with automatic failover chain.
 Supports multiple LLM providers:
 1. Google Gemini (primary)
 2. Groq (fallback)
-3. GitHub Models (emergency fallback)
 
-Automatically fails over on rate limits, service unavailable, or timeout.
+GitHub Models was retired on 2026-07-30 and was removed.
+Model IDs come from settings (core/config.py).
+Automatically fails over on rate limits, unknown models, service errors or
+timeouts.
 """
 
 import logging
+import time
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
@@ -28,7 +31,6 @@ class LLMProvider(str, Enum):
 
     GOOGLE = "google"
     GROQ = "groq"
-    GITHUB = "github"
     OPENAI = "openai"
     CUSTOM = "custom"
     MISTRAL = "mistral"
@@ -45,6 +47,20 @@ class ServiceUnavailableError(Exception):
     """Raised when provider service is unavailable."""
 
     pass
+
+
+class ModelNotFoundError(ServiceUnavailableError):
+    """Raised on a 404: the provider doesn't serve the configured model."""
+
+    pass
+
+
+class JSONModeRejectedError(ServiceUnavailableError):
+    """Raised on a 4xx to a request with response_format (not 401/403/404/429)."""
+
+    def __init__(self, message: str, status: int):
+        super().__init__(message)
+        self.status = status
 
 
 class TimeoutError(Exception):
@@ -84,12 +100,14 @@ class LLMResponse:
 
 MODEL_CHAIN: list[LLMConfig] = []
 
+GOOGLE_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
+GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+
 
 def _parse_provider(provider: str) -> LLMProvider | None:
     mapping = {
         "google": LLMProvider.GOOGLE,
         "groq": LLMProvider.GROQ,
-        "github": LLMProvider.GITHUB,
         "openai": LLMProvider.OPENAI,
         "custom": LLMProvider.CUSTOM,
         "mistral": LLMProvider.MISTRAL,
@@ -106,9 +124,9 @@ def _init_model_chain() -> list[LLMConfig]:
         chain.append(
             LLMConfig(
                 provider=LLMProvider.GOOGLE,
-                model="gemini-2.0-flash",
+                model=settings.google_model,
                 api_key=settings.google_ai_api_key,
-                base_url="https://generativelanguage.googleapis.com/v1beta/openai",
+                base_url=GOOGLE_BASE_URL,
                 max_tokens=8192,
                 rpm_limit=15,
             )
@@ -118,27 +136,65 @@ def _init_model_chain() -> list[LLMConfig]:
         chain.append(
             LLMConfig(
                 provider=LLMProvider.GROQ,
-                model="llama-3.3-70b-versatile",
+                model=settings.groq_model,
                 api_key=settings.groq_api_key,
-                base_url="https://api.groq.com/openai/v1",
+                base_url=GROQ_BASE_URL,
                 max_tokens=4096,
                 rpm_limit=30,
             )
         )
 
-    if settings.github_token:
-        chain.append(
-            LLMConfig(
-                provider=LLMProvider.GITHUB,
-                model="gpt-4o-mini",
-                api_key=settings.github_token,
-                base_url="https://models.inference.ai.azure.com",
-                max_tokens=4096,
-                rpm_limit=150,
-            )
-        )
-
     return chain
+
+
+# Providers whose OpenAI-compatible endpoint accepts
+# response_format={"type": "json_object"}. A custom endpoint may not, so it
+# gets no response_format and the caller's tolerant parser handles its reply.
+JSON_MODE_PROVIDERS = frozenset(
+    {
+        LLMProvider.GOOGLE,
+        LLMProvider.GOOGLE_VERTEX,
+        LLMProvider.GROQ,
+        LLMProvider.OPENAI,
+        LLMProvider.MISTRAL,
+    }
+)
+
+
+def _request_body(
+    config: LLMConfig, messages: list[dict[str, str]], kwargs: dict[str, Any]
+) -> dict[str, Any]:
+    """
+    Chat completions request body.
+
+    ``temperature`` and ``max_tokens`` come from kwargs when given.
+    ``json_mode=True`` asks for a JSON object reply where the provider
+    supports it.
+    """
+    body: dict[str, Any] = {
+        "model": config.model,
+        "messages": messages,
+        "max_tokens": kwargs.get("max_tokens", config.max_tokens),
+        "temperature": kwargs.get("temperature", 0.7),
+    }
+    if kwargs.get("json_mode") and config.provider in JSON_MODE_PROVIDERS:
+        body["response_format"] = {"type": "json_object"}
+    return body
+
+
+def _raise_if_json_mode_rejected(
+    config: LLMConfig, body: dict[str, Any], status: int
+) -> None:
+    """
+    A 4xx to a JSON-mode request may mean the provider rejected
+    response_format, e.g. Groq's 400 json_validate_failed. Auth errors, a
+    missing model and rate limits are not about JSON mode.
+    """
+    if "response_format" in body and 400 <= status < 500:
+        if status not in (401, 403, 404, 429):
+            raise JSONModeRejectedError(
+                f"JSON mode rejected: {config.provider.value} {status}", status
+            )
 
 
 class LLMClient:
@@ -196,6 +252,12 @@ class LLMClient:
             provider_raw = str(item.get("provider", ""))
             provider = _parse_provider(provider_raw)
             if provider is None:
+                # e.g. "anthropic", or the removed GitHub Models ("github")
+                logger.warning(
+                    "llm.byok_unsupported_provider provider=%s user_id=%s",
+                    provider_raw,
+                    user_id,
+                )
                 continue
 
             model = str(item.get("model_name", "")).strip()
@@ -270,9 +332,10 @@ class LLMClient:
                 return response
             except (RateLimitError, ServiceUnavailableError, TimeoutError) as exc:
                 logger.warning(
-                    "llm.failover provider=%s model=%s error=%s",
+                    "llm.failover provider=%s model=%s reason=%s error=%s",
                     config.provider.value,
                     config.model,
+                    _failover_reason(exc),
                     str(exc),
                 )
                 continue
@@ -280,6 +343,32 @@ class LLMClient:
         raise AllProvidersDownError("All LLM providers unavailable")
 
     async def _call_provider(
+        self,
+        config: LLMConfig,
+        messages: list[dict[str, str]],
+        **kwargs: Any,
+    ) -> LLMResponse:
+        """
+        Call a provider; if it rejects JSON mode, retry it once without.
+
+        Free tiers can leave a single working provider, so a provider that
+        doesn't accept response_format must not fail the review. A second
+        failure raises as usual and the caller fails over.
+        """
+        try:
+            return await self._post_chat(config, messages, **kwargs)
+        except JSONModeRejectedError as exc:
+            logger.warning(
+                "llm.json_mode_rejected provider=%s model=%s status=%s",
+                config.provider.value,
+                config.model,
+                exc.status,
+            )
+            return await self._post_chat(
+                config, messages, **{**kwargs, "json_mode": False}
+            )
+
+    async def _post_chat(
         self,
         config: LLMConfig,
         messages: list[dict[str, str]],
@@ -305,6 +394,8 @@ class LLMClient:
 
         base_url = config.base_url.rstrip("/")
 
+        body = _request_body(config, messages, kwargs)
+
         async with httpx.AsyncClient(timeout=30.0) as client:
             try:
                 response = await client.post(
@@ -313,16 +404,22 @@ class LLMClient:
                         "Authorization": f"Bearer {config.api_key}",
                         "Content-Type": "application/json",
                     },
-                    json={
-                        "model": config.model,
-                        "messages": messages,
-                        "max_tokens": kwargs.get("max_tokens", config.max_tokens),
-                        "temperature": kwargs.get("temperature", 0.7),
-                    },
+                    json=body,
                 )
+                _raise_if_json_mode_rejected(config, body, response.status_code)
 
                 if response.status_code == 429:
                     raise RateLimitError(f"Rate limited: {config.provider.value}")
+                if response.status_code == 404:
+                    # Usually a retired or misspelled model ID, not an outage
+                    logger.error(
+                        "llm.model_not_found provider=%s model=%s",
+                        config.provider.value,
+                        config.model,
+                    )
+                    raise ModelNotFoundError(
+                        f"Model not found: {config.provider.value}/{config.model}"
+                    )
                 if response.status_code >= 500:
                     raise ServiceUnavailableError(
                         f"Service unavailable: {config.provider.value}"
@@ -354,6 +451,16 @@ class LLMClient:
                 )
 
 
+def _failover_reason(exc: Exception) -> str:
+    if isinstance(exc, RateLimitError):
+        return "rate_limited"
+    if isinstance(exc, ModelNotFoundError):
+        return "model_not_found"
+    if isinstance(exc, TimeoutError):
+        return "timeout"
+    return "unavailable"
+
+
 llm_client = LLMClient()
 
 
@@ -378,3 +485,62 @@ async def check_provider_health(config: LLMConfig) -> tuple[str, bool]:
             return config.provider.value, response.status_code == 200
     except Exception:
         return config.provider.value, False
+
+
+def model_ids(payload: Any) -> set[str]:
+    """
+    Model IDs from an OpenAI-style ``GET /models`` body.
+
+    Google's OpenAI-compatible endpoint prefixes IDs with ``models/``; the
+    prefix is dropped so they compare equal to the configured model names.
+    """
+    items = payload.get("data", []) if isinstance(payload, dict) else payload
+    ids: set[str] = set()
+    for item in items or []:
+        model_id = item.get("id") if isinstance(item, dict) else None
+        if isinstance(model_id, str):
+            ids.add(model_id.removeprefix("models/"))
+    return ids
+
+
+async def check_model_listed(config: LLMConfig) -> bool | None:
+    """
+    Whether the provider's ``GET /models`` lists ``config.model``.
+
+    Returns None when the listing can't be fetched (network error or a
+    non-200), so "unreachable" stays distinct from "model not served".
+    """
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.get(
+                f"{config.base_url.rstrip('/')}/models",
+                headers={"Authorization": f"Bearer {config.api_key}"},
+            )
+            if response.status_code != 200:
+                return None
+            return config.model in model_ids(response.json())
+    except Exception:
+        return None
+
+
+_MODEL_LISTED_CACHE: dict[tuple[str, str, str], tuple[float, bool | None]] = {}
+
+
+async def cached_model_listed(config: LLMConfig) -> bool | None:
+    """``check_model_listed``, cached for ``llm_health_cache_seconds``."""
+    key = (config.provider.value, config.base_url, config.model)
+    now = time.monotonic()
+    cached = _MODEL_LISTED_CACHE.get(key)
+    if cached is not None and now - cached[0] < settings.llm_health_cache_seconds:
+        return cached[1]
+    listed = await check_model_listed(config)
+    _MODEL_LISTED_CACHE[key] = (now, listed)
+    return listed
+
+
+def server_provider_models() -> dict[str, str]:
+    """The configured model for each server provider, keyed by provider."""
+    return {
+        LLMProvider.GOOGLE.value: settings.google_model,
+        LLMProvider.GROQ.value: settings.groq_model,
+    }

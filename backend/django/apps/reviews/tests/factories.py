@@ -10,8 +10,8 @@ from __future__ import annotations
 import factory
 from factory.django import DjangoModelFactory
 
-from apps.repositories.tests.factories import UserFactory, RepositoryFactory
-from apps.reviews.models import RepoScan, Review, ReviewComment, ReviewRun
+from apps.repositories.tests.factories import RepositoryFactory
+from apps.reviews.models import Review, ReviewComment, ReviewRun
 
 
 class ReviewFactory(DjangoModelFactory):
@@ -55,21 +55,3 @@ class ReviewRunFactory(DjangoModelFactory):
     prompt_tokens = factory.Faker("random_int", min=500, max=2000)
     completion_tokens = factory.Faker("random_int", min=100, max=500)
     latency_ms = factory.Faker("random_int", min=500, max=5000)
-
-
-class RepoScanFactory(DjangoModelFactory):
-    class Meta:
-        model = RepoScan
-
-    repository = factory.SubFactory(RepositoryFactory)
-    triggered_by = factory.SubFactory(UserFactory)
-    status = "queued"
-    progress = 0
-    total_files = factory.Faker("random_int", min=10, max=100)
-    files_scanned = 0
-    total_issues = 0
-    critical_count = 0
-    warning_count = 0
-    info_count = 0
-    scan_duration_ms = None
-    completed_at = None

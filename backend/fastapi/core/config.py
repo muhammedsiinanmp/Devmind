@@ -1,6 +1,7 @@
 import os
 from functools import lru_cache
 
+from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Path of the dotenv file to read. Set DEVMIND_ENV_FILE="" to disable it
@@ -16,15 +17,25 @@ class Settings(BaseSettings):
         "postgresql+asyncpg://devmind:devmind_secret@postgres:5432/devmind"
     )
 
-    # LLM Client (Google, Groq, GitHub)
+    # LLM Client (Google, then Groq). GitHub Models was retired on 2026-07-30
+    # and was removed.
     google_ai_api_key: str = ""
     groq_api_key: str = ""
-    github_token: str = ""
     llm_failover_enabled: bool = True
     primary_llm_provider: str = "google"
 
+    # Server provider models. Pinned stable IDs rather than "-latest" aliases,
+    # so a provider-side alias change can't silently change review output.
+    google_model: str = "gemini-3.5-flash"
+    groq_model: str = "openai/gpt-oss-120b"
+    # Seconds /health caches each provider's model listing
+    llm_health_cache_seconds: int = 300
+
+    # Sampling temperature for review analyzer calls (REVIEW_TEMPERATURE).
+    review_temperature: float = Field(default=0.1, ge=0.0, le=2.0)
+
     # Embeddings
-    embedding_model: str = "text-embedding-004"
+    embedding_model: str = "gemini-embedding-001"
 
     # Security
     fastapi_internal_secret: str = ""

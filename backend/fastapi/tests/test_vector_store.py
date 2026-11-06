@@ -2,6 +2,9 @@
 Tests for vector store service.
 """
 
+import json
+
+import httpx
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -26,11 +29,40 @@ class TestSimilarChunk:
         assert chunk.similarity == 0.85
 
 
+def _store_with_fake_api(values_for=lambda text: [0.1] * 768, status_code=200):
+    """VectorStore whose shared HTTP client answers batchEmbedContents from a
+    MockTransport. Returns the store and the list of captured requests."""
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if status_code != 200:
+            return httpx.Response(status_code, text="quota exceeded")
+        body = json.loads(request.content)
+        return httpx.Response(
+            200,
+            json={
+                "embeddings": [
+                    {"values": values_for(r["content"]["parts"][0]["text"])}
+                    for r in body["requests"]
+                ]
+            },
+        )
+
+    store = VectorStore()
+    store._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    return store, requests
+
+
+def _body(request: httpx.Request) -> dict:
+    return json.loads(request.content)
+
+
 class TestVectorStore:
     def test_vector_store_init(self):
         store = VectorStore()
         assert store.embedding_dims == 768
-        assert store.embedding_model == "text-embedding-004"
+        assert store.embedding_model == "gemini-embedding-001"
 
     def test_embedding_model_read_from_settings(self):
         """embedding_model must come from Settings, not a hardcoded string."""
@@ -42,66 +74,111 @@ class TestVectorStore:
     @pytest.mark.asyncio
     async def test_generate_embedding_success_sends_task_type(self):
         """Request body must include taskType: RETRIEVAL_DOCUMENT by default."""
-        store = VectorStore()
+        store, requests = _store_with_fake_api()
 
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"embedding": {"values": [0.1] * 768}}
+        embedding = await store.generate_embedding("test text")
 
-        with patch("services.vector_store.httpx.AsyncClient") as mock_client:
-            mock_instance = AsyncMock()
-            mock_client.return_value.__aenter__.return_value = mock_instance
-            mock_instance.post.return_value = mock_response
-
-            embedding = await store.generate_embedding("test text")
-
-            assert len(embedding) == 768
-            assert embedding[0] == 0.1
-
-            call_kwargs = mock_instance.post.call_args.kwargs
-            assert call_kwargs["json"]["taskType"] == "RETRIEVAL_DOCUMENT"
+        assert len(embedding) == 768
+        assert embedding[0] == 0.1
+        [request] = _body(requests[0])["requests"]
+        assert request["taskType"] == "RETRIEVAL_DOCUMENT"
+        assert request["content"] == {"parts": [{"text": "test text"}]}
 
     @pytest.mark.asyncio
     async def test_generate_embedding_retrieval_query_task_type(self):
         """search_similar should send taskType: RETRIEVAL_QUERY."""
-        store = VectorStore()
+        store, requests = _store_with_fake_api()
 
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"embedding": {"values": [0.2] * 768}}
+        embedding = await store.generate_embedding(
+            "search query", task_type="RETRIEVAL_QUERY"
+        )
 
-        with patch("services.vector_store.httpx.AsyncClient") as mock_client:
-            mock_instance = AsyncMock()
-            mock_client.return_value.__aenter__.return_value = mock_instance
-            mock_instance.post.return_value = mock_response
+        assert len(embedding) == 768
+        assert _body(requests[0])["requests"][0]["taskType"] == "RETRIEVAL_QUERY"
 
-            embedding = await store.generate_embedding(
-                "search query", task_type="RETRIEVAL_QUERY"
-            )
+    @pytest.mark.asyncio
+    async def test_request_asks_for_768_dimensions_from_the_configured_model(self):
+        """gemini-embedding-001 defaults to 3072 values; the column is
+        Vector(768), so every request must ask for 768."""
+        store, requests = _store_with_fake_api()
 
-            assert len(embedding) == 768
-            call_kwargs = mock_instance.post.call_args.kwargs
-            assert call_kwargs["json"]["taskType"] == "RETRIEVAL_QUERY"
+        await store.generate_embeddings(["a", "b"], task_type="RETRIEVAL_QUERY")
+
+        [request] = requests
+        assert request.url.path == (
+            "/v1beta/models/gemini-embedding-001:batchEmbedContents"
+        )
+        for item in _body(request)["requests"]:
+            assert item["outputDimensionality"] == 768
+            assert item["model"] == "models/gemini-embedding-001"
+
+    @pytest.mark.asyncio
+    async def test_generate_embeddings_sends_one_request_and_keeps_order(self):
+        store, requests = _store_with_fake_api(
+            values_for=lambda text: [float(len(text))] * 768
+        )
+
+        vectors = await store.generate_embeddings(["a", "bbb", "cc"])
+
+        assert len(requests) == 1
+        texts = [
+            r["content"]["parts"][0]["text"] for r in _body(requests[0])["requests"]
+        ]
+        assert texts == ["a", "bbb", "cc"]
+        assert [v[0] for v in vectors] == [1.0, 3.0, 2.0]
+
+    @pytest.mark.asyncio
+    async def test_generate_embeddings_sends_only_uncached_texts_once(self):
+        store, requests = _store_with_fake_api()
+        await store.generate_embeddings(["cached"])
+
+        vectors = await store.generate_embeddings(["cached", "new", "new"])
+
+        assert len(vectors) == 3
+        texts = [
+            r["content"]["parts"][0]["text"] for r in _body(requests[1])["requests"]
+        ]
+        assert texts == ["new"]
+
+    @pytest.mark.asyncio
+    async def test_generate_embeddings_all_cached_makes_no_request(self):
+        store, requests = _store_with_fake_api()
+        await store.generate_embeddings(["a", "b"])
+
+        await store.generate_embeddings(["b", "a"])
+
+        assert len(requests) == 1
+
+    @pytest.mark.asyncio
+    async def test_generate_embeddings_splits_large_batches(self):
+        store, requests = _store_with_fake_api()
+        store.MAX_BATCH_SIZE = 2
+
+        vectors = await store.generate_embeddings(["a", "b", "c"])
+
+        assert len(vectors) == 3
+        assert [len(_body(r)["requests"]) for r in requests] == [2, 1]
+
+    @pytest.mark.asyncio
+    async def test_calls_share_one_http_client(self):
+        store, _ = _store_with_fake_api()
+        client = store._get_client()
+
+        await store.generate_embedding("one")
+        await store.generate_embedding("two")
+
+        assert store._get_client() is client
 
     @pytest.mark.asyncio
     async def test_generate_embedding_cache_keys_differ_by_task_type(self):
         """Same text with different task types must not share a cache entry."""
-        store = VectorStore()
+        store, requests = _store_with_fake_api()
 
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"embedding": {"values": [0.1] * 768}}
+        await store.generate_embedding("hello", task_type="RETRIEVAL_DOCUMENT")
+        await store.generate_embedding("hello", task_type="RETRIEVAL_QUERY")
 
-        with patch("services.vector_store.httpx.AsyncClient") as mock_client:
-            mock_instance = AsyncMock()
-            mock_client.return_value.__aenter__.return_value = mock_instance
-            mock_instance.post.return_value = mock_response
-
-            await store.generate_embedding("hello", task_type="RETRIEVAL_DOCUMENT")
-            await store.generate_embedding("hello", task_type="RETRIEVAL_QUERY")
-
-            # Two distinct API calls — cache keys must differ
-            assert mock_instance.post.call_count == 2
+        # Two distinct API calls — cache keys must differ
+        assert len(requests) == 2
 
     @pytest.mark.asyncio
     async def test_generate_embedding_cache_hit(self):
@@ -131,19 +208,31 @@ class TestVectorStore:
 
     @pytest.mark.asyncio
     async def test_generate_embedding_invalid_dimension(self):
+        store, _ = _store_with_fake_api(values_for=lambda text: [0.1] * 100)
+
+        with pytest.raises(VectorStoreError):
+            await store.generate_embedding("test text")
+
+    @pytest.mark.asyncio
+    async def test_generate_embedding_api_error(self):
+        store, _ = _store_with_fake_api(status_code=429)
+
+        with pytest.raises(VectorStoreError, match="429"):
+            await store.generate_embedding("test text")
+
+    @pytest.mark.asyncio
+    async def test_generate_embeddings_wrong_count_raises(self):
         store = VectorStore()
+        store._client = httpx.AsyncClient(
+            transport=httpx.MockTransport(
+                lambda request: httpx.Response(
+                    200, json={"embeddings": [{"values": [0.1] * 768}]}
+                )
+            )
+        )
 
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.json.return_value = {"embedding": {"values": [0.1] * 100}}
-
-        with patch("services.vector_store.httpx.AsyncClient") as mock_client:
-            mock_instance = AsyncMock()
-            mock_client.return_value.__aenter__.return_value = mock_instance
-            mock_instance.post.return_value = mock_response
-
-            with pytest.raises(VectorStoreError):
-                await store.generate_embedding("test text")
+        with pytest.raises(VectorStoreError, match="Expected 2 embeddings"):
+            await store.generate_embeddings(["a", "b"])
 
     @pytest.mark.asyncio
     async def test_store_code_embedding(self):
@@ -157,28 +246,27 @@ class TestVectorStore:
         ) as mock_gen:
             mock_gen.return_value = mock_embedding
 
-            with patch("services.vector_store.hashlib.sha256") as mock_hash:
-                mock_hash.return_value.hexdigest.return_value = "test_hash"
+            mock_code_embedding = MagicMock()
+            mock_code_embedding.id = 1
 
-                mock_code_embedding = MagicMock()
-                mock_code_embedding.id = 1
+            store.existing_hashes = AsyncMock(return_value=set())
+            mock_session.add = MagicMock()  # Session.add is synchronous
 
-                mock_session.execute = AsyncMock()
-                mock_session.execute.return_value.scalar_one_or_none = MagicMock(
-                    return_value=None
+            with patch(
+                "services.vector_store.CodeEmbedding",
+                return_value=mock_code_embedding,
+            ) as model:
+                result = await store.store_code_embedding(
+                    session=mock_session,
+                    repo_full_name="owner/repo",
+                    file_path="src/foo.py",
+                    chunk_text="test code",
                 )
 
-                with patch("services.vector_store.select", return_value=MagicMock()):
-                    with patch(
-                        "services.vector_store.CodeEmbedding",
-                        return_value=mock_code_embedding,
-                    ):
-                        await store.store_code_embedding(
-                            session=mock_session,
-                            repo_full_name="owner/repo",
-                            file_path="src/foo.py",
-                            chunk_text="test code",
-                        )
+            assert result is mock_code_embedding
+            assert model.call_args.kwargs["embedding"] == mock_embedding
+            mock_session.add.assert_called_once_with(mock_code_embedding)
+            mock_session.commit.assert_awaited_once()
 
 
 class TestVectorStoreError:

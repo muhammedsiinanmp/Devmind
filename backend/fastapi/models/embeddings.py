@@ -31,6 +31,9 @@ class CodeEmbedding(Base):
     )
     embedding: Mapped[list[float]] = mapped_column(Vector(768), nullable=False)
     sha256: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    # Where the chunk came from, e.g. "PR#12". Retrieval for a PR excludes rows
+    # with that PR's source_ref so a review never retrieves its own diff.
+    source_ref: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=datetime.utcnow
     )
@@ -43,6 +46,14 @@ class CodeEmbedding(Base):
         Index(
             "ix_code_embeddings_language",
             "language",
+        ),
+        # Serves ORDER BY cosine distance in similarity search. Also created
+        # by migrations/sql/0002_code_embeddings_hnsw_index.sql.
+        Index(
+            "ix_code_embeddings_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_ops={"embedding": "vector_cosine_ops"},
         ),
     )
 

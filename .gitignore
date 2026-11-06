@@ -66,4 +66,6 @@ devmind.html
 *.log
 repomix-output.xml
 codebase_prompt.txt
-.claude
+.claude/settings.local.json
+.claude/worktrees/
+.claude/board-cache.json

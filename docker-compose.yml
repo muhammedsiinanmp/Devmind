@@ -7,7 +7,7 @@ services:
       POSTGRES_USER: devmind
       POSTGRES_PASSWORD: devmind_secret
     ports:
-      - "5432:5432"
+      - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
     healthcheck:
@@ -19,12 +19,28 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5
+
+  # One-shot: applies Django migrations (including the pgvector extension)
+  # before the app services start, then exits.
+  migrate:
+    build:
+      context: ./backend/django
+      target: dev
+    command: uv run python manage.py migrate --noinput
+    env_file: .env
+    volumes:
+      - ./backend/django:/app
+      - /app/.venv
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
 
   django:
     build:
@@ -32,7 +48,7 @@ services:
       target: dev
     command: uv run python manage.py runserver 0.0.0.0:8000
     ports:
-      - "8000:8000"
+      - "${DJANGO_PORT:-8000}:8000"
     env_file: .env
     volumes:
       - ./backend/django:/app
@@ -42,6 +58,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
   fastapi:
     build:
@@ -49,7 +67,7 @@ services:
       target: dev
     command: uv run uvicorn main:app --host 0.0.0.0 --port 8001 --reload
     ports:
-      - "8001:8001"
+      - "${FASTAPI_PORT:-8001}:8001"
     env_file: .env
     volumes:
       - ./backend/fastapi:/app
@@ -59,6 +77,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
   celery_worker:
     build:
@@ -70,15 +90,36 @@ services:
       - /app/.venv
     env_file: .env
     depends_on:
-      - redis
-      - postgres
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
+  frontend:
+    build:
+      context: ./frontend
+      target: dev
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    environment:
+      # Vite proxies /api to Django over the compose network
+      - API_PROXY_TARGET=http://django:8000
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - django
+
+  # Ops tools start only with the "ops" profile: make up-ops
   flower:
     image: mher/flower:2.0
+    profiles: [ops]
     # Same broker as the Celery worker: CELERY_BROKER_URL from .env (db 1)
     command: celery --broker=${CELERY_BROKER_URL:-redis://redis:6379/1} flower --port=5555
     ports:
-      - "5555:5555"
+      - "${FLOWER_PORT:-5555}:5555"
     environment:
       - CELERY_BROKER_URL=${CELERY_BROKER_URL:-redis://redis:6379/1}
     depends_on:
@@ -88,7 +129,7 @@ services:
   nginx:
     build: ./nginx
     ports:
-      - "80:80"
+      - "${NGINX_PORT:-80}:80"
     volumes:
       - ./nginx/nginx.conf:/etc/nginx/conf.d/default.conf:ro
     depends_on:
@@ -97,8 +138,9 @@ services:
 
   prometheus:
     image: prom/prometheus:latest
+    profiles: [ops]
     ports:
-      - "9090:9090"
+      - "${PROMETHEUS_PORT:-9090}:9090"
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
@@ -111,8 +153,9 @@ services:
 
   grafana:
     image: grafana/grafana:latest
+    profiles: [ops]
     ports:
-      - "3000:3000"
+      - "${GRAFANA_PORT:-3000}:3000"
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning:ro

@@ -1,7 +1,20 @@
 import { useEffect, useState, useRef } from "react";
-import { CheckCircle, Clock, XCircle, RefreshCw } from "lucide-react";
+import { AlertTriangle, CheckCircle, Clock, XCircle, RefreshCw } from "lucide-react";
+import { reviewsApi } from "../../api/reviews";
+import {
+  isTerminalStatus,
+  startReviewStatusPolling,
+  type ReviewPollError,
+  type ReviewStatusValue,
+} from "../../lib/reviewStatusPolling";
 
-type ReviewStatusType = "pending" | "processing" | "completed" | "failed";
+type ReviewStatusType = ReviewStatusValue;
+
+const POLL_ERROR_MESSAGES: Record<ReviewPollError, string> = {
+  forbidden: "You no longer have access to this review.",
+  not_found: "This review no longer exists.",
+  gave_up: "The server could not be reached. Reload the page to try again.",
+};
 
 interface ReviewStatusProps {
   reviewId?: number;
@@ -11,50 +24,33 @@ interface ReviewStatusProps {
 
 export default function ReviewStatus({ reviewId, initialStatus, onStatusChange }: ReviewStatusProps) {
   const [status, setStatus] = useState<ReviewStatusType>(initialStatus || "pending");
-  const wsRef = useRef<WebSocket | null>(null);
-  // Keep the latest callback without reconnecting the socket when it changes
+  const [pollError, setPollError] = useState<ReviewPollError | null>(null);
+  // Keep the latest callback without restarting the poll when it changes
   const onStatusChangeRef = useRef(onStatusChange);
+  const statusRef = useRef(status);
+  const done = isTerminalStatus(status);
 
   useEffect(() => {
     onStatusChangeRef.current = onStatusChange;
   }, [onStatusChange]);
 
+  // Poll the review detail endpoint while the review is pending or processing.
+  // Polling stops on a terminal status, on an error it can't recover from
+  // (403, 404, or 10 consecutive failures) and when the component unmounts.
   useEffect(() => {
-    if (!reviewId || status === "completed" || status === "failed") return;
+    if (!reviewId || done) return;
 
-    const token = localStorage.getItem("access_token");
-    const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    const wsUrl = `${wsProtocol}//${window.location.host}/ws/reviews/${reviewId}/?token=${token}`;
-
-    try {
-      const ws = new WebSocket(wsUrl);
-      wsRef.current = ws;
-
-      ws.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          if (data.status && data.status !== status) {
-            setStatus(data.status);
-            onStatusChangeRef.current?.(data.status);
-          }
-        } catch {
-          // ignore parse errors
-        }
-      };
-
-      ws.onerror = () => {
-        // WebSocket failed — component remains static
-        ws.close();
-      };
-
-      return () => {
-        ws.close();
-        wsRef.current = null;
-      };
-    } catch {
-      // WebSocket not available, component remains static
-    }
-  }, [reviewId, status]);
+    return startReviewStatusPolling({
+      fetchStatus: async () => (await reviewsApi.get(reviewId)).status,
+      onStatus: (next) => {
+        if (next === statusRef.current) return;
+        statusRef.current = next;
+        setStatus(next);
+        onStatusChangeRef.current?.(next);
+      },
+      onError: setPollError,
+    });
+  }, [reviewId, done]);
 
   const configs: Record<ReviewStatusType, { icon: typeof Clock; label: string; className: string }> = {
     pending: { icon: Clock, label: "Pending", className: "badge-info" },
@@ -66,10 +62,27 @@ export default function ReviewStatus({ reviewId, initialStatus, onStatusChange }
   const config = configs[status];
   const Icon = config.icon;
 
-  return (
+  const badge = (
     <span className={`badge inline-flex items-center gap-1.5 px-3 py-1.5 ${config.className}`}>
-      <Icon className={`w-3.5 h-3.5 ${status === "processing" ? "animate-spin" : ""}`} />
+      <Icon className={`w-3.5 h-3.5 ${status === "processing" && !pollError ? "animate-spin" : ""}`} />
       {config.label}
+    </span>
+  );
+
+  if (!pollError) return badge;
+
+  return (
+    <span className="inline-flex items-center gap-2">
+      {badge}
+      <span
+        role="status"
+        title={POLL_ERROR_MESSAGES[pollError]}
+        className="inline-flex items-center gap-1 text-xs"
+        style={{ color: "var(--error)" }}
+      >
+        <AlertTriangle className="w-3.5 h-3.5" />
+        Status updates stopped
+      </span>
     </span>
   );
 }

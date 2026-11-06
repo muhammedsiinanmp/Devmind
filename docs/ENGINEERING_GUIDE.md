@@ -49,10 +49,27 @@ There's no `FERNET_KEY` variable. The encryption key comes from `DJANGO_SECRET_K
 
 | Variable | Description |
 |---|---|
-| `GOOGLE_AI_API_KEY` | Google AI Studio key. Used for `gemini-2.0-flash` (first server provider) and for `text-embedding-004` embeddings. |
-| `GROQ_API_KEY` | Groq key for `llama-3.3-70b-versatile` (second) |
-| `GITHUB_TOKEN` | GitHub token with access to GitHub Models, for `gpt-4o-mini` (third) |
+| `GOOGLE_AI_API_KEY` | Google AI Studio key. Used for `GOOGLE_MODEL` (first server provider) and for `gemini-embedding-001` embeddings (`EMBEDDING_MODEL`). |
+| `GROQ_API_KEY` | Groq key for `GROQ_MODEL` (second) |
+| `GOOGLE_MODEL` | Default `gemini-3.5-flash` |
+| `GROQ_MODEL` | Default `openai/gpt-oss-120b` |
+| `LLM_HEALTH_CACHE_SECONDS` | Default `300`. How long FastAPI `/health` caches each provider's model listing. |
 | `LLM_FAILOVER_ENABLED` | Default `True`. When `False`, only the first provider in the chain is tried. |
+| `REVIEW_TEMPERATURE` | Default `0.1`. Sampling temperature for the review analyzers' LLM calls (0.0 to 2.0). |
+
+GitHub Models was retired on 2026-07-30 ([GitHub docs](https://docs.github.com/en/github-models)) and was removed. `GITHUB_TOKEN` is no longer read; a leftover value in `.env` is ignored.
+
+Defaults are pinned model IDs rather than `-latest` or `-preview` aliases, so a provider moving an alias can't silently change reviews. When a provider retires a model, requests to it return 404, which FastAPI logs as `llm.model_not_found`. Check the configured models against the providers with:
+
+```bash
+make providers-check    # runs on the host: cd backend/fastapi && uv run python -m scripts.providers_check
+# or, with the stack up:
+docker compose exec fastapi uv run python -m scripts.providers_check
+```
+
+For each provider with a key set, it lists the provider's models and sends one chat request of a few tokens, then prints the provider, model, whether the model is listed, the result (`ok`, or the HTTP status, with `model_not_found` for 404 and `rate_limited` for 429) and the latency. On a 404 it also prints the first 150 characters of the provider's error message, with keys redacted before truncation. It never prints keys or other response bodies. It exits 1 if no provider completes the chat request.
+
+**"Listed" doesn't mean usable.** Google lists models that are closed to new keys. For example, `gemini-2.5-flash` is listed but a newer key gets a 404 ("no longer available to new users"). The chat request in `make providers-check` is the authoritative check. The `listed` field in `/health` only shows that the provider still publishes the model ID.
 
 There's no server-side OpenAI provider. OpenAI keys can be added per user through the BYOK settings.
 
@@ -60,14 +77,14 @@ There's no server-side OpenAI provider. OpenAI keys can be added per user throug
 
 | Variable | Default | Description |
 |---|---|---|
-| `REDIS_URL` | `redis://redis:6379/0` | Django cache (OAuth state, organization invite tokens, DRF throttle counters), Channels layer, FastAPI rate limiter |
+| `REDIS_URL` | `redis://redis:6379/0` | Django cache (OAuth state, DRF throttle counters), FastAPI rate limiter |
 | `CELERY_BROKER_URL` | `redis://redis:6379/1` | Celery broker |
 | `CELERY_RESULT_BACKEND` | `redis://redis:6379/2` | Celery results |
 | `FASTAPI_BASE_URL` | `http://fastapi:8001` | Where the Celery worker reaches FastAPI |
 | `FASTAPI_TIMEOUT_SECONDS` | `60` | HTTP timeout for worker-to-FastAPI calls |
 | `FASTAPI_DATABASE_URL` | `postgresql+asyncpg://devmind:devmind_secret@postgres:5432/devmind` | FastAPI's async database URL |
 | `DJANGO_BASE_URL` | `http://django:8000` | Where FastAPI fetches BYOK configs from |
-| `DEVMIND_PUBLIC_URL` | `http://localhost:8000` | Base for the webhook URL registered on GitHub (`<url>/api/v1/webhooks/github/`) and for organization invite links |
+| `DEVMIND_PUBLIC_URL` | `http://localhost:8000` | Base for the webhook URL registered on GitHub (`<url>/api/v1/webhooks/github/`) |
 | `FRONTEND_URL` | `http://localhost:5173` | Read into settings. No code uses it currently. The OAuth redirect is whatever callback URL the GitHub OAuth App has configured. |
 
 ### Django tunables
@@ -87,7 +104,6 @@ There's no server-side OpenAI provider. OpenAI keys can be added per user throug
 
 | Variable | Description |
 |---|---|
-| `SUPABASE_URL`, `SUPABASE_SERVICE_KEY` | If both are set, the orchestrator pushes review status changes to Supabase. Leave empty to turn it off. |
 | `SENTRY_DSN_DJANGO`, `SENTRY_DSN_FASTAPI` | Empty in `.env.example`, so Sentry is off by default. Set a DSN to enable it for that service. |
 | `SENTRY_ENVIRONMENT` | Sentry environment tag. When it's `production`, FastAPI turns off `/docs`. |
 | `GRAFANA_ADMIN_PASSWORD` | Grafana admin password, used by compose interpolation; `devmind` if unset |
@@ -108,27 +124,19 @@ cp .env.example .env
 # Sentry is off by default; set SENTRY_DSN_DJANGO / SENTRY_DSN_FASTAPI to enable it.
 ```
 
-### Step 2: Start the backend stack
+### Step 2: Start the stack
 
 ```bash
-docker compose up -d --build      # or: make build && make up
+make up             # runs: docker compose up -d
 ```
 
-### Step 3: Migrate
+This builds the images on first run and starts Postgres, Redis, Django, FastAPI, the Celery worker, Nginx and the frontend. The one-shot `migrate` service runs `manage.py migrate --noinput` once Postgres is healthy and then exits. Django, FastAPI and the worker wait for it to finish successfully. The `apps/core` migration `0001_enable_pgvector` runs `CREATE EXTENSION IF NOT EXISTS vector`, and its reverse is a no-op, so rolling back never drops the extension. The embedding tables still aren't created; see [Known Gaps](#10-known-gaps).
 
-```bash
-docker compose exec django uv run python manage.py migrate    # or: make migrate
-```
+If the images are out of date after a dependency change, run `make build` first.
 
-### Step 4: Enable pgvector
+Flower, Prometheus and Grafana are in the compose `ops` profile and only start with `make up-ops` (`docker compose --profile ops up -d`).
 
-```bash
-docker compose exec postgres psql -U devmind -c "CREATE EXTENSION IF NOT EXISTS vector;"
-```
-
-Until you run this, FastAPI `GET /health` returns 503 (`pgvector: error: extension not installed`). The embedding tables still won't exist afterwards; see [Known Gaps](#10-known-gaps).
-
-### Step 5: Configure the GitHub OAuth App
+### Step 3: Configure the GitHub OAuth App
 
 In GitHub, go to Settings, then Developer settings, then OAuth Apps:
 
@@ -137,17 +145,20 @@ In GitHub, go to Settings, then Developer settings, then OAuth Apps:
 | Homepage URL | `http://localhost:5173` |
 | Authorization callback URL | `http://localhost:5173/auth/callback` |
 
-### Step 6: Start the frontend
+### Step 4: Open the frontend
+
+The `frontend` compose service runs the Vite dev server on http://localhost:5173 with `./frontend` mounted, so edits hot-reload. It proxies `/api` to `http://django:8000` over the compose network (`API_PROXY_TARGET`, read by `frontend/vite.config.ts`).
+
+To run Vite on the host instead (needs Node.js 20 and pnpm), stop the container and start it locally; the proxy then defaults to `http://localhost:8000`:
 
 ```bash
+docker compose stop frontend
 cd frontend
 pnpm install --frozen-lockfile
-pnpm dev            # http://localhost:5173 (or: make frontend-dev)
+pnpm dev            # or: make frontend-dev
 ```
 
-The Vite dev server proxies `/api` to `http://localhost:8000` (`frontend/vite.config.ts`).
-
-### Step 7 (optional): Receive webhooks locally
+### Step 5 (optional): Receive webhooks locally
 
 GitHub can't reach `localhost`. Start a tunnel to Django:
 
@@ -170,10 +181,12 @@ Set `DEVMIND_PUBLIC_URL` to the https tunnel URL, then run `docker compose resta
 | FastAPI | 8001 | Published by compose. `/health`, `/metrics` and `/docs` are open; work routes need `X-Internal-Secret`. |
 | PostgreSQL | 5432 | user `devmind`, password `devmind_secret`, db `devmind` |
 | Redis | 6379 | |
-| Flower | 5555 | Uses the same `CELERY_BROKER_URL` as the worker (`redis://redis:6379/1` in the template) |
-| Prometheus | 9090 | |
-| Grafana | 3000 | User `admin`, password from `GRAFANA_ADMIN_PASSWORD` (default `devmind`). Provisions the "DevMind Overview" dashboard. |
-| Frontend | 5173 | Vite dev server; not in compose |
+| Flower | 5555 | `ops` profile only. Uses the same `CELERY_BROKER_URL` as the worker (`redis://redis:6379/1` in the template) |
+| Prometheus | 9090 | `ops` profile only |
+| Grafana | 3000 | `ops` profile only. User `admin`, password from `GRAFANA_ADMIN_PASSWORD` (default `devmind`). Provisions the "DevMind Overview" dashboard. |
+| Frontend | 5173 | Vite dev server (`frontend` service), proxies `/api` to Django |
+
+Each host port can be changed with an environment variable read by compose interpolation: `POSTGRES_PORT`, `REDIS_PORT`, `DJANGO_PORT`, `FASTAPI_PORT`, `FRONTEND_PORT`, `NGINX_PORT`, `FLOWER_PORT`, `PROMETHEUS_PORT`, `GRAFANA_PORT`. The defaults are the ports above.
 
 ---
 
@@ -183,13 +196,14 @@ Set `DEVMIND_PUBLIC_URL` to the https tunnel URL, then run `docker compose resta
 
 | Target | Command |
 |---|---|
-| `up` / `down` / `build` / `logs` / `reset` | `docker compose up -d`, `down`, `build`, `logs -f`, `down -v && up -d` |
+| `up` / `up-ops` | `docker compose up -d`; `docker compose --profile ops up -d` (adds Flower, Prometheus, Grafana) |
+| `down` / `build` / `logs` / `reset` | `docker compose --profile ops down`, `build`, `logs -f`, `--profile ops down -v && up -d` (`reset` deletes the database volume) |
 | `shell-django` / `shell-fastapi` | bash inside the container |
 | `psql` / `redis-flush` | Postgres shell / `FLUSHDB` |
 | `migrate` / `makemigrations` / `createsuperuser` | Django management commands in the container |
 | `test` (`test-all`) / `test-django` / `test-fastapi` | Backend test suites in the containers |
 | `format` | `black .` in the Django container |
-| `frontend-dev` | `cd frontend && pnpm dev` |
+| `frontend-dev` | `cd frontend && pnpm dev` (host alternative to the `frontend` service) |
 | `grafana-open` / `prometheus-open` / `prometheus-targets` | Observability helpers |
 | `ngrok` | `ngrok http 8000` |
 
@@ -270,16 +284,14 @@ All Django routes need `Authorization: Bearer <access_jwt>` unless marked otherw
 | `repositories/` | GET | User's active repositories; `?review_enabled=true` filter |
 | `repositories/<id>/` | GET, PATCH | Detail; PATCH updates `review_enabled` and `default_branch` |
 | `repositories/connect/` | POST | Queues a GitHub repository sync, which installs webhooks on new repos (202) |
-| `repositories/<id>/scan/` | POST | Queues a full-repository scan. Limited to one per repository per 24 hours (429 with `retry_after`). |
 
-### Reviews and scans
+### Reviews
 
 | Endpoint | Method | Description |
 |---|---|---|
 | `reviews/` | GET | Paginated (20 per page). Filters `status`, `repository`; `search` over PR title and repo name; `ordering` by `created_at`, `risk_score`, `status`; `detail=true` returns full objects. |
 | `reviews/<id>/` | GET | Review with nested comments and run (owner only) |
 | `reviews/<id>/retrigger/` | POST | Re-queue a `pending`/`failed` review (409 if processing, 400 if completed) |
-| `reviews/scans/<id>/` | GET | Scan status |
 
 ### LLM settings (BYOK)
 
@@ -289,19 +301,6 @@ All Django routes need `Authorization: Bearer <access_jwt>` unless marked otherw
 | `settings/llm/test/` | POST | Validate a key without saving |
 | `settings/llm/<id>/` | GET, PATCH, DELETE | Manage one config |
 | `settings/llm/<id>/set_default/` | POST | Set priority 0 and bump the others (`POST settings/llm/<id>/` does the same) |
-
-### Organizations
-
-| Endpoint | Description |
-|---|---|
-| `organizations/` | Create an organization |
-| `organizations/<id>/` | Organization detail |
-| `organizations/<org_id>/invite/` | Invite a member (queues an invite email) |
-| `organizations/<org_id>/members/` | List members |
-| `organizations/<org_id>/members/<user_id>/` | Remove a member |
-| `organizations/invite/accept/` | Accept an invite |
-
-See `apps/organizations/views.py` for methods and permissions.
 
 ### Webhook and internal
 
@@ -321,19 +320,16 @@ See `apps/organizations/views.py` for methods and permissions.
 
 | Endpoint | Method | Auth | Description |
 |---|---|---|---|
-| `/review/analyze` | POST | `X-Internal-Secret` | Run the retrieval steps and review agent. Returns comments, risk score, model, provider and latency. |
+| `/review/analyze` | POST | `X-Internal-Secret` | Run the retrieval steps and review agent. Returns comments, risk score, model, provider, latency and per-analyzer `analyzer_runs`. |
 | `/embeddings/store` | POST | `X-Internal-Secret` | Store a code embedding |
 | `/embeddings/search` | POST, GET | `X-Internal-Secret` | Similarity search |
-| `/scan/full` | POST | `X-Internal-Secret` | Start a background repository scan (202) |
-| `/scan/status/{scan_id}` | GET | `X-Internal-Secret` | Scan progress (in-process memory) |
-| `/scan/report/{scan_id}` | GET | `X-Internal-Secret` | Scan report |
-| `/health` | GET | none | DB, pgvector and provider reachability; 503 if DB or pgvector check fails |
+| `/health` | GET | none | DB, pgvector and, per server provider, the configured model and whether the provider lists it (`llm`; listings cached for `LLM_HEALTH_CACHE_SECONDS`). Listed doesn't mean usable; use `make providers-check` for that. 503 if DB or pgvector check fails |
 | `/metrics` | GET | none | Prometheus instrumentator |
 | `/docs` | GET | none | OpenAPI UI (off when `SENTRY_ENVIRONMENT=production`) |
 
-### WebSocket (not currently served)
+### Review status (polling, no WebSocket)
 
-`realtime/routing.py` defines `ws/reviews/<review_id>/?token=<access_jwt>` and `ws/notifications/`, but no ASGI server is configured. See [SYSTEM_ARCHITECTURE.md, WebSocket status](SYSTEM_ARCHITECTURE.md#websocket-status). The frontend's `ReviewStatus` component tries to connect and falls back to a static view if it can't.
+There are no WebSocket routes. While a review is `pending` or `processing`, the frontend's `ReviewStatus` component polls `GET /api/v1/reviews/<id>/` every 3 seconds and stops on `completed`, `failed` or unmount. A 403 or 404 stops polling at once. A 5xx or network failure backs off: the next request waits 3, 6, 12, 24, 48 and then 60 seconds, and polling gives up after 10 consecutive failures. A successful request resets the backoff. When polling stops on an error, the badge keeps the last known status and shows "Status updates stopped". A 401 is handled by the API client's token-refresh interceptor. The review page refetches the review when the status becomes terminal. See [SYSTEM_ARCHITECTURE.md, Review status updates](SYSTEM_ARCHITECTURE.md#review-status-updates).
 
 ---
 
@@ -355,7 +351,7 @@ uv run pytest --cov
 make test-django
 ```
 
-`devmind/settings/test.py` sets Celery to eager mode (`CELERY_TASK_ALWAYS_EAGER`), uses an in-memory channel layer, the MD5 password hasher and no throttling, turns off Sentry and Supabase, and sets `SKIP_LLM_KEY_VALIDATION=True`. The cache is still django-redis, which is why Redis must be running.
+`devmind/settings/test.py` sets Celery to eager mode (`CELERY_TASK_ALWAYS_EAGER`), uses the MD5 password hasher and no throttling, turns off Sentry, and sets `SKIP_LLM_KEY_VALIDATION=True`. The cache is still django-redis, which is why Redis must be running.
 
 Test modules:
 
@@ -363,9 +359,8 @@ Test modules:
 |---|---|
 | Accounts | `apps/accounts/tests/test_views.py`, `test_oauth.py`, `test_byok.py`, `test_base_url_ssrf.py`, `test_url_safety.py`, `test_models.py` |
 | Repositories | `apps/repositories/tests/test_webhooks.py`, `test_views.py`, `test_tasks.py`, `test_services.py`, `test_models.py`, `test_managers.py`, `test_admin.py` |
-| Reviews | `apps/reviews/tests/test_orchestrator.py`, `test_views.py`, `test_github_poster.py`, `test_models.py` |
-| Organizations | `apps/organizations/tests/test_views.py` |
-| Realtime | `realtime/tests/test_consumers.py` |
+| Reviews | `apps/reviews/tests/test_orchestrator.py`, `test_views.py`, `test_github_poster.py`, `test_models.py`, `test_scan_removed.py` |
+| Core (migrations) | `apps/core/tests/test_pgvector_migration.py`, `test_drop_organizations_migration.py` |
 | End to end | `tests/test_e2e.py` |
 
 ### FastAPI
@@ -381,11 +376,11 @@ uv run pytest            # pyproject addopts include --cov
 make test-fastapi
 ```
 
-The tests in `backend/fastapi/tests/` cover the agent, diff parser, prompt builder, LLM client, rate limiter (with `fakeredis`), vector store, review/embeddings/scan/health routers and internal-secret enforcement.
+The tests in `backend/fastapi/tests/` cover the agent, diff parser, prompt builder, LLM client, rate limiter (with `fakeredis`), vector store, review/embeddings/health routers, internal-secret enforcement and the absence of the removed `/scan` routes.
 
 ### Frontend
 
-The frontend has no automated tests. CI runs:
+Vitest covers the review status polling loop (`src/lib/reviewStatusPolling.test.ts`): the 3-second interval, stopping on `completed` and `failed`, stopping when the component unmounts, stopping after one request on 403 and 404, exponential backoff on 5xx and network errors, giving up after 10 consecutive failures, resetting the backoff after a success, and the handler `ReviewDetail` uses to refetch the review on a terminal status. `src/api/scanRemoved.test.ts` checks that the removed scan page and API stay removed. There are no component or page tests. CI runs:
 
 ```bash
 cd frontend
@@ -393,6 +388,7 @@ pnpm install --frozen-lockfile
 pnpm exec tsc -p tsconfig.app.json --noEmit
 pnpm build
 pnpm lint
+pnpm test
 ```
 
 ### Measured results
@@ -401,8 +397,8 @@ These were measured locally on this branch. Coverage method: `pytest --cov`, the
 
 | Suite | Result | Line coverage |
 |---|---|---|
-| Django | 244 passed | 83% |
-| FastAPI | 176 passed | 80% |
+| Django | 225 passed | 86% |
+| FastAPI | 226 passed | 91% |
 | Frontend | `tsc`, `build` pass; `lint` 0 errors, 3 warnings | n/a |
 
 ### CI
@@ -411,7 +407,7 @@ These were measured locally on this branch. Coverage method: `pytest --cov`, the
 
 - **Django (pytest):** Postgres (`pgvector/pgvector:pg16`) and Redis service containers; `ruff check`, `black --check`, `makemigrations --check --dry-run`, `pytest --cov`
 - **FastAPI (pytest):** `ruff check`, `black --check`, `pytest`
-- **Frontend (typecheck, build, lint):** pnpm 9 and Node 20; `tsc`, `pnpm build`, `pnpm lint`
+- **Frontend (typecheck, build, lint):** pnpm 9 and Node 20; `tsc`, `pnpm build`, `pnpm lint`, `pnpm test`
 
 CI doesn't enforce a coverage threshold.
 
@@ -433,7 +429,7 @@ The repo doesn't include deployment infrastructure (no Terraform, Helm or Kubern
 - [ ] Use strong random values for `DJANGO_SECRET_KEY`, `JWT_SECRET_KEY` and `FASTAPI_INTERNAL_SECRET`, and set `GITHUB_WEBHOOK_SECRET`
 - [ ] Treat `DJANGO_SECRET_KEY` as the encryption key: rotating it makes stored tokens and API keys unreadable
 - [ ] Don't publish FastAPI's port; only the Celery workers need to reach it
-- [ ] Enable the `vector` extension and create the embedding tables (see [Known Gaps](#10-known-gaps))
+- [ ] Make sure the database role can create the `vector` extension (`migrate` runs `CREATE EXTENSION IF NOT EXISTS vector`), and create the embedding tables (see [Known Gaps](#10-known-gaps))
 - [ ] Run `migrate` before starting new code that depends on schema changes
 - [ ] Set `SENTRY_DSN_*` and `SENTRY_ENVIRONMENT=production` (this also turns off FastAPI `/docs`)
 
@@ -452,8 +448,11 @@ The repo doesn't include deployment infrastructure (no Terraform, Helm or Kubern
 
 ### FastAPI `/health` returns 503 with `pgvector: error: extension not installed`
 
+The `core.0001_enable_pgvector` migration hasn't run against this database. Check the one-shot service's output and rerun it:
+
 ```bash
-docker compose exec postgres psql -U devmind -c "CREATE EXTENSION IF NOT EXISTS vector;"
+docker compose logs migrate
+docker compose run --rm migrate
 ```
 
 ### Review stuck in `processing`
@@ -484,11 +483,14 @@ docker compose restart django fastapi celery_worker
 
 ### Review failed with "LLM providers rate limited (429)"
 
-FastAPI raised `AllProvidersDownError`: every provider in the chain returned 429, 5xx, a non-200 response or timed out, or no provider is configured. Check that at least one of `GOOGLE_AI_API_KEY`, `GROQ_API_KEY` or `GITHUB_TOKEN` is set, or that the user has an active BYOK config. Then look at:
+FastAPI raised `AllProvidersDownError`: every provider in the chain returned 429, 404, 5xx, another non-200 response or timed out, or no provider is configured. Check that at least one of `GOOGLE_AI_API_KEY` or `GROQ_API_KEY` is set, or that the user has an active BYOK config. Then look at:
 
 ```bash
 docker compose logs fastapi | grep "llm\."
+make providers-check
 ```
+
+Each `llm.failover` line has a `reason`: `rate_limited`, `model_not_found`, `timeout` or `unavailable`. `model_not_found` (also logged as `llm.model_not_found`) means the provider won't serve the configured model to this key. `make providers-check` prints the provider's reason under that provider's row. Set `GOOGLE_MODEL` / `GROQ_MODEL` to a model whose chat result in `make providers-check` is `ok`. Being listed isn't enough.
 
 ### Reviews complete but nothing appears on GitHub
 
@@ -544,33 +546,25 @@ docker compose restart redis
 
 These gaps are confirmed in the current code.
 
-### WebSockets are not served
+### Embedding tables are never created
 
-The Channels consumers, routing and JWT query middleware exist and are tested. However, `ASGI_APPLICATION` isn't set, `daphne` isn't in `INSTALLED_APPS`, the production image runs gunicorn on WSGI, and Nginx has no upgrade block. `ReviewStatusConsumer` also doesn't check that the user owns the review. Add that check before serving it.
-
-### pgvector schema is never created
-
-Nothing enables the `vector` extension or creates `code_embeddings` / `review_embeddings` (FastAPI never calls `create_all`, and no Django migration covers them). Until both exist, the retrieval steps log errors and reviews run without similar-code context. There's also no vector index defined.
+The `vector` extension is enabled by a Django migration, but nothing creates `code_embeddings` / `review_embeddings` (FastAPI never calls `create_all`, and no Django migration covers them). Until they exist, the retrieval steps log errors and reviews run without similar-code context. For a table created by hand, apply `backend/fastapi/migrations/sql/0001_code_embeddings_source_ref.sql` and `0002_code_embeddings_hnsw_index.sql` in order; the second adds the HNSW cosine index (`models/embeddings.py` declares the same index).
 
 ### `review_embeddings` is never written
 
 `VectorStore.store_review_embedding` is only called from tests, and `POST /review/analyze` receives no review ID. The table stays empty, and the "past reviews" part of the prompt is never filled.
 
-### `fetch_conventions` is a placeholder
+### Repository conventions aren't used
 
-The first agent node returns `{}`. Repository conventions never reach the prompt, even though `build_review_prompt` has a slot for them.
+Nothing loads repository conventions, so they never reach the prompt, even though `build_review_prompt` has a `repo_conventions` slot for them.
 
 ### GitHub token returned to the browser
 
 `GET /api/v1/auth/github/token/` returns the decrypted OAuth token, and the frontend calls it (`src/api/client.ts`). JWTs are stored in `localStorage`.
 
-### Repository scans don't complete in Django
-
-`full_repo_scan_task` starts `/scan/full` and records the FastAPI scan ID. Django never calls `/scan/status` or `/scan/report`, so `RepoScan` stays in `scanning`. Django also passes no GitHub token, so private repositories can't be read. FastAPI keeps progress in a module-level dict, which is lost on restart and not shared between workers.
-
 ### Token counts not reported
 
-`ReviewResponse` has no token fields, so `ReviewRun.prompt_tokens`, `completion_tokens` and `agent_iterations` keep their defaults.
+`ReviewResponse` has no top-level token fields. Token counts are returned only per analyzer in `analyzer_runs`, which Django doesn't read, so `ReviewRun.prompt_tokens`, `completion_tokens` and `agent_iterations` keep their defaults.
 
 ### BYOK provider coverage
 
@@ -592,6 +586,6 @@ The task exists in `apps/reviews/tasks.py`, but there is no Celery beat service,
 
 `ReviewRun.diff_text` is a `TextField` with no size cap or compression.
 
-### Frontend has no tests
+### Frontend tests are minimal
 
-CI covers the type check, build and lint only.
+Vitest covers only the review status polling loop and the scan-removal check. There are no component or page tests.

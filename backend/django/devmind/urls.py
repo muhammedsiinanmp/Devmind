@@ -40,7 +40,6 @@ urlpatterns: list[Any] = [
                 path("auth/", include("apps.accounts.urls")),
                 path("reviews/", include("apps.reviews.urls")),
                 path("settings/", include("apps.accounts.urls")),
-                path("organizations/", include("apps.organizations.urls")),
             ]
         ),
     ),

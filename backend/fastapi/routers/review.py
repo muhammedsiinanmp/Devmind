@@ -1,12 +1,14 @@
 """
 Review router with full RAG pipeline.
 
-Wires: parse diff → embed → similarity search → build prompt → review agent → store embedding → return response.
+Wires: parse diff → similarity search per hunk → build prompt → review agent → return response → embed the PR's hunks.
 """
 
 import time
 import asyncio
+import hashlib
 import logging
+from dataclasses import asdict
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
@@ -15,11 +17,16 @@ from core.metrics import rag_pipeline_duration, agent_iterations, review_errors_
 from models.review import ReviewRequest, ReviewResponse, ReviewComment
 from services.code_parser import DiffChunk, parse_diff
 from services.prompt_builder import PromptContext, build_review_prompt
+from services.comment_anchoring import anchor_comments
 from services.llm_client import AllProvidersDownError
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/review", tags=["review"])
+
+# Strong references to fire-and-forget tasks; the event loop keeps only weak
+# ones, so an unreferenced task can be garbage-collected before it finishes.
+_background_tasks: set[asyncio.Task] = set()
 
 
 def _chunk_text(chunk: DiffChunk) -> str:
@@ -38,50 +45,82 @@ def _chunk_text(chunk: DiffChunk) -> str:
     return "\n".join(lines).strip()
 
 
+def _source_ref(pr_number: int) -> str | None:
+    """source_ref tag for a PR's chunks in code_embeddings (None if unknown)."""
+    return f"PR#{pr_number}" if pr_number else None
+
+
+def _normalize(text: str) -> str:
+    return " ".join(text.split())
+
+
 async def _prepare_rag_context(
     request: ReviewRequest,
 ) -> tuple[list[DiffChunk], list[str], str]:
     """
     Run the RAG context preparation steps:
-    parse diff -> embed/store chunks -> similarity search -> build prompt.
+    parse diff -> similarity search per hunk -> build prompt.
+
+    Nothing is stored here. The PR's own chunks are embedded by
+    store_review_async after the review, so retrieval only sees other code:
+    rows tagged with this PR's source_ref are excluded in the query, and any
+    result whose text matches a hunk of this diff is dropped.
     """
     parsed_chunks = parse_diff(request.diff)
     similar_patterns: list[str] = []
 
+    all_hunk_texts = [text for text in map(_chunk_text, parsed_chunks) if text]
+    # Queries are capped at 20 hunks; the duplicate filter covers the whole diff.
+    hunk_texts = all_hunk_texts[:20]
+    current_hunks = {_normalize(text[:4000]) for text in all_hunk_texts}
+    legacy_pr_path = f"PR#{request.pr_number}"
+
     try:
         from core.database import AsyncSessionLocal
-        from services.vector_store import vector_store, VectorStoreError
+        from services.vector_store import SimilarChunk, vector_store
 
+        best: dict[str, SimilarChunk] = {}
+        # Embed every query in one batched call before opening a session, so
+        # no DB connection is held while waiting on the embedding API.
+        query_embeddings = await vector_store.generate_embeddings(
+            [text[:4000] for text in hunk_texts], task_type="RETRIEVAL_QUERY"
+        )
         async with AsyncSessionLocal() as session:
-            for chunk in parsed_chunks[:20]:
-                chunk_text = _chunk_text(chunk)
-                if not chunk_text:
-                    continue
-                try:
-                    await vector_store.store_code_embedding(
-                        session=session,
-                        repo_full_name=request.repo_full_name,
-                        file_path=chunk.file_path or f"PR#{request.pr_number}",
-                        chunk_text=chunk_text[:4000],
-                        language=chunk.language or "unknown",
-                        chunk_type=chunk.chunk_type or "hunk",
-                    )
-                except VectorStoreError:
-                    # duplicate or transient embedding issues should not block reviews
-                    continue
+            if query_embeddings:
+                await vector_store.enable_iterative_scan(session)
+            for query_embedding in query_embeddings:
+                results = await vector_store.search_similar_by_embedding(
+                    session=session,
+                    query_embedding=query_embedding,
+                    repo_full_name=request.repo_full_name,
+                    top_k=5,
+                    threshold=0.6,
+                    exclude_source_ref=_source_ref(request.pr_number),
+                )
+                for item in results:
+                    if item.file_path == legacy_pr_path:
+                        # Untagged row written for this PR by older versions
+                        continue
+                    key = _normalize(item.chunk_text)
+                    if key in current_hunks:
+                        continue
+                    kept = best.get(key)
+                    if kept is None or item.similarity > kept.similarity:
+                        best[key] = item
 
-            search_query = request.diff[:2000]
-            similar_chunks = await vector_store.search_similar(
-                session=session,
-                query_text=search_query,
-                repo_full_name=request.repo_full_name,
-                top_k=5,
-                threshold=0.6,
+        similar_chunks = sorted(best.values(), key=lambda c: -c.similarity)[:5]
+        for item in similar_chunks:
+            logger.info(
+                "review.rag_context.retrieved repo=%s pr=%s file=%s similarity=%s",
+                request.repo_full_name,
+                request.pr_number,
+                item.file_path,
+                item.similarity,
             )
-            similar_patterns = [
-                f"{item.file_path} ({item.language}, sim={item.similarity}): {item.chunk_text[:300]}"
-                for item in similar_chunks
-            ]
+        similar_patterns = [
+            f"{item.file_path} ({item.language}, sim={item.similarity}): {item.chunk_text[:300]}"
+            for item in similar_chunks
+        ]
     except Exception as exc:
         logger.warning("review.rag_context_partial error=%s", str(exc))
 
@@ -93,24 +132,28 @@ async def _prepare_rag_context(
     return parsed_chunks, similar_patterns, prebuilt_prompt
 
 
+RISK_BASE_BY_SEVERITY = {"critical": 70, "error": 45, "warning": 20, "info": 5}
+
+
 def calculate_risk_score(comments: list[dict]) -> int:
-    """Calculate risk score from 0-100 based on comment severity."""
+    """
+    Calculate risk score from 0-100, driven by the worst finding.
+
+    Base score for the highest severity, plus 3 per other finding above
+    info (at most +15). The maximum is 70 + 15 = 85. Unknown severities
+    count as info.
+    """
     if not comments:
         return 0
 
-    severity_scores = {
-        "critical": 40,
-        "error": 25,
-        "warning": 10,
-        "info": 2,
-    }
+    bases = sorted(
+        (RISK_BASE_BY_SEVERITY.get(c.get("severity", "info"), 5) for c in comments),
+        reverse=True,
+    )
+    info_base = RISK_BASE_BY_SEVERITY["info"]
+    others_above_info = sum(1 for base in bases[1:] if base > info_base)
 
-    total = 0
-    for comment in comments:
-        severity = comment.get("severity", "info")
-        total += severity_scores.get(severity, 2)
-
-    return min(100, total)
+    return bases[0] + min(15, 3 * others_above_info)
 
 
 @router.post("/analyze", response_model=ReviewResponse)
@@ -159,6 +202,7 @@ async def analyze_review(
                         suggested_fix=item.get("suggested_fix"),
                     )
                 )
+        comments, anchor_stats = anchor_comments(parsed_chunks, comments)
 
         comments_data = [c.model_dump() for c in comments]
         risk_score = calculate_risk_score(comments_data)
@@ -168,16 +212,16 @@ async def analyze_review(
 
         model_used = result.get("model_used", "unknown")
 
-        # Store embedding asynchronously (fire-and-forget)
-        asyncio.create_task(
+        # Embed the PR's hunks after the review (fire-and-forget)
+        task = asyncio.create_task(
             store_review_async(
                 repo_full_name=request.repo_full_name,
                 pr_number=request.pr_number,
-                diff=request.diff,
-                comments=comments_data,
-                model=model_used,
+                chunks=parsed_chunks,
             )
         )
+        _background_tasks.add(task)
+        task.add_done_callback(_background_tasks.discard)
 
         return ReviewResponse(
             repo_full_name=request.repo_full_name,
@@ -187,6 +231,8 @@ async def analyze_review(
             model_used=model_used,
             provider=model_used.split("/")[0] if "/" in model_used else "unknown",
             latency_ms=latency_ms,
+            analyzer_runs=result.get("analyzer_runs", {}),
+            **asdict(anchor_stats),
         )
 
     except AllProvidersDownError:
@@ -210,23 +256,80 @@ async def analyze_review(
 async def store_review_async(
     repo_full_name: str,
     pr_number: int,
-    diff: str,
-    comments: list[dict],
-    model: str,
+    chunks: list[DiffChunk],
 ):
-    """Store review embedding asynchronously."""
+    """Embed the reviewed PR's hunks, tagged with the PR's source_ref.
+
+    Runs after the review so the PR's own chunks are never retrieved for it.
+    Chunks whose sha256 is already stored are skipped before embedding, the
+    rest are embedded in one batched call, and no DB connection is held
+    during that call.
+    """
     try:
+        from sqlalchemy.exc import DataError, IntegrityError
+
         from services.vector_store import vector_store
         from core.database import AsyncSessionLocal
 
-        async with AsyncSessionLocal() as session:
-            await vector_store.store_code_embedding(
-                session=session,
-                repo_full_name=repo_full_name,
-                file_path=f"PR#{pr_number}",
-                chunk_text=diff[:1000],
-                language="diff",
-                chunk_type="pr",
+        source_ref = _source_ref(pr_number)
+        pending: dict[str, tuple[DiffChunk, str]] = {}  # sha256 -> (chunk, text)
+        for chunk in chunks[:20]:
+            chunk_text = _chunk_text(chunk)
+            if not chunk_text:
+                continue
+            chunk_text = chunk_text[:4000]
+            text_hash = hashlib.sha256(chunk_text.encode()).hexdigest()
+            pending.setdefault(text_hash, (chunk, chunk_text))
+
+        if pending:
+            async with AsyncSessionLocal() as session:
+                existing = await vector_store.existing_hashes(session, list(pending))
+            for text_hash in existing:
+                pending.pop(text_hash, None)
+
+        stored = 0
+        if pending:
+            embeddings = await vector_store.generate_embeddings(
+                [text for _, text in pending.values()],
+                task_type="RETRIEVAL_DOCUMENT",
             )
+            async with AsyncSessionLocal() as session:
+                for (text_hash, (chunk, chunk_text)), embedding in zip(
+                    pending.items(), embeddings
+                ):
+                    try:
+                        await vector_store.insert_code_embedding(
+                            session=session,
+                            repo_full_name=repo_full_name,
+                            file_path=chunk.file_path or f"PR#{pr_number}",
+                            chunk_text=chunk_text,
+                            embedding=embedding,
+                            sha256=text_hash,
+                            language=chunk.language or "unknown",
+                            chunk_type=chunk.chunk_type or "hunk",
+                            source_ref=source_ref,
+                        )
+                        stored += 1
+                    except (IntegrityError, DataError) as exc:
+                        # This row only, e.g. a concurrent insert of the same
+                        # sha256 or a value too long for its column. Reset the
+                        # session so the remaining chunks can still be stored.
+                        # Any other error (a missing column, a lost connection)
+                        # would hit every chunk, so it ends the task below.
+                        await session.rollback()
+                        logger.warning(
+                            "store_review.chunk_error repo=%s pr=%s file=%s error=%s",
+                            repo_full_name,
+                            pr_number,
+                            chunk.file_path,
+                            type(exc).__name__,
+                        )
+                        continue
+        logger.info(
+            "store_review.done repo=%s pr=%s stored=%d",
+            repo_full_name,
+            pr_number,
+            stored,
+        )
     except Exception as e:
         logger.error("store_review.error error=%s", str(e))

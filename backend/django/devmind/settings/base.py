@@ -33,7 +33,6 @@ THIRD_PARTY_APPS = [
     "rest_framework_simplejwt",
     "rest_framework_simplejwt.token_blacklist",
     "corsheaders",
-    "channels",
     "django_filters",
     "django_prometheus",
     "drf_spectacular",
@@ -44,7 +43,6 @@ LOCAL_APPS = [
     "apps.repositories",
     "apps.reviews",
     "apps.core",
-    "apps.organizations",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -188,10 +186,6 @@ GITHUB_CLIENT_ID = env("GITHUB_CLIENT_ID", default="")
 GITHUB_CLIENT_SECRET = env("GITHUB_CLIENT_SECRET", default="")
 GITHUB_WEBHOOK_SECRET = env("GITHUB_WEBHOOK_SECRET", default="")
 
-# Supabase (realtime updates)
-SUPABASE_URL = env("SUPABASE_URL", default="")
-SUPABASE_SERVICE_KEY = env("SUPABASE_SERVICE_KEY", default="")
-
 # Frontend URL. Currently unused: the OAuth redirect is the callback URL
 # configured on the GitHub OAuth App, and no redirect_uri is sent.
 FRONTEND_URL = env("FRONTEND_URL", default="http://localhost:5173")
@@ -257,16 +251,6 @@ CACHES = {
     }
 }
 
-# Channel Layers (Django Channels for WebSocket support)
-CHANNEL_LAYERS = {
-    "default": {
-        "BACKEND": "channels_redis.core.RedisChannelLayer",
-        "CONFIG": {
-            "hosts": [REDIS_URL],
-        },
-    }
-}
-
 # ── Repositories App ─────────────────────────────────────────────────────────
 
 # Public URL used to construct webhook callback URLs
@@ -285,8 +269,5 @@ CELERY_TASK_ROUTES = {
     "repositories.trigger_review": {"queue": "review"},
     "apps.reviews.tasks.trigger_review_task": {"queue": "default"},
     "apps.reviews.tasks.post_github_comments_task": {"queue": "default"},
-    "apps.reviews.tasks.full_repo_scan_task": {"queue": "default"},
     "apps.reviews.tasks.cleanup_old_reviews": {"queue": "default"},
-    "organizations.send_invite_email_task": {"queue": "default"},
-    "organizations.sync_org_members_task": {"queue": "default"},
 }
