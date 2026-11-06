@@ -354,7 +354,7 @@ class TestModelSettings:
         from core.config import Settings
 
         defaults = Settings(_env_file=None)
-        assert defaults.google_model == "gemini-3.5-flash"
+        assert defaults.google_model == "gemini-3.6-flash"
         assert defaults.groq_model == "openai/gpt-oss-120b"
 
     def test_github_token_does_not_add_a_provider(self, monkeypatch):

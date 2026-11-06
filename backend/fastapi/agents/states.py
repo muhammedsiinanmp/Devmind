@@ -58,6 +58,9 @@ class ReviewState(TypedDict):
     diff_chunks: list
     similar_patterns: list
     prebuilt_prompt: str
+    # Delimiter tag of this review's untrusted-data blocks
+    # (prompt_builder.new_delimiter_tag); prebuilt_prompt uses it too.
+    delimiter_tag: str
 
     # ── FIX: Annotated with _extend_list so parallel branches accumulate ─────
     # Without this, last-write-wins and two of the three analyzers are silently

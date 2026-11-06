@@ -6,7 +6,11 @@ tests/golden/small_diff_prompts.json holds the exact messages the analyzers
 sent for SMALL_DIFF before batching existed, through the agent alone (the
 eval harness path) and through POST /review/analyze (the router path, with
 retrieved similar patterns). The committed eval cassettes are keyed on these
-prompts, so any change here also breaks `make eval`.
+prompts, so any change here also breaks `make eval`. The delimiter tag uses
+the eval harness's fixed nonce (EVAL_DELIMITER_NONCE). The file was last
+regenerated for A7 (#99), whose prompt change (per-review delimiter tag,
+untrusted-input rules moved to the end of the system prompt) needs the
+cassettes re-recorded.
 
 Regenerate only on purpose, after a prompt change that re-records the
 cassettes: ``uv run python -m tests.test_review_golden`` writes the file and
@@ -127,7 +131,13 @@ async def _router_path() -> list[dict]:
 
 
 async def _capture() -> dict[str, list[dict]]:
-    return {"agent": await _agent_path(), "router": await _router_path()}
+    from evals.run import EVAL_DELIMITER_NONCE
+    from services import prompt_builder
+
+    # The eval harness's fixed delimiter nonce; a review otherwise draws a
+    # random one, and the prompts could not be compared.
+    with patch.object(prompt_builder, "delimiter_nonce", lambda: EVAL_DELIMITER_NONCE):
+        return {"agent": await _agent_path(), "router": await _router_path()}
 
 
 @pytest.mark.asyncio

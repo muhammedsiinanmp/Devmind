@@ -85,6 +85,15 @@ class LLMConfig:
     base_url: str
     max_tokens: int
     rpm_limit: int
+    # Overrides the caller's temperature: a number, OMIT_TEMPERATURE to send
+    # none, or None to use the caller's. Set for the server providers from
+    # GOOGLE_TEMPERATURE / GROQ_TEMPERATURE, and for BYOK configs from
+    # BYOK_TEMPERATURE.
+    temperature: float | str | None = None
+
+
+# LLMConfig.temperature value that leaves temperature out of the request.
+OMIT_TEMPERATURE = "omit"
 
 
 @dataclass
@@ -129,6 +138,7 @@ def _init_model_chain() -> list[LLMConfig]:
                 base_url=GOOGLE_BASE_URL,
                 max_tokens=8192,
                 rpm_limit=15,
+                temperature=settings.google_temperature,
             )
         )
 
@@ -141,10 +151,20 @@ def _init_model_chain() -> list[LLMConfig]:
                 base_url=GROQ_BASE_URL,
                 max_tokens=4096,
                 rpm_limit=30,
+                temperature=settings.groq_temperature,
             )
         )
 
     return chain
+
+
+# Temperature of BYOK configs by provider; providers not listed use the
+# caller's. Google's docs say Gemini 3.6+ ignores temperature and a future
+# release will reject it with a 400, and that earlier Gemini 3 models should
+# keep the default, so a BYOK Gemini key sends none.
+BYOK_TEMPERATURE: dict[LLMProvider, float | str] = {
+    LLMProvider.GOOGLE_VERTEX: OMIT_TEMPERATURE,
+}
 
 
 # Providers whose OpenAI-compatible endpoint accepts
@@ -167,7 +187,9 @@ def _request_body(
     """
     Chat completions request body.
 
-    ``temperature`` and ``max_tokens`` come from kwargs when given.
+    ``temperature`` and ``max_tokens`` come from kwargs when given, except
+    that a provider temperature set in the config (config.temperature)
+    replaces the caller's, and OMIT_TEMPERATURE sends none.
     ``json_mode=True`` asks for a JSON object reply where the provider
     supports it.
     """
@@ -175,8 +197,11 @@ def _request_body(
         "model": config.model,
         "messages": messages,
         "max_tokens": kwargs.get("max_tokens", config.max_tokens),
-        "temperature": kwargs.get("temperature", 0.7),
     }
+    if config.temperature is None:
+        body["temperature"] = kwargs.get("temperature", 0.7)
+    elif config.temperature != OMIT_TEMPERATURE:
+        body["temperature"] = config.temperature
     if kwargs.get("json_mode") and config.provider in JSON_MODE_PROVIDERS:
         body["response_format"] = {"type": "json_object"}
     return body
@@ -286,6 +311,7 @@ class LLMClient:
                 base_url=base_url,
                 max_tokens=4096,
                 rpm_limit=30,
+                temperature=BYOK_TEMPERATURE.get(provider),
             )
             configs.append(config)
             rate_limiter.add_provider(config.provider.value, config.rpm_limit)

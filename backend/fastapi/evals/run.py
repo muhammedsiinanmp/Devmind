@@ -6,9 +6,11 @@ Run the review agent over the labeled eval cases and score it.
         --results-dir evals/results                  # real providers
 
 Runs ``run_review_agent`` directly, without the router's database/RAG step,
-so no Postgres is needed. Only ``llm_client.generate`` is swapped out: in
+so no Postgres is needed. ``llm_client.generate`` is swapped out: in
 replay it serves recorded responses, in live mode it is wrapped so the
-responses can be recorded. Nothing here changes the prompts the agent sends.
+responses can be recorded. The only change to the prompts the agent sends is
+that the untrusted-data delimiter tag uses a fixed nonce
+(EVAL_DELIMITER_NONCE) instead of a random one, so they replay.
 
 The agent's output is then put through the same post-processing the router
 applies before posting (see ``postprocess``), so the scores describe what
@@ -45,6 +47,8 @@ EVALS_DIR = Path(__file__).parent
 CASSETTES_DIR = EVALS_DIR / "cassettes"
 RESULTS_DIR = EVALS_DIR / "results"
 REPO_NAME = "devmind-evals/synthetic"
+# Delimiter-tag nonce used for every eval prompt (see _run_agent).
+EVAL_DELIMITER_NONCE = "000000000000000000"
 LATENCY_NOTE = (
     "Latency depends on the provider chain, quotas and network; compare it "
     "only between runs that used the same providers."
@@ -200,9 +204,15 @@ def _replay_response(call: dict):
 
 async def _run_agent(case: Case, generate) -> dict:
     from agents.review_agent import run_review_agent
+    from services import prompt_builder
     from services.llm_client import llm_client
 
-    with patch.object(llm_client, "generate", generate):
+    # Fixed delimiter nonce, so the prompts (and their cassette hashes) are
+    # the same on every run; in production each review gets a random one.
+    with (
+        patch.object(llm_client, "generate", generate),
+        patch.object(prompt_builder, "delimiter_nonce", lambda: EVAL_DELIMITER_NONCE),
+    ):
         return await run_review_agent(diff_text=case.diff, repo_full_name=REPO_NAME)
 
 
@@ -529,6 +539,23 @@ def restrict_provider(provider: str | None) -> Iterator[None]:
         yield
 
 
+def temperature_settings() -> dict[str, Any]:
+    """
+    The temperature settings a live run's requests used, for its results.
+
+    The cassettes don't record them, so two live runs at different settings
+    can only be told apart by this.
+    """
+    from core.config import get_settings
+
+    s = get_settings()
+    return {
+        "review": s.review_temperature,
+        "google": s.google_temperature,
+        "groq": s.groq_temperature,
+    }
+
+
 async def run(
     mode: str,
     cases: list[Case],
@@ -618,6 +645,8 @@ def main(argv: list[str] | None = None) -> int:
         "record": args.record,
         "allow_partial": args.allow_partial,
     }
+    if args.live:
+        flags["temperatures"] = temperature_settings()
     try:
         outcomes = asyncio.run(
             run(
