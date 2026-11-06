@@ -160,6 +160,46 @@ class TestAnalyzeEndpoint:
             AnalyzerRun(model="m", latency_ms=1)
 
     @pytest.mark.asyncio
+    async def test_analyze_anchors_comments_and_reports_counts(self, caplog):
+        from services.llm_client import LLMResponse
+
+        request = ReviewRequest(
+            diff="--- a/app.py\n+++ b/app.py\n@@ -1 +1 @@\n-old line\n+new line\n",
+            repo_full_name="owner/repo",
+            pr_number=1,
+        )
+        mock_response = LLMResponse(
+            content=(
+                '[{"file_path": "app.py", "line_number": 1, "category": "security",'
+                ' "severity": "warning", "body": "On the diff", "suggested_fix": null},'
+                ' {"file_path": "app.py", "line_number": 40, "category": "quality",'
+                ' "severity": "info", "body": "Off the diff", "suggested_fix": null}]'
+            ),
+            model_used="google/gemini",
+            provider="google",
+            prompt_tokens=10,
+            completion_tokens=5,
+        )
+
+        with patch("agents.review_agent.llm_client") as mock_llm:
+            mock_llm.generate = AsyncMock(return_value=mock_response)
+            with caplog.at_level("INFO", logger="services.comment_anchoring"):
+                response = await analyze_review(request, secret="valid-secret")
+
+        off = [c for c in response.comments if c.body == "Off the diff"]
+        on = [c for c in response.comments if c.body == "On the diff"]
+        assert off and all(c.line_number == 0 for c in off)
+        assert on and all(c.line_number == 1 for c in on)
+        assert response.anchored == len(on)
+        assert response.unanchored == len(off)
+        assert response.snapped == 0
+        assert any(
+            f"anchored={response.anchored}" in r.getMessage()
+            and f"unanchored={response.unanchored}" in r.getMessage()
+            for r in caplog.records
+        )
+
+    @pytest.mark.asyncio
     async def test_analyze_handles_error(self):
         request = ReviewRequest(
             diff="test diff",
@@ -172,6 +212,21 @@ class TestAnalyzeEndpoint:
 
             with pytest.raises(Exception):
                 await analyze_review(request, secret="valid-secret")
+
+
+class TestChunkText:
+    def test_chunk_text_has_no_line_number_prefixes(self):
+        from routers.review import _chunk_text
+        from services.code_parser import parse_diff
+
+        diff = (
+            "--- a/app.py\n+++ b/app.py\n@@ -7,2 +7,2 @@\n keep = 1\n-x = 1\n+x = 2\n"
+        )
+
+        text = _chunk_text(parse_diff(diff)[0])
+
+        assert "x = 2" in text
+        assert "L8" not in text and "L7" not in text
 
 
 class TestReviewRouter:

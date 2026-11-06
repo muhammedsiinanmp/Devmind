@@ -126,7 +126,7 @@ All values come from the defaults in `.env.example` and `devmind/settings/base.p
 
 | DB | Variable | Used by | What for (verified in code) |
 |---|---|---|---|
-| 0 | `REDIS_URL` | Django | Django cache (`django_redis`): OAuth `state` tokens (10 min, `apps/accounts/oauth.py`), organization invite tokens (72 h, `apps/organizations/views.py`) and DRF throttle counters (base settings only; development and test settings turn throttling off). `/health/` pings this connection. |
+| 0 | `REDIS_URL` | Django | Django cache (`django_redis`): OAuth `state` tokens (10 min, `apps/accounts/oauth.py`) and DRF throttle counters (base settings only; development and test settings turn throttling off). `/health/` pings this connection. |
 | 0 | `redis_url` | FastAPI | LLM rate-limit counters `ratelimit:{provider}:{minute}` (`services/rate_limiter.py`) |
 | 1 | `CELERY_BROKER_URL` | Django, Celery worker, Flower | Task broker |
 | 2 | `CELERY_RESULT_BACKEND` | Celery worker | Task results |
@@ -276,7 +276,8 @@ Each item is validated against `_LLMCommentSchema` (Pydantic). Severities `high`
 ### Retrieval (RAG) steps in `POST /review/analyze`
 
 ```
-parse_diff(diff)                       -> DiffChunk[] (file, language, added/removed/context lines)
+parse_diff(diff)                       -> DiffChunk[] (file, language, added/removed/context lines,
+                                          hunks with new-file line numbers)
 generate_embeddings(up to 20 hunks)  -> one batchEmbedContents call, Google gemini-embedding-001,
                                           task_type RETRIEVAL_QUERY, outputDimensionality 768
 for each query embedding:
@@ -289,6 +290,7 @@ merge results                          -> drop untagged rows with file_path "PR#
 build_review_prompt(...)               -> 8192-token budget (tiktoken cl100k_base); diff first,
                                           then similar patterns, quality patterns, past reviews, conventions
 run_review_agent(...)
+anchor_comments(chunks, comments)      -> keep comments on added/context lines; see "Comment anchoring"
 store_review_async(...)                -> background task after the response is built: of up to 20
                                           chunks, drop those whose sha256 is already stored, embed
                                           the rest in one batchEmbedContents call (RETRIEVAL_DOCUMENT,
@@ -306,6 +308,26 @@ Each retrieved chunk is logged as `review.rag_context.retrieved` with repo, PR n
 
 The handler runs the search inside a `try`. A failure in embedding or search is logged as `review.rag_context_partial`, and the review continues without similar-code context.
 
+### Diff rendering and comment anchoring
+
+`format_diff_chunks` (`services/prompt_builder.py`) renders each hunk line with its new-file number: `L42 + code` for added lines, `L41   code` for context lines, and `- code` with no number for removed lines. The system prompt asks the model to use only numbers shown in the diff.
+
+The rendered diff is trimmed to fit the prompt:
+
+- At most 120 lines per hunk, 200 per file and 600 in total are shown. Lines longer than 300 characters are cut.
+- The total is spent on added lines first, then removed lines, then context lines nearest a change. Each of those is shared evenly between files, so context lines in early files can't crowd out changes in later ones.
+- The token budget for the diff is what's left after the system prompt, the predicted size of the similar-pattern, quality-pattern, past-review and conventions sections, and a 200-token margin. It is never less than half the prompt.
+- If the rendering is over that budget, the line total is lowered and the diff is rendered again. If headers alone are too big, the text is cut at a line boundary with a marker.
+- Each gap is marked `... N lines omitted`, and a final `[N files / M lines omitted from this diff]` line says how much was left out.
+
+`anchor_comments` (`services/comment_anchoring.py`) runs on the agent's comments before the risk score is computed:
+
+- a comment on an added or context line of its file is kept as is (`anchored`);
+- a comment within 3 lines of exactly one hunk is moved to the nearest line of that hunk (`snapped`). Its `suggested_fix` is moved into the body as a plain code block, so GitHub doesn't offer it as a one-click suggestion on a different line;
+- any other comment, including one between two hunks that are both within 3 lines, gets `line_number` 0 (`unanchored`). The GitHub poster puts it in the review body.
+
+The counts are logged as `review.anchoring` and returned in the response as `anchored`, `snapped` and `unanchored`.
+
 Embeddings are cached in process by an LRU cache (`_BoundedCache`, max 1000 entries) keyed by `sha256(f"{task_type}:{text}")`; only texts not in the cache are sent. All embedding calls share one `httpx.AsyncClient` (30 s timeout), closed on app shutdown. No database session is open while an embedding call is in flight: queries are embedded before the search session opens, and the store task closes its duplicate-check session before embedding.
 
 **Embedding model change:** the default `EMBEDDING_MODEL` is `gemini-embedding-001` (Google retired `text-embedding-004`), requested with `outputDimensionality` 768 to fit `Vector(768)`. Vectors from the two models aren't comparable, so `code_embeddings` rows written before the switch should be deleted or re-embedded; nothing does this automatically. `gemini-embedding-001` vectors below 3072 dimensions aren't normalized, which doesn't affect cosine distance.
@@ -318,17 +340,17 @@ Embeddings are cached in process by an LRU cache (`_BoundedCache`, max 1000 entr
 flowchart LR
     A[generate] --> B[GET Django internal BYOK endpoint<br/>user's active configs, by priority]
     B --> C[User providers<br/>OpenAI-compatible chat/completions]
-    C -->|429 / 5xx / non-200 / timeout| D[Google gemini-2.0-flash]
-    D -->|fail| E[Groq llama-3.3-70b-versatile]
-    E -->|fail| F[GitHub Models gpt-4o-mini]
-    F -->|fail| G[AllProvidersDownError<br/>FastAPI responds 429]
+    C -->|429 / 404 / 5xx / non-200 / timeout| D[Google GOOGLE_MODEL<br/>default gemini-3.5-flash]
+    D -->|fail| E[Groq GROQ_MODEL<br/>default openai/gpt-oss-120b]
+    E -->|fail| G[AllProvidersDownError<br/>FastAPI responds 429]
 ```
 
-- A server provider is included only if its key (`GOOGLE_AI_API_KEY`, `GROQ_API_KEY`, `GITHUB_TOKEN`) is set. There is no server-side OpenAI provider; OpenAI is available only as a user BYOK provider.
-- BYOK providers are mapped to an OpenAI-compatible base URL: `openai`, `groq`, `mistral`, `google_vertex`, or `custom` with an explicit URL. `anthropic` isn't mapped, so Anthropic configs are skipped.
+- A server provider is included only if its key (`GOOGLE_AI_API_KEY`, `GROQ_API_KEY`) is set. GitHub Models was retired on 2026-07-30 and was removed.
+- Model IDs come from settings (`core/config.py`). A 404 is logged as `llm.model_not_found` and fails over like any other error. The cause is a retired or misspelled model, or one closed to new keys. `make providers-check` sends a real chat request to each configured model, which makes it the authoritative check. A model that appears in a provider's `/models` listing (as `/health` reports) may still be unusable. There is no server-side OpenAI provider; OpenAI is available only as a user BYOK provider.
+- BYOK providers are mapped to an OpenAI-compatible base URL: `openai`, `groq`, `mistral`, `google_vertex`, or `custom` with an explicit URL. `anthropic` isn't mapped, so Anthropic configs are skipped with an `llm.byok_unsupported_provider` warning (Django's BYOK choices have no GitHub Models option).
 - `LLM_FAILOVER_ENABLED=False` uses only the first provider in the chain.
 
-**Rate limiting** (`services/rate_limiter.py`): a fixed one-minute window per provider, using the Redis key `ratelimit:{provider}:{minute}` with atomic `INCR` and a 60-second expiry. Default limits are Google 15 RPM, Groq 30 and GitHub Models 150; BYOK providers get 30. When a window is full, the call **sleeps until the next minute** rather than failing over. If Redis is unavailable, the limiter lets the request through.
+**Rate limiting** (`services/rate_limiter.py`): a fixed one-minute window per provider, using the Redis key `ratelimit:{provider}:{minute}` with atomic `INCR` and a 60-second expiry. Default limits are Google 15 RPM and Groq 30; BYOK providers get 30. When a window is full, the call **sleeps until the next minute** rather than failing over. If Redis is unavailable, the limiter lets the request through.
 
 ---
 
@@ -428,7 +450,7 @@ flowchart LR
 `GitHubPoster` (`apps/reviews/services/github_poster.py`):
 
 - Comments with `line_number > 0` are posted inline (`line`, `side: RIGHT`), grouped by file and sent in batches of 50 per review.
-- Comments without a usable line number are folded into the review body.
+- Comments without a usable line number are folded into the review body. FastAPI sets `line_number` to 0 for any comment it could not anchor to a diff line.
 - If GitHub returns 422 for an inline batch, the poster retries the batch as a body-only review so the findings still appear.
 - Every review is posted with `event: COMMENT`, so DevMind never approves a PR or requests changes.
 
@@ -438,7 +460,7 @@ flowchart LR
 
 ### Django entities
 
-Fields are taken from the models in `apps/accounts`, `apps/repositories`, `apps/reviews` and `apps/organizations`. The diagram shows selected fields: timestamps (`created_at`, `updated_at`), auth bookkeeping (`password`, `last_login`, `is_superuser`) and descriptive text such as `Repository.description` are left out to keep it readable. `encrypted` marks an `EncryptedCharField`: a `varchar` column holding a Fernet token.
+Fields are taken from the models in `apps/accounts`, `apps/repositories` and `apps/reviews`. The diagram shows selected fields: timestamps (`created_at`, `updated_at`), auth bookkeeping (`password`, `last_login`, `is_superuser`) and descriptive text such as `Repository.description` are left out to keep it readable. `encrypted` marks an `EncryptedCharField`: a `varchar` column holding a Fernet token.
 
 ```mermaid
 erDiagram
@@ -537,38 +559,11 @@ erDiagram
         text summary
         timestamptz completed_at "nullable"
     }
-    Organization {
-        bigint id PK
-        varchar name
-        varchar slug UK
-        text description
-        bigint github_org_id UK "nullable"
-        bigint owner_id FK "on_delete PROTECT"
-    }
-    TeamMembership {
-        bigint id PK
-        bigint organization_id FK
-        bigint user_id FK
-        varchar role "owner, admin, member"
-        bool is_active
-    }
-    OrgRepository {
-        bigint id PK
-        bigint organization_id FK
-        bigint repository_id FK
-        bigint added_by_id FK "nullable, on_delete SET_NULL"
-    }
 
     CustomUser ||--o| GithubToken : has
     CustomUser ||--o{ UserLLMConfig : owns
     CustomUser ||--o{ Repository : owns
     CustomUser ||--o{ RepoScan : triggers
-    CustomUser ||--o{ Organization : owns
-    CustomUser ||--o{ TeamMembership : "belongs via"
-    CustomUser |o--o{ OrgRepository : "added"
-    Organization ||--o{ TeamMembership : has
-    Organization ||--o{ OrgRepository : links
-    Repository ||--o{ OrgRepository : "linked by"
     Repository ||--o{ Review : has
     Repository ||--o{ RepoScan : has
     Review ||--o| ReviewRun : produces
@@ -578,16 +573,9 @@ erDiagram
 Constraints the diagram can't show:
 
 - `UserLLMConfig`: unique on `(user, provider, model_name)`, default ordering `priority`, then newest first.
-- `TeamMembership`: unique on `(organization, user)`. `OrgRepository`: unique on `(organization, repository)`.
 - `Review` has no unique constraint on `(repository, pr_number, head_sha)`. Duplicate webhooks are filtered in `repositories.trigger_review` instead (see [Idempotency](#idempotency)).
 - `Repository.github_id` is unique, so a GitHub repository has exactly one DevMind owner. `initial_sync` upserts by `github_id` and sets `owner` to the syncing user, so a second user syncing the same repository takes it over.
-- Deleting a user cascades to their token, LLM configs, repositories (and so their reviews and scans) and memberships. A user who owns an organization can't be deleted (`PROTECT`).
-
-**Organizations and invites.** Organizations, memberships and org-repository links are stored in Postgres, but invites aren't. `POST organizations/<id>/invite/` stores `org_invite:<token>` -> `"<org_id>:<email>"` in the Django cache (Redis db 0) for 72 hours and queues an email task. Accepting the invite checks that the signed-in user's email matches, creates a `member` membership and deletes the key. Some limits of the current code:
-
-- `OrgRepository` rows can only be created in the Django admin. No API view creates or lists them.
-- Organization membership doesn't grant access to anything. Repository, review and scan views all filter by `Repository.owner`.
-- `sync_org_members_task` (GitHub org member sync) is defined but nothing calls it.
+- Deleting a user cascades to their token, LLM configs, repositories (and so their reviews and scans).
 
 ### Indexes
 
@@ -597,7 +585,6 @@ Constraints the diagram can't show:
 | `reviews_reviewcomment` | `(review, severity)`, `(review, file_path, line_number)` |
 | `reviews_reposcan` | `status` |
 | `repositories_repository` | `(owner, is_active)`, `(github_id)`, `full_name`, `is_active` |
-| `organizations_organization` | `slug` (unique), `github_org_id` (unique) |
 
 ### FastAPI tables (SQLAlchemy, `models/embeddings.py`)
 
@@ -658,7 +645,6 @@ There are B-tree indexes on `repo_full_name`, `language`, `review_id`, `user_id`
 - `ReviewComment.category`: `security`, `quality`, `tests`, `style`, `performance`
 - `UserLLMConfig.provider`: `openai`, `anthropic`, `google_vertex`, `mistral`, `custom`
 - `RepoScan.status`: `queued`, `scanning`, `completed`, `failed`
-- `TeamMembership.role`: `owner`, `admin`, `member`
 
 ---
 
@@ -702,7 +688,7 @@ Routes from `CELERY_TASK_ROUTES` in `base.py`:
 | Queue | Tasks |
 |---|---|
 | `review` | `repositories.trigger_review` |
-| `default` | `apps.reviews.tasks.trigger_review_task`, `post_github_comments_task`, `full_repo_scan_task`, `cleanup_old_reviews`, `repositories.initial_sync`, `install_webhook`, `remove_webhook`, organization tasks; also the default for unrouted tasks |
+| `default` | `apps.reviews.tasks.trigger_review_task`, `post_github_comments_task`, `full_repo_scan_task`, `cleanup_old_reviews`, `repositories.initial_sync`, `install_webhook`, `remove_webhook`; also the default for unrouted tasks |
 | `notifications` | Consumed by the worker; no task is currently routed to it |
 
 There is no Celery beat service, so `cleanup_old_reviews` runs only if someone calls it.
@@ -799,6 +785,7 @@ Each decision lists what the code does, why, and the trade-offs. Some also note 
 - [Redis-backed LLM rate limiter](#redis-backed-llm-rate-limiter)
 - [Storing the diff in `ReviewRun.diff_text`](#storing-the-diff-in-reviewrundiff_text)
 - [Removing Kafka instead of keeping it as unused infrastructure](#removing-kafka-instead-of-keeping-it-as-unused-infrastructure)
+- [Removing the organizations app](#removing-the-organizations-app)
 - [BYOK-first LLM failover with server providers as fallback](#byok-first-llm-failover-with-server-providers-as-fallback)
 - [Token encryption with Fernet and a key derived from SECRET_KEY](#token-encryption-with-fernet-and-a-key-derived-from-secret_key)
 - [JWTs in localStorage](#jwts-in-localstorage)
@@ -865,9 +852,17 @@ Each decision lists what the code does, why, and the trade-offs. Some also note 
 
 **What would change at larger scale:** If several independent consumers need the same events, a durable event stream could be worth reintroducing. With a single consumer per event, a Celery task covers the same need.
 
+### Removing the organizations app
+
+**What:** `apps.organizations` (organizations, team memberships, org-repository links, Redis-backed invites, and the `send_invite_email_task` and `sync_org_members_task` Celery tasks) was removed along with its `organizations/` routes. Migration `core.0002_drop_organizations_tables` drops its three tables if they exist, deletes its rows from `django_migrations`, and deletes its content types, which cascades to their permissions and any user or group grants of them.
+
+**Why:** No user flow reached it. The frontend never called its routes, no other app imported it, nothing called `sync_org_members_task`, and membership granted no access because repository, review and scan views all filter by `Repository.owner`.
+
+**Tradeoffs:** The migration's reverse is a no-op, so rolling back doesn't bring the tables or their data back. Any organization data on an existing database is deleted when the migration runs.
+
 ### BYOK-first LLM failover with server providers as fallback
 
-**What:** For each LLM call, `LLMClient.generate` (`backend/fastapi/services/llm_client.py`) fetches the user's active BYOK configs from Django's internal endpoint, ordered by `priority`, and puts them ahead of the server chain: Google `gemini-2.0-flash`, Groq `llama-3.3-70b-versatile`, GitHub Models `gpt-4o-mini`. Each server provider is included only if its key is set. A 429, a 5xx, any other non-200 status or a timeout moves the call to the next entry. All entries are called through the OpenAI-compatible `/chat/completions` API.
+**What:** For each LLM call, `LLMClient.generate` (`backend/fastapi/services/llm_client.py`) fetches the user's active BYOK configs from Django's internal endpoint, ordered by `priority`, and puts them ahead of the server chain: Google, then Groq, with models from settings (defaults `gemini-3.5-flash`, `openai/gpt-oss-120b`). GitHub Models was retired on 2026-07-30 and was removed. Each server provider is included only if its key is set. A 429, a 404 (logged as `model_not_found`), a 5xx, any other non-200 status or a timeout moves the call to the next entry. All entries are called through the OpenAI-compatible `/chat/completions` API.
 
 **Why:** A user's own key is used whenever it works, and a review still runs when it doesn't, or when the user has none. One request format covers every provider, so adding a provider means adding a base URL.
 
@@ -929,14 +924,13 @@ Each decision lists what the code does, why, and the trade-offs. Some also note 
 
 ### One Redis instance in several roles
 
-**What:** A single `redis:7-alpine` service is the Celery broker (db 1) and result backend (db 2), the Django cache for OAuth state, invite tokens and DRF throttle counters, and the FastAPI rate-limit store (all db 0). See [Redis usage by database](#redis-usage-by-database).
+**What:** A single `redis:7-alpine` service is the Celery broker (db 1) and result backend (db 2), the Django cache for OAuth state and DRF throttle counters, and the FastAPI rate-limit store (all db 0). See [Redis usage by database](#redis-usage-by-database).
 
 **Why:** It's one service to run, and every role needs short-lived keys or queues, which Redis handles well. Separate database numbers keep broker and result keys apart from cache keys.
 
 **Tradeoffs:** Redis is a single point of failure, and the failure behavior varies:
 - The webhook view doesn't catch errors from `.delay()`, so webhook deliveries fail with a server error and reviews aren't queued.
 - GitHub sign-in fails, because the OAuth state can't be stored or checked.
-- Pending invites live only in Redis, so losing the data loses the invites.
 - The FastAPI rate limiter fails open and lets requests through.
 - `/health/` reports `redis: error` but still answers 200.
 

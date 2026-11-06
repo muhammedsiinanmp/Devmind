@@ -8,6 +8,7 @@ import time
 import asyncio
 import hashlib
 import logging
+from dataclasses import asdict
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
@@ -16,6 +17,7 @@ from core.metrics import rag_pipeline_duration, agent_iterations, review_errors_
 from models.review import ReviewRequest, ReviewResponse, ReviewComment
 from services.code_parser import DiffChunk, parse_diff
 from services.prompt_builder import PromptContext, build_review_prompt
+from services.comment_anchoring import anchor_comments
 from services.llm_client import AllProvidersDownError
 
 logger = logging.getLogger(__name__)
@@ -198,6 +200,7 @@ async def analyze_review(
                         suggested_fix=item.get("suggested_fix"),
                     )
                 )
+        comments, anchor_stats = anchor_comments(parsed_chunks, comments)
 
         comments_data = [c.model_dump() for c in comments]
         risk_score = calculate_risk_score(comments_data)
@@ -227,6 +230,7 @@ async def analyze_review(
             provider=model_used.split("/")[0] if "/" in model_used else "unknown",
             latency_ms=latency_ms,
             analyzer_runs=result.get("analyzer_runs", {}),
+            **asdict(anchor_stats),
         )
 
     except AllProvidersDownError:
