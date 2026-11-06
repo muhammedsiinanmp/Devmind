@@ -64,17 +64,34 @@ def test_reposcan_model_and_table_are_gone():
 
 
 @pytest.mark.django_db(transaction=True)
-def test_migrating_forward_drops_reposcan_table():
+def test_migrating_forward_drops_reposcan_table_and_content_type():
+    from django.contrib.auth.models import Permission
+    from django.contrib.contenttypes.models import ContentType
+
     executor = MigrationExecutor(connection)
     latest = executor.loader.graph.leaf_nodes("reviews")
     try:
         executor.migrate(PREVIOUS)
         assert _table_exists("reviews_reposcan")
+        # A database that ran the old migrations has this content type and
+        # its permissions.
+        content_type, _ = ContentType.objects.get_or_create(
+            app_label="reviews", model="reposcan"
+        )
+        Permission.objects.get_or_create(
+            content_type=content_type,
+            codename="view_reposcan",
+            defaults={"name": "Can view repo scan"},
+        )
 
         executor = MigrationExecutor(connection)
         executor.loader.build_graph()
         executor.migrate(latest)
         assert not _table_exists("reviews_reposcan")
+        assert not ContentType.objects.filter(
+            app_label="reviews", model="reposcan"
+        ).exists()
+        assert not Permission.objects.filter(codename="view_reposcan").exists()
     finally:
         executor = MigrationExecutor(connection)
         executor.loader.build_graph()

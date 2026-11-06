@@ -79,16 +79,65 @@ class TestHealthCheck:
     async def test_health_check_llm_providers(self, client):
         session = _session_with_pgvector("0.7.0")
         mock_config = MagicMock()
+        mock_config.provider.value = "test_provider"
+        mock_config.model = "test-model"
 
         with patch("routers.health.AsyncSessionLocal") as mock_local:
             mock_local.return_value.__aenter__.return_value = session
             mock_local.return_value.__aexit__.return_value = None
 
             with patch("routers.health.MODEL_CHAIN", [mock_config]):
-                with patch("routers.health.check_provider_health") as mock_health:
-                    mock_health.return_value = ("test_provider", False)
+                with patch(
+                    "routers.health.cached_model_listed", AsyncMock(return_value=None)
+                ):
                     response = await client.get("/health")
 
         # LLM reachability is informational and must not fail the health check
         assert response.status_code == 200
         assert response.json()["checks"]["llm_test_provider"] == "unreachable"
+
+    @pytest.mark.asyncio
+    async def test_health_reports_configured_model_and_listing(self, client):
+        from services.llm_client import LLMConfig, LLMProvider
+
+        session = _session_with_pgvector("0.7.0")
+        google = LLMConfig(
+            provider=LLMProvider.GOOGLE,
+            model="gemini-3.5-flash",
+            api_key="health-test-key-value",
+            base_url="https://google.example",
+            max_tokens=10,
+            rpm_limit=1,
+        )
+        groq = LLMConfig(
+            provider=LLMProvider.GROQ,
+            model="retired-model",
+            api_key="health-test-key-value",
+            base_url="https://groq.example",
+            max_tokens=10,
+            rpm_limit=1,
+        )
+        listed = AsyncMock(side_effect=[True, False])
+
+        with patch("routers.health.AsyncSessionLocal") as mock_local:
+            mock_local.return_value.__aenter__.return_value = session
+            mock_local.return_value.__aexit__.return_value = None
+
+            with patch("routers.health.MODEL_CHAIN", [google, groq]):
+                with patch("routers.health.cached_model_listed", listed):
+                    response = await client.get("/health")
+
+        assert response.status_code == 200
+        body = response.json()
+        # "listed", not "ok": a listed model can still be closed to new keys
+        assert body["checks"]["llm_google"] == "listed"
+        assert body["checks"]["llm_groq"] == "model_not_listed"
+        assert body["llm"]["google"] == {
+            "model": "gemini-3.5-flash",
+            "enabled": True,
+            "listed": True,
+        }
+        assert body["llm"]["groq"]["listed"] is False
+        # GitHub Models was removed
+        assert set(body["llm"]) == {"google", "groq"}
+        assert "health-test-key-value" not in response.text

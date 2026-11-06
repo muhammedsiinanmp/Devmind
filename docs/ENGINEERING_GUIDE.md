@@ -49,10 +49,26 @@ There's no `FERNET_KEY` variable. The encryption key comes from `DJANGO_SECRET_K
 
 | Variable | Description |
 |---|---|
-| `GOOGLE_AI_API_KEY` | Google AI Studio key. Used for `gemini-2.0-flash` (first server provider) and for `text-embedding-004` embeddings. |
-| `GROQ_API_KEY` | Groq key for `llama-3.3-70b-versatile` (second) |
-| `GITHUB_TOKEN` | GitHub token with access to GitHub Models, for `gpt-4o-mini` (third) |
+| `GOOGLE_AI_API_KEY` | Google AI Studio key. Used for `GOOGLE_MODEL` (first server provider) and for `text-embedding-004` embeddings. |
+| `GROQ_API_KEY` | Groq key for `GROQ_MODEL` (second) |
+| `GOOGLE_MODEL` | Default `gemini-3.5-flash` |
+| `GROQ_MODEL` | Default `openai/gpt-oss-120b` |
+| `LLM_HEALTH_CACHE_SECONDS` | Default `300`. How long FastAPI `/health` caches each provider's model listing. |
 | `LLM_FAILOVER_ENABLED` | Default `True`. When `False`, only the first provider in the chain is tried. |
+
+GitHub Models was retired on 2026-07-30 ([GitHub docs](https://docs.github.com/en/github-models)) and was removed. `GITHUB_TOKEN` is no longer read; a leftover value in `.env` is ignored.
+
+Defaults are pinned model IDs rather than `-latest` or `-preview` aliases, so a provider moving an alias can't silently change reviews. When a provider retires a model, requests to it return 404, which FastAPI logs as `llm.model_not_found`. Check the configured models against the providers with:
+
+```bash
+make providers-check    # runs on the host: cd backend/fastapi && uv run python -m scripts.providers_check
+# or, with the stack up:
+docker compose exec fastapi uv run python -m scripts.providers_check
+```
+
+For each provider with a key set, it lists the provider's models and sends one chat request of a few tokens, then prints the provider, model, whether the model is listed, the result (`ok`, or the HTTP status, with `model_not_found` for 404 and `rate_limited` for 429) and the latency. On a 404 it also prints the first 150 characters of the provider's error message, with keys redacted before truncation. It never prints keys or other response bodies. It exits 1 if no provider completes the chat request.
+
+**"Listed" doesn't mean usable.** Google lists models that are closed to new keys. For example, `gemini-2.5-flash` is listed but a newer key gets a 404 ("no longer available to new users"). The chat request in `make providers-check` is the authoritative check. The `listed` field in `/health` only shows that the provider still publishes the model ID.
 
 There's no server-side OpenAI provider. OpenAI keys can be added per user through the BYOK settings.
 
@@ -60,14 +76,14 @@ There's no server-side OpenAI provider. OpenAI keys can be added per user throug
 
 | Variable | Default | Description |
 |---|---|---|
-| `REDIS_URL` | `redis://redis:6379/0` | Django cache (OAuth state, organization invite tokens, DRF throttle counters), FastAPI rate limiter |
+| `REDIS_URL` | `redis://redis:6379/0` | Django cache (OAuth state, DRF throttle counters), FastAPI rate limiter |
 | `CELERY_BROKER_URL` | `redis://redis:6379/1` | Celery broker |
 | `CELERY_RESULT_BACKEND` | `redis://redis:6379/2` | Celery results |
 | `FASTAPI_BASE_URL` | `http://fastapi:8001` | Where the Celery worker reaches FastAPI |
 | `FASTAPI_TIMEOUT_SECONDS` | `60` | HTTP timeout for worker-to-FastAPI calls |
 | `FASTAPI_DATABASE_URL` | `postgresql+asyncpg://devmind:devmind_secret@postgres:5432/devmind` | FastAPI's async database URL |
 | `DJANGO_BASE_URL` | `http://django:8000` | Where FastAPI fetches BYOK configs from |
-| `DEVMIND_PUBLIC_URL` | `http://localhost:8000` | Base for the webhook URL registered on GitHub (`<url>/api/v1/webhooks/github/`) and for organization invite links |
+| `DEVMIND_PUBLIC_URL` | `http://localhost:8000` | Base for the webhook URL registered on GitHub (`<url>/api/v1/webhooks/github/`) |
 | `FRONTEND_URL` | `http://localhost:5173` | Read into settings. No code uses it currently. The OAuth redirect is whatever callback URL the GitHub OAuth App has configured. |
 
 ### Django tunables
@@ -285,19 +301,6 @@ All Django routes need `Authorization: Bearer <access_jwt>` unless marked otherw
 | `settings/llm/<id>/` | GET, PATCH, DELETE | Manage one config |
 | `settings/llm/<id>/set_default/` | POST | Set priority 0 and bump the others (`POST settings/llm/<id>/` does the same) |
 
-### Organizations
-
-| Endpoint | Description |
-|---|---|
-| `organizations/` | Create an organization |
-| `organizations/<id>/` | Organization detail |
-| `organizations/<org_id>/invite/` | Invite a member (queues an invite email) |
-| `organizations/<org_id>/members/` | List members |
-| `organizations/<org_id>/members/<user_id>/` | Remove a member |
-| `organizations/invite/accept/` | Accept an invite |
-
-See `apps/organizations/views.py` for methods and permissions.
-
 ### Webhook and internal
 
 | Endpoint | Method | Auth | Description |
@@ -319,7 +322,7 @@ See `apps/organizations/views.py` for methods and permissions.
 | `/review/analyze` | POST | `X-Internal-Secret` | Run the retrieval steps and review agent. Returns comments, risk score, model, provider, latency and per-analyzer `analyzer_runs`. |
 | `/embeddings/store` | POST | `X-Internal-Secret` | Store a code embedding |
 | `/embeddings/search` | POST, GET | `X-Internal-Secret` | Similarity search |
-| `/health` | GET | none | DB, pgvector and provider reachability; 503 if DB or pgvector check fails |
+| `/health` | GET | none | DB, pgvector and, per server provider, the configured model and whether the provider lists it (`llm`; listings cached for `LLM_HEALTH_CACHE_SECONDS`). Listed doesn't mean usable; use `make providers-check` for that. 503 if DB or pgvector check fails |
 | `/metrics` | GET | none | Prometheus instrumentator |
 | `/docs` | GET | none | OpenAPI UI (off when `SENTRY_ENVIRONMENT=production`) |
 
@@ -355,8 +358,8 @@ Test modules:
 |---|---|
 | Accounts | `apps/accounts/tests/test_views.py`, `test_oauth.py`, `test_byok.py`, `test_base_url_ssrf.py`, `test_url_safety.py`, `test_models.py` |
 | Repositories | `apps/repositories/tests/test_webhooks.py`, `test_views.py`, `test_tasks.py`, `test_services.py`, `test_models.py`, `test_managers.py`, `test_admin.py` |
-| Reviews | `apps/reviews/tests/test_orchestrator.py`, `test_views.py`, `test_github_poster.py`, `test_models.py` |
-| Organizations | `apps/organizations/tests/test_views.py` |
+| Reviews | `apps/reviews/tests/test_orchestrator.py`, `test_views.py`, `test_github_poster.py`, `test_models.py`, `test_scan_removed.py` |
+| Core (migrations) | `apps/core/tests/test_pgvector_migration.py`, `test_drop_organizations_migration.py` |
 | End to end | `tests/test_e2e.py` |
 
 ### FastAPI
@@ -393,8 +396,8 @@ These were measured locally on this branch. Coverage method: `pytest --cov`, the
 
 | Suite | Result | Line coverage |
 |---|---|---|
-| Django | 241 passed | 83% |
-| FastAPI | 176 passed | 80% |
+| Django | 225 passed | 86% |
+| FastAPI | 226 passed | 91% |
 | Frontend | `tsc`, `build` pass; `lint` 0 errors, 3 warnings | n/a |
 
 ### CI
@@ -479,11 +482,14 @@ docker compose restart django fastapi celery_worker
 
 ### Review failed with "LLM providers rate limited (429)"
 
-FastAPI raised `AllProvidersDownError`: every provider in the chain returned 429, 5xx, a non-200 response or timed out, or no provider is configured. Check that at least one of `GOOGLE_AI_API_KEY`, `GROQ_API_KEY` or `GITHUB_TOKEN` is set, or that the user has an active BYOK config. Then look at:
+FastAPI raised `AllProvidersDownError`: every provider in the chain returned 429, 404, 5xx, another non-200 response or timed out, or no provider is configured. Check that at least one of `GOOGLE_AI_API_KEY` or `GROQ_API_KEY` is set, or that the user has an active BYOK config. Then look at:
 
 ```bash
 docker compose logs fastapi | grep "llm\."
+make providers-check
 ```
+
+Each `llm.failover` line has a `reason`: `rate_limited`, `model_not_found`, `timeout` or `unavailable`. `model_not_found` (also logged as `llm.model_not_found`) means the provider won't serve the configured model to this key. `make providers-check` prints the provider's reason under that provider's row. Set `GOOGLE_MODEL` / `GROQ_MODEL` to a model whose chat result in `make providers-check` is `ok`. Being listed isn't enough.
 
 ### Reviews complete but nothing appears on GitHub
 

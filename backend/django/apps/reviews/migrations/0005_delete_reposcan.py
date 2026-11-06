@@ -3,14 +3,30 @@
 from django.db import migrations
 
 
+def remove_reposcan_content_type(apps, schema_editor):
+    # Deleting the content type cascades to its permissions and to any user or
+    # group grants of those permissions.
+    ContentType = apps.get_model("contenttypes", "ContentType")
+    ContentType.objects.using(schema_editor.connection.alias).filter(
+        app_label="reviews", model="reposcan"
+    ).delete()
+
+
 class Migration(migrations.Migration):
+    """Drop the RepoScan model (the regex repository scan was removed) and its
+    stale content type. Reversing recreates the empty table but not the content
+    type, its permissions or the deleted rows."""
 
     dependencies = [
         ("reviews", "0004_reviewrun_diff_text"),
+        ("contenttypes", "0002_remove_content_type_name"),
+        ("auth", "0012_alter_user_first_name_max_length"),
+        ("admin", "0003_logentry_add_action_flag_choices"),
     ]
 
     operations = [
         migrations.DeleteModel(
             name="RepoScan",
         ),
+        migrations.RunPython(remove_reposcan_content_type, migrations.RunPython.noop),
     ]

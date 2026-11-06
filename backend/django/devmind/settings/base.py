@@ -43,7 +43,6 @@ LOCAL_APPS = [
     "apps.repositories",
     "apps.reviews",
     "apps.core",
-    "apps.organizations",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -271,6 +270,4 @@ CELERY_TASK_ROUTES = {
     "apps.reviews.tasks.trigger_review_task": {"queue": "default"},
     "apps.reviews.tasks.post_github_comments_task": {"queue": "default"},
     "apps.reviews.tasks.cleanup_old_reviews": {"queue": "default"},
-    "organizations.send_invite_email_task": {"queue": "default"},
-    "organizations.sync_org_members_task": {"queue": "default"},
 }
