@@ -193,6 +193,7 @@ def _parse_llm_comment_list(
     - Bare JSON array:              [...]
     - Markdown-fenced JSON:         ```json\\n[...]\\n```
     - Other wrapper keys:           {"issues": [...]}
+    - One finding, no wrapper:      {"file_path": ..., "body": "...", ...}
     - Prefix text before array:     "Here are the issues: [...]"
 
     "{}" and a known key set to null ({"issues": null}) mean no findings.
@@ -221,6 +222,10 @@ def _parse_llm_comment_list(
                 ):
                     raw_list = parsed[key] or []
                     break
+            if raw_list is None and isinstance(parsed.get("body"), str):
+                # One finding without the wrapper, as some models send
+                # in JSON mode.
+                raw_list = [parsed]
     except json.JSONDecodeError:
         pass
 
