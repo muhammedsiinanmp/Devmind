@@ -19,10 +19,25 @@ from apps.reviews.services.github_poster import coverage_line
 logger = logging.getLogger(__name__)
 
 
+# Statuses retried by tenacity: the proxy or service was briefly unavailable.
+# Not 500 (it can come after all of a review's LLM calls, which a retry would
+# repeat), 504 (FastAPI's review deadline) or 429 (left to the Celery retry).
+RETRYABLE_STATUS_CODES = frozenset({502, 503})
+
+
+def _error_code(response) -> str:
+    """The "error" of a FastAPI HTTPException body ({"detail": {"error": ...}})."""
+    try:
+        detail = response.json().get("detail")
+    except Exception:
+        return ""
+    return detail.get("error", "") if isinstance(detail, dict) else ""
+
+
 class _RetryableFastAPIError(Exception):
     """
     Error that tenacity should retry: FastAPI couldn't be reached, or it
-    answered 429 or 5xx. A read timeout is not retryable: the request was
+    answered 502 or 503. A read timeout is not retryable: the request was
     sent, so FastAPI may still be reviewing, and a retry would start a second
     review of the same diff.
     """
@@ -156,8 +171,8 @@ class ReviewOrchestrator:
             raise FastAPIError(f"Failed to fetch diff: {e}")
 
     def _call_fastapi(self, diff: str) -> ReviewResult:
-        """Call FastAPI /review/analyze. Connection errors, 429 and 5xx are
-        retried with exponential back-off via tenacity; a read timeout isn't."""
+        """Call FastAPI /review/analyze. Connection errors, 502 and 503 are
+        retried with exponential back-off via tenacity; nothing else is."""
         if not self.fastapi_secret:
             raise FastAPIError(
                 "FASTAPI_INTERNAL_SECRET is empty — the FastAPI service will "
@@ -232,11 +247,21 @@ class ReviewOrchestrator:
             )
 
         if response.status_code == 429:
-            raise _RetryableFastAPIError(
-                f"LLM providers rate limited (429) for review_id={self.review.pk}"
+            # FastAPI asks for 60 s; the Celery task's retry waits that long.
+            raise FastAPIError(
+                "LLM providers rate limited (429). Celery will retry in 60s."
             )
 
-        if response.status_code >= 500:
+        if response.status_code == 504 and _error_code(response) == "review_deadline":
+            # FastAPI stopped at its deadline before any batch finished, so
+            # nothing was reviewed. Not retried here; the Celery retry runs
+            # after FastAPI has stopped.
+            raise FastAPIError(
+                "FastAPI reached its review deadline before any file batch "
+                "finished, so nothing was reviewed."
+            )
+
+        if response.status_code in RETRYABLE_STATUS_CODES:
             raise _RetryableFastAPIError(
                 f"FastAPI {response.status_code} for review_id={self.review.pk}"
             )

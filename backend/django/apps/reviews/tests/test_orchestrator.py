@@ -290,8 +290,8 @@ class TestFastAPIRetryPolicy:
         assert post.call_count == 2
         assert result.files_reviewed == ["app.py"]
 
-    @pytest.mark.parametrize("status_code", [429, 500, 502, 503, 504])
-    def test_429_and_5xx_are_retried_three_times(self, no_retry_wait, status_code):
+    @pytest.mark.parametrize("status_code", [502, 503])
+    def test_502_and_503_are_retried_three_times(self, no_retry_wait, status_code):
         with patch("httpx.Client") as mock_client:
             orchestrator, post = _orchestrator_with_client(mock_client)
             post.return_value = MagicMock(status_code=status_code)
@@ -301,7 +301,7 @@ class TestFastAPIRetryPolicy:
 
         assert post.call_count == 3
 
-    @pytest.mark.parametrize("status_code", [400, 403, 422])
+    @pytest.mark.parametrize("status_code", [400, 403, 422, 429, 500, 504])
     def test_other_errors_are_not_retried(self, no_retry_wait, status_code):
         with patch("httpx.Client") as mock_client:
             orchestrator, post = _orchestrator_with_client(mock_client)
@@ -327,3 +327,37 @@ class TestTimeoutCheck:
 
         assert len(warnings) == 1
         assert "FASTAPI_TIMEOUT_SECONDS (60)" in warnings[0].msg
+
+
+class TestReviewDeadline:
+    @pytest.mark.django_db
+    def test_review_deadline_fails_the_review_without_a_retry(self, no_retry_wait):
+        """FastAPI's 504 review_deadline means nothing was reviewed."""
+        from apps.reviews.models import ReviewComment
+
+        review = ReviewFactory(status="pending")
+        response = MagicMock(status_code=504)
+        response.json.return_value = {
+            "detail": {
+                "error": "review_deadline",
+                "message": "Nothing was reviewed: review deadline passed.",
+            }
+        }
+        with (
+            patch("httpx.Client") as mock_client,
+            patch.object(ReviewOrchestrator, "_fetch_diff", return_value="diff"),
+            patch.object(ReviewOrchestrator, "_trigger_github_post") as post_task,
+        ):
+            post = mock_client.return_value.__enter__.return_value.post
+            post.return_value = response
+
+            with pytest.raises(FastAPIError, match="review deadline"):
+                ReviewOrchestrator(review).run()
+
+        review.refresh_from_db()
+        assert post.call_count == 1
+        assert review.status == "failed"
+        assert review.summary.startswith("Error: FastAPI reached its review deadline")
+        assert "No issues found" not in review.summary
+        assert not ReviewComment.objects.filter(review=review).exists()
+        post_task.assert_not_called()
