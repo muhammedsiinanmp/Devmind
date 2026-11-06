@@ -79,8 +79,7 @@ class FakeEmbeddingAPI:
         return sum(
             1
             for body in self.requests
-            if task_type is None
-            or body["requests"][0]["embedContentConfig"]["taskType"] == task_type
+            if task_type is None or body["requests"][0]["taskType"] == task_type
         )
 
     def documents(self) -> list[str]:
@@ -89,7 +88,7 @@ class FakeEmbeddingAPI:
             r["content"]["parts"][0]["text"]
             for body in self.requests
             for r in body["requests"]
-            if r["embedContentConfig"]["taskType"] == "RETRIEVAL_DOCUMENT"
+            if r["taskType"] == "RETRIEVAL_DOCUMENT"
         ]
 
 

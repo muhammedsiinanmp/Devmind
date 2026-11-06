@@ -193,14 +193,18 @@ class VectorStore:
                     {
                         "model": model,
                         "content": {"parts": [{"text": text}]},
-                        # The v1beta API deprecates top-level taskType and
-                        # outputDimensionality in favour of embedContentConfig.
-                        "embedContentConfig": {
-                            "taskType": task_type,
-                            # gemini-embedding-001 returns 3072 values by
-                            # default; ask for 768 to fit the Vector(768) column.
-                            "outputDimensionality": self.embedding_dims,
-                        },
+                        # Top-level fields on purpose. The v1beta discovery
+                        # document marks them deprecated in favour of
+                        # embedContentConfig, but a live check on 2026-11-06
+                        # found that batchEmbedContents with
+                        # gemini-embedding-001 accepts the nested form and
+                        # ignores its outputDimensionality (3072 values come
+                        # back), while these fields give 768. Re-check with
+                        # `make providers-check` before switching.
+                        "taskType": task_type,
+                        # gemini-embedding-001 returns 3072 values by default;
+                        # ask for 768 to fit the Vector(768) column.
+                        "outputDimensionality": self.embedding_dims,
                     }
                     for text in texts
                 ]

@@ -82,15 +82,14 @@ class TestVectorStore:
         assert len(embedding) == 768
         assert embedding[0] == 0.1
         [request] = _body(requests[0])["requests"]
-        assert request["embedContentConfig"]["taskType"] == "RETRIEVAL_DOCUMENT"
+        assert request["taskType"] == "RETRIEVAL_DOCUMENT"
         assert request["content"] == {"parts": [{"text": "test text"}]}
 
     @pytest.mark.asyncio
-    async def test_request_puts_task_type_and_dimensions_in_embed_content_config(
-        self,
-    ):
-        """The v1beta API deprecates the top-level taskType and
-        outputDimensionality fields in favour of embedContentConfig."""
+    async def test_request_sends_task_type_and_dimensions_at_the_top_level(self):
+        """Top-level taskType and outputDimensionality, not embedContentConfig:
+        on 2026-11-06 the live API ignored embedContentConfig's
+        outputDimensionality and returned 3072 values."""
         store, requests = _store_with_fake_api()
 
         await store.generate_embeddings(["a"], task_type="RETRIEVAL_QUERY")
@@ -100,10 +99,8 @@ class TestVectorStore:
                 {
                     "model": "models/gemini-embedding-001",
                     "content": {"parts": [{"text": "a"}]},
-                    "embedContentConfig": {
-                        "taskType": "RETRIEVAL_QUERY",
-                        "outputDimensionality": 768,
-                    },
+                    "taskType": "RETRIEVAL_QUERY",
+                    "outputDimensionality": 768,
                 }
             ]
         }
@@ -119,7 +116,7 @@ class TestVectorStore:
 
         assert len(embedding) == 768
         [request] = _body(requests[0])["requests"]
-        assert request["embedContentConfig"]["taskType"] == "RETRIEVAL_QUERY"
+        assert request["taskType"] == "RETRIEVAL_QUERY"
 
     @pytest.mark.asyncio
     async def test_request_asks_for_768_dimensions_from_the_configured_model(self):
@@ -134,7 +131,7 @@ class TestVectorStore:
             "/v1beta/models/gemini-embedding-001:batchEmbedContents"
         )
         for item in _body(request)["requests"]:
-            assert item["embedContentConfig"]["outputDimensionality"] == 768
+            assert item["outputDimensionality"] == 768
             assert item["model"] == "models/gemini-embedding-001"
 
     @pytest.mark.asyncio
