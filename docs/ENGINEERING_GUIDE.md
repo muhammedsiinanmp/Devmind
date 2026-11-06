@@ -569,7 +569,7 @@ These gaps are confirmed in the current code.
 
 ### Embedding tables are never created
 
-The `vector` extension is enabled by a Django migration, but nothing creates `code_embeddings` / `review_embeddings` (FastAPI never calls `create_all`, and no Django migration covers them). Until they exist, the retrieval steps log errors and reviews run without similar-code context. For a table created by hand, apply `backend/fastapi/migrations/sql/0001_code_embeddings_source_ref.sql` and `0002_code_embeddings_hnsw_index.sql` in order; the second adds the HNSW cosine index (`models/embeddings.py` declares the same index).
+The `vector` extension is enabled by a Django migration, but nothing creates `code_embeddings` / `review_embeddings` (FastAPI never calls `create_all`, and no Django migration covers them). Until they exist, the retrieval steps log errors and reviews run without similar-code context. For a table created by hand, apply `backend/fastapi/migrations/sql/0001_code_embeddings_source_ref.sql`, `0002_code_embeddings_hnsw_index.sql` and `0003_code_embeddings_model_tag.sql` in order; the second adds the HNSW cosine index, and the third adds `embedding_model` and the unique `(repo_full_name, sha256, embedding_model)` index (`models/embeddings.py` declares the same indexes). `tests/test_vector_store_pgvector.py` applies them to a scratch schema and runs the vector store queries against it when `PGVECTOR_TEST_URL` is set; CI doesn't set it.
 
 ### `review_embeddings` is never written
 
