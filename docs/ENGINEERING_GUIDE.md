@@ -56,6 +56,7 @@ There's no `FERNET_KEY` variable. The encryption key comes from `DJANGO_SECRET_K
 | `LLM_HEALTH_CACHE_SECONDS` | Default `300`. How long FastAPI `/health` caches each provider's model listing. |
 | `LLM_FAILOVER_ENABLED` | Default `True`. When `False`, only the first provider in the chain is tried. |
 | `REVIEW_TEMPERATURE` | Default `0.1`. Sampling temperature for the review analyzers' LLM calls (0.0 to 2.0). |
+| `REVIEW_DEADLINE_SECONDS` | Default `100`. Seconds a review may take from the start of `POST /review/analyze`. Batches still running then are cancelled; finished batches' findings are returned and the rest of the files are reported as skipped (`deadline`). Django reads it from the same `.env` to check `FASTAPI_TIMEOUT_SECONDS`. |
 | `REVIEW_MAX_BATCHES` | Default `6`. Most file batches one review runs; files in later batches are reported as skipped (`batch_limit`). |
 | `REVIEW_MAX_CONCURRENT_BATCHES` | Default `2`. Batches reviewed at once. Each batch makes one call per analyzer, so at most 3x this many provider requests are in flight per review. |
 | `REVIEW_SKIP_PATTERNS` | JSON list of glob patterns, e.g. `["uv.lock", "*.min.js"]`. Changed files matching one (by path or file name; `*` also matches `/`) are not reviewed and are reported as skipped (`generated`). Setting it replaces the defaults (`DEFAULT_SKIP_PATTERNS` in `core/config.py`: lockfiles, minified bundles and source maps, snapshots, generated protobuf code, `vendor/` and `node_modules/`). |
@@ -84,7 +85,7 @@ There's no server-side OpenAI provider. OpenAI keys can be added per user throug
 | `CELERY_BROKER_URL` | `redis://redis:6379/1` | Celery broker |
 | `CELERY_RESULT_BACKEND` | `redis://redis:6379/2` | Celery results |
 | `FASTAPI_BASE_URL` | `http://fastapi:8001` | Where the Celery worker reaches FastAPI |
-| `FASTAPI_TIMEOUT_SECONDS` | `60` | HTTP timeout for worker-to-FastAPI calls |
+| `FASTAPI_TIMEOUT_SECONDS` | `120` | HTTP timeout for worker-to-FastAPI calls. Must be at least 10 s above `REVIEW_DEADLINE_SECONDS`, or Django gives up before FastAPI returns a partial review; Django warns at startup (`reviews.W001`) if it isn't. A read timeout is not retried by the orchestrator. |
 | `FASTAPI_DATABASE_URL` | `postgresql+asyncpg://devmind:devmind_secret@postgres:5432/devmind` | FastAPI's async database URL |
 | `DJANGO_BASE_URL` | `http://django:8000` | Where FastAPI fetches BYOK configs from |
 | `DEVMIND_PUBLIC_URL` | `http://localhost:8000` | Base for the webhook URL registered on GitHub (`<url>/api/v1/webhooks/github/`) |
