@@ -8,11 +8,16 @@ Run the review agent over the labeled eval cases and score it.
 Runs ``run_review_agent`` directly, without the router's database/RAG step,
 so no Postgres is needed. Only ``llm_client.generate`` is swapped out: in
 replay it serves recorded responses, in live mode it is wrapped so the
-responses can be recorded.
+responses can be recorded. Nothing here changes the prompts the agent sends.
+
+The agent's output is then put through the same post-processing the router
+applies before posting (see ``postprocess``), so the scores describe what
+would be posted.
 """
 
 import argparse
 import asyncio
+import hashlib
 import json
 import os
 import statistics
@@ -21,7 +26,7 @@ import sys
 import time
 from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -29,18 +34,21 @@ from unittest.mock import patch
 
 from evals.cases import CASES_DIR, Case, load_cases
 from evals.cassette import (
-    CassetteMiss,
     Player,
     Recorder,
     load_cassette,
     save_cassette,
 )
-from evals.matcher import aggregate, is_valid_line, match_case, new_side_lines
+from evals.matcher import aggregate, diff_hunks, is_valid_line, match_case
 
 EVALS_DIR = Path(__file__).parent
 CASSETTES_DIR = EVALS_DIR / "cassettes"
 RESULTS_DIR = EVALS_DIR / "results"
 REPO_NAME = "devmind-evals/synthetic"
+LATENCY_NOTE = (
+    "Latency depends on the provider chain, quotas and network; compare it "
+    "only between runs that used the same providers."
+)
 
 # USD per million tokens, keyed by the client's model_used string
 # (e.g. "groq/llama-3.3-70b-versatile"). Empty on purpose: add a price only
@@ -51,10 +59,17 @@ PRICES_PER_MTOK: dict[str, dict[str, float]] = {}
 @dataclass
 class CaseOutcome:
     case: Case
-    findings: list[dict] = field(default_factory=list)
+    findings: list[dict] = field(default_factory=list)  # as posted
+    raw_findings: list[dict] = field(default_factory=list)  # agent output
     calls: list[dict] = field(default_factory=list)
     latency_ms: int = 0
     error: str | None = None
+    # Analyzer runs whose reply could not be parsed; None when the agent
+    # doesn't report it (no analyzer_runs/parsed in its result).
+    parse_failures: int | None = None
+    post_processing: list[str] = field(default_factory=list)
+    anchoring: dict[str, int] | None = None
+    recorded_utc: str | None = None
 
 
 def _git(*args: str) -> str:
@@ -67,26 +82,111 @@ def _git(*args: str) -> str:
 
 
 def git_state() -> tuple[str, bool]:
+    """HEAD commit, and whether there are uncommitted or untracked files."""
     sha = _git("rev-parse", "HEAD") or "unknown"
-    dirty = bool(_git("status", "--porcelain", "--untracked-files=no"))
+    dirty = bool(_git("status", "--porcelain"))
     return sha, dirty
 
 
-def _visible_findings(result: dict) -> list[dict]:
-    # Same filter as routers/review.py: comments without a body are dropped.
-    return [
+def harness_sha256() -> str:
+    """Hash of the harness code (evals/*.py), to identify the scorer."""
+    h = hashlib.sha256()
+    for path in sorted(EVALS_DIR.glob("*.py")):
+        h.update(path.name.encode() + b"\0" + path.read_bytes() + b"\0")
+    return h.hexdigest()
+
+
+def case_set_sha256(cases: list[Case]) -> str:
+    """Hash of the case ids, diffs and labels that were scored."""
+    payload = [
+        {"id": c.id, "diff": c.digest, "expected": [asdict(e) for e in c.expected]}
+        for c in cases
+    ]
+    return hashlib.sha256(
+        json.dumps(payload, sort_keys=True, default=list).encode()
+    ).hexdigest()
+
+
+def parse_failures(result: dict) -> int | None:
+    """Count analyzer runs with parsed=False, or None if not reported."""
+    runs = result.get("analyzer_runs")
+    if not isinstance(runs, dict):
+        return None
+    flags = [r.get("parsed") for r in runs.values() if isinstance(r, dict)]
+    if not flags or any(f is None for f in flags):
+        return None
+    return sum(1 for f in flags if f is False)
+
+
+def postprocess(
+    result: dict, diff_text: str
+) -> tuple[list[dict], list[dict], list[str], dict | None]:
+    """Apply the router's pre-posting steps to the agent's comments.
+
+    Mirrors routers/review.py: drop comments without a body, validate each as
+    a ReviewComment, then anchor them to diff lines with anchor_comments()
+    when services.comment_anchoring exists. Each step is import-guarded so
+    the harness also scores older code truthfully (e.g. code without
+    anchoring). Returns (raw, posted, steps that ran, anchoring counts).
+    """
+    raw = [
         dict(c)
         for c in result.get("synthesized_comments", []) or []
         if isinstance(c, dict) and c.get("body")
     ]
+    steps = ["drop_empty_body"]
+    try:
+        from models.review import ReviewComment
+    except ImportError:
+        return raw, raw, steps, None
+
+    comments = [
+        ReviewComment(
+            file_path=item.get("file_path", ""),
+            line_number=item.get("line_number", 0),
+            category=item.get("category", "general"),
+            severity=item.get("severity", "info"),
+            body=item.get("body", ""),
+            suggested_fix=item.get("suggested_fix"),
+        )
+        for item in raw
+    ]
+    steps.append("review_comment_validation")
+
+    anchoring = None
+    try:
+        from services.comment_anchoring import anchor_comments
+        from services.code_parser import parse_diff
+    except ImportError:
+        anchor_comments = None
+    if anchor_comments is not None:
+        comments, stats = anchor_comments(parse_diff(diff_text), comments)
+        steps.append("anchor_comments")
+        anchoring = asdict(stats)
+
+    return raw, [c.model_dump() for c in comments], steps, anchoring
+
+
+def _finish(outcome: CaseOutcome, result: dict) -> None:
+    raw, posted, steps, anchoring = postprocess(result, outcome.case.diff)
+    outcome.raw_findings = raw
+    outcome.findings = posted
+    outcome.post_processing = steps
+    outcome.anchoring = anchoring
+    outcome.parse_failures = parse_failures(result)
+    if outcome.parse_failures:
+        outcome.error = (
+            f"ParseFailure: {outcome.parse_failures} analyzer run(s) "
+            "returned a reply that could not be parsed"
+        )
 
 
 def _replay_response(call: dict):
     from services.llm_client import LLMProvider, LLMResponse
 
-    prefix = call["model_used"].split("/", 1)[0]
+    name = call.get("provider") or call["model_used"].split("/", 1)[0]
     try:
-        provider = LLMProvider(prefix)
+        provider = LLMProvider(name)
     except ValueError:
         provider = LLMProvider.CUSTOM
     return LLMResponse(
@@ -112,14 +212,19 @@ async def replay_case(case: Case, cassettes_dir: Path) -> CaseOutcome:
         cassette = load_cassette(
             cassettes_dir / f"{case.id}.json", case.id, case.digest
         )
+        outcome.latency_ms = cassette["latency_ms"]
+        outcome.recorded_utc = cassette.get("recorded_utc")
         player = Player(cassette["calls"], _replay_response)
         result = await _run_agent(case, player)
-        outcome.findings = _visible_findings(result)
         outcome.calls = player.calls
-        outcome.latency_ms = cassette["latency_ms"]
-    except (CassetteMiss, ValueError) as exc:
+        _finish(outcome, result)
+    except Exception as exc:  # reported per case; the run continues
         outcome.error = f"{type(exc).__name__}: {exc}"
     return outcome
+
+
+def _now_utc() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 async def live_case(case: Case, cassettes_dir: Path | None) -> CaseOutcome:
@@ -134,7 +239,7 @@ async def live_case(case: Case, cassettes_dir: Path | None) -> CaseOutcome:
         if value and any(t in name for t in ("key", "token", "secret"))
     ]
     recorder = Recorder(llm_client.generate, secrets=secrets)
-    outcome = CaseOutcome(case=case)
+    outcome = CaseOutcome(case=case, recorded_utc=_now_utc())
     start = time.perf_counter()
     try:
         result = await _run_agent(case, recorder)
@@ -142,8 +247,8 @@ async def live_case(case: Case, cassettes_dir: Path | None) -> CaseOutcome:
         outcome.error = f"{type(exc).__name__}: {exc}"
         return outcome
     outcome.latency_ms = int((time.perf_counter() - start) * 1000)
-    outcome.findings = _visible_findings(result)
     outcome.calls = recorder.calls
+    # Save before scoring, so a case that fails scoring can still be replayed.
     if cassettes_dir is not None:
         save_cassette(
             cassettes_dir / f"{case.id}.json",
@@ -151,7 +256,12 @@ async def live_case(case: Case, cassettes_dir: Path | None) -> CaseOutcome:
             case.digest,
             recorder.calls,
             outcome.latency_ms,
+            recorded_utc=outcome.recorded_utc,
         )
+    try:
+        _finish(outcome, result)
+    except Exception as exc:
+        outcome.error = f"{type(exc).__name__}: {exc}"
     return outcome
 
 
@@ -166,20 +276,51 @@ def _cost(calls: list[dict]) -> float | None:
     return round(total, 6)
 
 
+def _call_provider(call: dict) -> str:
+    return call.get("provider") or call["model_used"].split("/", 1)[0]
+
+
+def _finding_view(f: dict) -> dict:
+    keys = ("file_path", "line_number", "category", "severity", "body")
+    return {k: f.get(k) for k in keys}
+
+
 def build_report(
     outcomes: list[CaseOutcome],
     mode: str,
     commit: str,
     dirty: bool,
     date: str | None,
+    flags: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     scored = [o for o in outcomes if o.error is None]
-    all_calls = [c for o in scored for c in o.calls]
+    all_calls = [c for o in outcomes for c in o.calls]
     latencies = [o.latency_ms for o in scored]
+
+    if mode == "live":
+        date_source = "run"
+    else:
+        recorded = sorted(o.recorded_utc for o in outcomes if o.recorded_utc)
+        date = recorded[-1] if recorded else None
+        date_source = "cassettes" if recorded else "not stored in cassettes"
+
+    known = [o.parse_failures for o in outcomes if o.parse_failures is not None]
+    unknown = sum(
+        1 for o in outcomes if o.parse_failures is None and (o.calls or o.findings)
+    )
+    steps = sorted({s for o in outcomes for s in o.post_processing})
+    anchoring = None
+    if any(o.anchoring for o in outcomes):
+        anchoring = {
+            k: sum((o.anchoring or {}).get(k, 0) for o in outcomes)
+            for k in ("anchored", "snapped", "unanchored")
+        }
+
     per_case = []
     for o in outcomes:
-        res = match_case(o.case.expected, o.findings)
-        lines = new_side_lines(o.case.diff)
+        hunks = diff_hunks(o.case.diff)
+        lines = {f: set().union(*h) if h else set() for f, h in hunks.items()}
+        res = match_case(o.case.expected, o.findings, hunks)
         per_case.append(
             {
                 "id": o.case.id,
@@ -188,25 +329,16 @@ def build_report(
                 "expected": len(o.case.expected),
                 "findings": len(o.findings),
                 "matched": len(res.matched),
+                "near": len(res.near),
                 "partial": len(res.partial),
                 "missed": len(res.missed),
                 "extra": len(res.extra),
-                "valid_lines": sum(is_valid_line(f, lines) for f in o.findings),
+                "valid_lines": sum(is_valid_line(f, lines) for f in o.raw_findings),
+                "parse_failures": o.parse_failures,
                 "latency_ms": o.latency_ms,
                 "model_calls": len(o.calls),
-                "raw_findings": [
-                    {
-                        k: f.get(k)
-                        for k in (
-                            "file_path",
-                            "line_number",
-                            "category",
-                            "severity",
-                            "body",
-                        )
-                    }
-                    for f in o.findings
-                ],
+                "raw_findings": [_finding_view(f) for f in o.raw_findings],
+                "posted_findings": [_finding_view(f) for f in o.findings],
             }
         )
     return {
@@ -214,18 +346,38 @@ def build_report(
         "commit": commit,
         "dirty_worktree": dirty,
         "date_utc": date,
+        "date_source": date_source,
+        "run_flags": flags or {},
+        "harness_sha256": harness_sha256(),
+        "case_set_sha256": case_set_sha256([o.case for o in outcomes]),
         "models_used": sorted({c["model_used"] for c in all_calls}),
+        "providers_used": sorted({_call_provider(c) for c in all_calls}),
         "case_count": len(outcomes),
         "cases_scored": len(scored),
+        "scored_case_ids": [o.case.id for o in scored],
         "errors": {o.case.id: o.error for o in outcomes if o.error},
+        "post_processing": steps,
+        "anchoring": anchoring,
+        "parse_failures": {
+            "analyzer_runs_failed": sum(known) if not unknown else None,
+            "cases_unknown": unknown,
+            "note": (
+                None
+                if not unknown
+                else "this code doesn't report analyzer_runs[...].parsed, "
+                "so parse failures can't be counted"
+            ),
+        },
         "metrics": aggregate(
             [
                 {
                     "diff": o.case.diff,
                     "expected": o.case.expected,
                     "findings": o.findings,
+                    "raw_findings": o.raw_findings,
+                    "error": o.error,
                 }
-                for o in scored
+                for o in outcomes
             ]
         ),
         "latency_ms": {
@@ -233,6 +385,7 @@ def build_report(
             "mean": round(statistics.mean(latencies)) if latencies else None,
             "p50": round(statistics.median(latencies)) if latencies else None,
             "max": max(latencies) if latencies else None,
+            "note": LATENCY_NOTE,
         },
         "tokens": {
             "model_calls": len(all_calls),
@@ -253,49 +406,100 @@ def render_markdown(report: dict[str, Any]) -> str:
     lat = report["latency_ms"]
     tok = report["tokens"]
     cost = report["cost_usd"]
+    pf = report["parse_failures"]
+    anch = report["anchoring"]
+    scored, total = report["cases_scored"], report["case_count"]
     lines = [
         f"# Review eval results ({report['mode']})",
         "",
+        f"**Scored {scored} of {total} cases.**"
+        + (
+            ""
+            if scored == total
+            else " Errored cases count as missed (defects) or as false"
+            " positives (clean diffs); see the Error column."
+        ),
+        "",
         f"- Commit: `{report['commit']}`"
-        + (" (uncommitted changes present)" if report["dirty_worktree"] else ""),
-        f"- Date (UTC): {report['date_utc'] or 'n/a (replay)'}",
+        + (
+            " (uncommitted or untracked files present)"
+            if report["dirty_worktree"]
+            else ""
+        ),
+        f"- Date (UTC): {report['date_utc'] or 'n/a'} ({report['date_source']})",
         f"- Models used: {', '.join(report['models_used']) or 'none'}",
-        f"- Cases: {report['case_count']} "
-        f"({m['clean_cases']} clean scored), scored {report['cases_scored']}",
+        f"- Run flags: {json.dumps(report['run_flags'], sort_keys=True)}",
+        f"- Post-processing: {', '.join(report['post_processing']) or 'none'}",
+        f"- Harness sha256: `{report['harness_sha256'][:16]}`, "
+        f"case set sha256: `{report['case_set_sha256'][:16]}`",
+        f"- Cases: {total} ({m['clean_cases']} clean)",
         "",
         "| Metric | Value |",
         "| --- | --- |",
-        f"| Precision | {_fmt(m['precision'])} "
+        f"| Precision (exact location) | {_fmt(m['precision'])} "
         f"({m['matched']}/{m['findings_total']} findings) |",
-        f"| Recall | {_fmt(m['recall'])} "
+        f"| Precision, duplicates collapsed | {_fmt(m['precision_dedup'])} "
+        f"({m['matched_dedup']}/{m['unique_findings_total']} unique findings) |",
+        f"| Precision (location-tolerant) | {_fmt(m['precision_tolerant'])} "
+        f"({m['matched'] + m['near']}/{m['findings_total']} findings) |",
+        f"| Recall (exact line) | {_fmt(m['recall'])} "
         f"({m['matched']}/{m['expected_total']} expected) |",
+        f"| Recall (location-tolerant) | {_fmt(m['recall_tolerant'])} "
+        f"({m['matched'] + m['near']}/{m['expected_total']} expected) |",
         f"| False-positive rate on clean diffs | "
         f"{_fmt(m['clean_false_positive_rate'])} "
-        f"({m['clean_cases_with_findings']}/{m['clean_cases']} cases) |",
-        f"| Valid-line rate | {_fmt(m['valid_line_rate'])} "
-        f"({m['valid_line_findings']}/{m['findings_total']} findings) |",
-        f"| Partial matches | {m['partial']} |",
-        f"| Latency per case, ms ({lat['source']}) | mean {lat['mean']}, "
+        f"({m['clean_cases_with_findings'] + m['clean_cases_errored']}"
+        f"/{m['clean_cases']} cases) |",
+        f"| Valid-line rate (agent output, before anchoring) | "
+        f"{_fmt(m['valid_line_rate'])} "
+        f"({m['valid_line_findings']}/{m['raw_findings_total']} findings) |",
+        f"| Near / partial matches | {m['near']} / {m['partial']} |",
+        "| Analyzer parse failures | "
+        + (
+            str(pf["analyzer_runs_failed"])
+            if pf["analyzer_runs_failed"] is not None
+            else f"unknown ({pf['note']})"
+        )
+        + " |",
+        "| Anchoring (anchored / snapped / file-level) | "
+        + (
+            f"{anch['anchored']} / {anch['snapped']} / {anch['unanchored']}"
+            if anch
+            else "not applied"
+        )
+        + " |",
+        f"| Latency per case, ms ({lat['source']}; providers: "
+        f"{', '.join(report['providers_used']) or 'none'}) | mean {lat['mean']}, "
         f"p50 {lat['p50']}, max {lat['max']} |",
         f"| Model calls / prompt tokens / completion tokens | "
         f"{tok['model_calls']} / {tok['prompt']} / {tok['completion']} |",
         f"| Cost (USD) | {'not priced' if cost is None else cost} |",
         "",
-        "| Case | Expected | Findings | Matched | Partial | Missed | Extra | Error |",
-        "| --- | --- | --- | --- | --- | --- | --- | --- |",
+        f"{lat['note']} Precision is measured against the labels: a real issue "
+        "nobody labeled, or a duplicate, counts as an extra. Exact recall needs "
+        "the exact labeled line range; location-tolerant recall also accepts "
+        "the same file within 3 lines or in the same hunk.",
+        "",
+        "| Case | Expected | Findings | Matched | Near | Partial | Missed | Extra "
+        "| Error |",
+        "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
     ]
     for c in report["cases"]:
         lines.append(
             f"| {c['id']} | {c['expected']} | {c['findings']} | {c['matched']} "
-            f"| {c['partial']} | {c['missed']} | {c['extra']} | "
+            f"| {c['near']} | {c['partial']} | {c['missed']} | {c['extra']} | "
             f"{c['error'] or ''} |"
         )
     return "\n".join(lines) + "\n"
 
 
-def write_results(report: dict[str, Any], results_dir: Path) -> tuple[Path, Path]:
+def write_results(
+    report: dict[str, Any], results_dir: Path, name: str | None = None
+) -> tuple[Path, Path]:
     results_dir.mkdir(parents=True, exist_ok=True)
-    stem = report["commit"][:12] if report["commit"] != "unknown" else "unknown"
+    stem = name or (
+        report["commit"][:12] if report["commit"] != "unknown" else "unknown"
+    )
     json_path = results_dir / f"{stem}.json"
     md_path = results_dir / f"{stem}.md"
     json_path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n")
@@ -357,7 +561,15 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--cases-dir", type=Path, default=CASES_DIR)
     parser.add_argument("--cassettes-dir", type=Path, default=CASSETTES_DIR)
     parser.add_argument(
-        "--results-dir", type=Path, help="write <sha>.json and <sha>.md here"
+        "--results-dir", type=Path, help="write <name>.json and <name>.md here"
+    )
+    parser.add_argument(
+        "--results-name", help="file name stem for results (default: commit sha)"
+    )
+    parser.add_argument(
+        "--allow-partial",
+        action="store_true",
+        help="write results even if some cases errored",
     )
     parser.add_argument("--only", help="comma-separated case ids")
     parser.add_argument(
@@ -398,9 +610,14 @@ def main(argv: list[str] | None = None) -> int:
 
     commit, dirty = git_state()
     mode_name = "live" if args.live else "replay"
-    date = (
-        datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ") if args.live else None
-    )
+    date = _now_utc() if args.live else None
+    flags = {
+        "pause": args.pause,
+        "provider": args.provider,
+        "only": sorted(only) if only else None,
+        "record": args.record,
+        "allow_partial": args.allow_partial,
+    }
     try:
         outcomes = asyncio.run(
             run(
@@ -415,10 +632,23 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
-    report = build_report(outcomes, mode_name, commit, dirty, date)
+    report = build_report(outcomes, mode_name, commit, dirty, date, flags)
     print(render_markdown(report))
+    if report["errors"]:
+        print(
+            f"Scored {report['cases_scored']} of {report['case_count']} cases; "
+            f"errored: {', '.join(report['errors'])}",
+            file=sys.stderr,
+        )
     if args.results_dir:
-        json_path, md_path = write_results(report, args.results_dir)
+        if report["errors"] and not args.allow_partial:
+            print(
+                "Not writing results: some cases errored. Fix or re-record "
+                "them, or pass --allow-partial to write a partial result.",
+                file=sys.stderr,
+            )
+            return 1
+        json_path, md_path = write_results(report, args.results_dir, args.results_name)
         print(f"Wrote {json_path} and {md_path}")
     return 1 if report["errors"] else 0
 

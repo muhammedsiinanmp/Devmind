@@ -2,8 +2,10 @@
 Record and replay model responses for the eval harness.
 
 A cassette is one JSON file per case. It stores, for each model call, the
-SHA-256 of the prompt, the response text, the model name the client reported
-and token counts. It never stores the prompt itself, request headers or keys.
+SHA-256 of the prompt, the response text, the model name and provider the
+client reported, and token counts, plus the recording time. It never stores
+the prompt itself, request headers or keys. (Cassettes recorded before the
+provider and recording time were added still load.)
 
 Replay looks responses up by prompt hash, in call order per hash, so it does
 not depend on the order in which the parallel analyzer nodes run. A prompt
@@ -25,7 +27,10 @@ CALL_KEYS = {
     "prompt_tokens",
     "completion_tokens",
 }
+# Optional keys: absent from cassettes recorded by earlier harness versions.
+OPTIONAL_CALL_KEYS = {"provider"}
 CASSETTE_KEYS = {"version", "case_id", "case_sha256", "latency_ms", "calls"}
+OPTIONAL_CASSETTE_KEYS = {"recorded_utc"}
 # Shorter values are too likely to occur by chance in normal text.
 _MIN_SECRET_LEN = 8
 
@@ -63,6 +68,7 @@ class Recorder:
     async def __call__(self, messages, *, user_id=None, **kwargs):
         response = await self._generate(messages, user_id=user_id, **kwargs)
         content = response.content or ""
+        provider = getattr(response, "provider", "")
         if any(secret in content for secret in self._secrets):
             raise SecretInResponse("model response contains a configured secret")
         self.calls.append(
@@ -74,6 +80,7 @@ class Recorder:
                 "completion_tokens": int(
                     getattr(response, "completion_tokens", 0) or 0
                 ),
+                "provider": str(getattr(provider, "value", provider) or ""),
             }
         )
         return response
@@ -102,16 +109,22 @@ class Player:
         return self._make_response(call)
 
 
+def _check_call_keys(call: dict, name: str) -> None:
+    keys = set(call)
+    if not CALL_KEYS <= keys <= CALL_KEYS | OPTIONAL_CALL_KEYS:
+        raise ValueError(f"{name}: unexpected cassette call keys {sorted(call)}")
+
+
 def save_cassette(
     path: Path,
     case_id: str,
     case_sha256: str,
     calls: list[dict[str, Any]],
     latency_ms: int,
+    recorded_utc: str | None = None,
 ) -> None:
     for call in calls:
-        if set(call) != CALL_KEYS:
-            raise ValueError(f"unexpected cassette call keys: {sorted(call)}")
+        _check_call_keys(call, path.name)
     data = {
         "version": CASSETTE_VERSION,
         "case_id": case_id,
@@ -119,6 +132,8 @@ def save_cassette(
         "latency_ms": int(latency_ms),
         "calls": calls,
     }
+    if recorded_utc:
+        data["recorded_utc"] = recorded_utc
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
 
@@ -127,11 +142,14 @@ def load_cassette(path: Path, case_id: str, case_sha256: str) -> dict[str, Any]:
     if not path.exists():
         raise CassetteMiss(f"no cassette for case {case_id!r}")
     data = json.loads(path.read_text())
-    if set(data) != CASSETTE_KEYS or data.get("version") != CASSETTE_VERSION:
+    keys = set(data)
+    if (
+        not CASSETTE_KEYS <= keys <= CASSETTE_KEYS | OPTIONAL_CASSETTE_KEYS
+        or data.get("version") != CASSETTE_VERSION
+    ):
         raise ValueError(f"{path.name}: unsupported cassette format")
     for call in data["calls"]:
-        if set(call) != CALL_KEYS:
-            raise ValueError(f"{path.name}: unexpected call keys {sorted(call)}")
+        _check_call_keys(call, path.name)
     if data["case_sha256"] != case_sha256:
         raise CassetteMiss(
             f"case {case_id!r} changed since it was recorded; "

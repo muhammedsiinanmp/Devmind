@@ -3,7 +3,10 @@ End-to-end tests for the eval harness in replay mode, using hand-written
 fixture responses (tests/fixtures/evals/responses.yaml), never a real model.
 """
 
+import asyncio
 import json
+import subprocess
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
@@ -15,6 +18,8 @@ from evals.cases import CASES_DIR, load_cases
 from evals.cassette import (
     CALL_KEYS,
     CASSETTE_KEYS,
+    OPTIONAL_CALL_KEYS,
+    OPTIONAL_CASSETTE_KEYS,
     Recorder,
     SecretInResponse,
     load_cassette,
@@ -116,10 +121,11 @@ class TestCassetteContents:
         for case in fixture_cases:
             path = cassettes / f"{case.id}.json"
             data = json.loads(path.read_text())
-            assert set(data) == CASSETTE_KEYS
+            assert set(data) == CASSETTE_KEYS | OPTIONAL_CASSETTE_KEYS
             assert data["calls"], case.id
             for call in data["calls"]:
-                assert set(call) == CALL_KEYS
+                assert set(call) == CALL_KEYS | OPTIONAL_CALL_KEYS
+                assert call["provider"] == "custom"
             text = path.read_text()
             # The prompt (which embeds the diff) is not stored, only its hash.
             assert case.diff.splitlines()[-1] not in text
@@ -175,7 +181,8 @@ class TestCli:
         md = md_files[0].read_text()
         assert report["commit"] in md
         assert "fixture/hand-written" in md
-        assert "Precision | 0.333" in md
+        assert "Precision (exact location) | 0.333" in md
+        assert "**Scored 3 of 3 cases.**" in md
 
 
 class TestPause:
@@ -242,3 +249,241 @@ class TestProviderFilter:
     def test_provider_requires_live(self):
         with pytest.raises(SystemExit):
             eval_run.main(["--replay", "--provider", "groq"])
+
+    async def test_chain_is_restored_when_the_run_raises(self, fixture_cases):
+        from services import llm_client as llm_module
+
+        before = list(llm_module.MODEL_CHAIN)
+
+        async def boom(case, cassettes_dir):
+            assert [c.provider.value for c in llm_module.MODEL_CHAIN] == ["groq"]
+            raise RuntimeError("quota exhausted")
+
+        with patch.object(eval_run, "live_case", boom):
+            with pytest.raises(RuntimeError):
+                await eval_run.run(
+                    "live", fixture_cases, Path("unused"), provider="groq"
+                )
+        assert llm_module.MODEL_CHAIN == before
+
+
+def _constant_generate(content: str):
+    async def generate(messages, *, user_id=None, **kwargs):
+        return LLMResponse(content, "fixture/hand-written", LLMProvider.CUSTOM, 1, 1)
+
+    return generate
+
+
+def _call(model="groq/m", provider=None):
+    call = {
+        "prompt_sha256": "0" * 64,
+        "response": "{}",
+        "model_used": model,
+        "prompt_tokens": 1,
+        "completion_tokens": 1,
+    }
+    if provider:
+        call["provider"] = provider
+    return call
+
+
+class TestParseFailures:
+    async def test_unparseable_reply_makes_the_case_an_error(self, fixture_cases):
+        case = next(c for c in fixture_cases if c.id == "sql-injection-fstring")
+        with patch.object(
+            llm_client, "generate", _constant_generate("I could not do that.")
+        ):
+            outcome = await eval_run.live_case(case, None)
+        assert outcome.parse_failures == 3  # all three analyzers
+        assert outcome.error.startswith("ParseFailure")
+        report = eval_run.build_report([outcome], "live", "x", False, "d")
+        assert report["parse_failures"]["analyzer_runs_failed"] == 3
+        assert report["cases_scored"] == 0
+        assert report["metrics"]["missed"] == 1  # counted, not dropped
+
+    def test_count_is_unknown_without_analyzer_runs(self):
+        assert eval_run.parse_failures({"synthesized_comments": []}) is None
+        assert eval_run.parse_failures({"analyzer_runs": {"security": {}}}) is None
+        runs = {"a": {"parsed": True}, "b": {"parsed": False}}
+        assert eval_run.parse_failures({"analyzer_runs": runs}) == 1
+
+    def test_report_says_unknown_when_code_does_not_report_it(self, fixture_cases):
+        outcome = eval_run.CaseOutcome(
+            case=fixture_cases[0], calls=[_call()], parse_failures=None
+        )
+        report = eval_run.build_report([outcome], "replay", "x", False, None)
+        assert report["parse_failures"]["analyzer_runs_failed"] is None
+        md = eval_run.render_markdown(report)
+        assert "Analyzer parse failures | unknown" in md
+
+
+SQL_RESULT = {
+    "synthesized_comments": [
+        {
+            "file_path": "shop/repository.py",
+            "line_number": 22,
+            "category": "security",
+            "severity": "error",
+            "body": "inline",
+            "extra_field": "ignored",
+        },
+        {  # 2 lines past the hunk (20-24): snapped to 24
+            "file_path": "shop/repository.py",
+            "line_number": 26,
+            "category": "quality",
+            "severity": "info",
+            "body": "near the hunk",
+        },
+        {  # far from any hunk: becomes a file-level note
+            "file_path": "shop/repository.py",
+            "line_number": 90,
+            "category": "quality",
+            "severity": "info",
+            "body": "far away",
+        },
+        {"file_path": "shop/repository.py", "line_number": 22, "body": ""},
+    ]
+}
+
+
+class TestPostProcessing:
+    def _diff(self):
+        return load_cases(CASES_DIR, {"sql-injection-fstring"})[0].diff
+
+    def test_router_steps_are_applied(self):
+        raw, posted, steps, anchoring = eval_run.postprocess(SQL_RESULT, self._diff())
+        assert steps == [
+            "drop_empty_body",
+            "review_comment_validation",
+            "anchor_comments",
+        ]
+        assert [f["line_number"] for f in raw] == [22, 26, 90]
+        assert [f["line_number"] for f in posted] == [22, 24, 0]
+        assert anchoring == {"anchored": 1, "snapped": 1, "unanchored": 1}
+        assert "extra_field" not in posted[0]
+
+    def test_without_anchoring_module_comments_are_not_moved(self):
+        # Code without services.comment_anchoring (e.g. the pre-fix
+        # baseline) posted comments at the model's line.
+        with patch.dict("sys.modules", {"services.comment_anchoring": None}):
+            raw, posted, steps, anchoring = eval_run.postprocess(
+                SQL_RESULT, self._diff()
+            )
+        assert "anchor_comments" not in steps
+        assert anchoring is None
+        assert [f["line_number"] for f in posted] == [22, 26, 90]
+
+    async def test_report_records_post_processing(self, fixture_cases, cassettes):
+        report = await _replay_report(fixture_cases, cassettes)
+        assert report["post_processing"] == [
+            "anchor_comments",
+            "drop_empty_body",
+            "review_comment_validation",
+        ]
+        # The fixture's line-40 finding is posted as a file-level note.
+        assert report["anchoring"]["unanchored"] == 1
+
+
+class TestPartialResults:
+    def _break_one(self, cassettes, case_id="clean-docstring"):
+        path = cassettes / f"{case_id}.json"
+        data = json.loads(path.read_text())
+        data["case_sha256"] = "0" * 64
+        path.write_text(json.dumps(data))
+
+    def _main(self, cassettes, results, *extra):
+        return eval_run.main(
+            [
+                "--replay",
+                "--cassettes-dir",
+                str(cassettes),
+                "--only",
+                ",".join(sorted(FIXTURE_IDS)),
+                "--results-dir",
+                str(results),
+                *extra,
+            ]
+        )
+
+    async def test_refuses_to_write_when_a_case_errored(
+        self, cassettes, tmp_path, capsys
+    ):
+        self._break_one(cassettes)
+        results = tmp_path / "results"
+        code = await asyncio.to_thread(self._main, cassettes, results)
+        assert code == 1
+        assert not results.exists()
+        err = capsys.readouterr().err
+        assert "Scored 2 of 3 cases" in err
+        assert "--allow-partial" in err
+
+    async def test_allow_partial_writes_and_counts_the_error(self, cassettes, tmp_path):
+        self._break_one(cassettes)
+        results = tmp_path / "results"
+        code = await asyncio.to_thread(
+            self._main, cassettes, results, "--allow-partial", "--results-name", "p"
+        )
+        assert code == 1
+        report = json.loads((results / "p.json").read_text())
+        assert report["cases_scored"] == 2
+        assert report["run_flags"]["allow_partial"] is True
+        # clean-docstring errored, so it counts against the clean-diff rate
+        assert report["metrics"]["clean_false_positive_rate"] == 1.0
+        assert "Scored 2 of 3 cases" in (results / "p.md").read_text()
+
+
+class TestProvenance:
+    async def test_replay_keeps_recording_date_from_cassettes(
+        self, fixture_cases, cassettes
+    ):
+        report = await _replay_report(fixture_cases, cassettes)
+        assert report["date_source"] == "cassettes"
+        assert report["date_utc"].endswith("Z")
+
+    async def test_replay_of_older_cassettes_still_works(
+        self, fixture_cases, cassettes
+    ):
+        # Cassettes from before provider and recorded_utc were stored.
+        for path in cassettes.glob("*.json"):
+            data = json.loads(path.read_text())
+            del data["recorded_utc"]
+            for call in data["calls"]:
+                del call["provider"]
+            path.write_text(json.dumps(data))
+        report = await _replay_report(fixture_cases, cassettes)
+        assert report["errors"] == {}
+        assert report["date_utc"] is None
+        assert report["date_source"] == "not stored in cassettes"
+
+    def test_latency_is_marked_not_comparable(self, fixture_cases):
+        outcome = eval_run.CaseOutcome(
+            case=fixture_cases[0], calls=[_call(provider="groq")], parse_failures=0
+        )
+        report = eval_run.build_report([outcome], "live", "x", False, "d")
+        assert report["providers_used"] == ["groq"]
+        assert "same providers" in report["latency_ms"]["note"]
+
+    def test_run_flags_are_recorded(self):
+        flags = {"pause": 75.0, "provider": "groq"}
+        report = eval_run.build_report([], "live", "x", False, "d", flags)
+        assert report["run_flags"] == flags
+
+    def test_case_set_hash_changes_with_labels(self, fixture_cases):
+        before = eval_run.case_set_sha256(fixture_cases)
+        changed = [
+            replace(c, expected=[]) if c.id == "sql-injection-fstring" else c
+            for c in fixture_cases
+        ]
+        assert eval_run.case_set_sha256(changed) != before
+        assert eval_run.case_set_sha256(list(fixture_cases)) == before
+
+    def test_git_state_counts_untracked_files(self, tmp_path, monkeypatch):
+        cmd = ["git", "-c", "user.name=t", "-c", "user.email=t@example.com"]
+        subprocess.run([*cmd, "init", "-q"], cwd=tmp_path, check=True)
+        (tmp_path / "a.txt").write_text("a")
+        subprocess.run([*cmd, "add", "a.txt"], cwd=tmp_path, check=True)
+        subprocess.run([*cmd, "commit", "-qm", "a"], cwd=tmp_path, check=True)
+        monkeypatch.chdir(tmp_path)
+        assert eval_run.git_state()[1] is False
+        (tmp_path / "new.txt").write_text("untracked")
+        assert eval_run.git_state()[1] is True
