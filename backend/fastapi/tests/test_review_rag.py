@@ -388,6 +388,11 @@ class TestNearDuplicateFilterCoversWholeDiff:
         assert not any("value_20" in p for p in patterns)
 
 
+def _clear_embedding_cache(store: VectorStore) -> None:
+    """Empty the in-process embedding cache, as after a restart."""
+    store._cache = type(store._cache)(maxsize=1000)
+
+
 class TestBatchedEmbeddingCalls:
     @pytest.mark.asyncio
     async def test_20_hunk_review_makes_at_most_2_embedding_calls(
@@ -406,8 +411,13 @@ class TestBatchedEmbeddingCalls:
         self, fake_store, embedding_api
     ):
         await _review(_diff_with_files(20), pr_number=3)
+        assert len(fake_store.rows) == 20
         rows_after_first = list(fake_store.rows)
         document_calls_after_first = embedding_api.calls("RETRIEVAL_DOCUMENT")
+        assert document_calls_after_first == 1
+        # A new process (or an evicted cache) must still skip stored chunks:
+        # only the sha256 check may prevent the document-embedding call.
+        _clear_embedding_cache(fake_store)
 
         await _review(_diff_with_files(20), pr_number=3)
 
@@ -419,7 +429,9 @@ class TestBatchedEmbeddingCalls:
         self, fake_store, embedding_api
     ):
         await _review(_diff_with_files(2), pr_number=3)
+        assert len(fake_store.rows) == 2
         embedding_api.requests.clear()
+        _clear_embedding_cache(fake_store)
 
         await _review(_diff_with_files(3), pr_number=3)
 
@@ -446,13 +458,19 @@ class TestBatchedEmbeddingCalls:
 
 class TestStoreStopsOnSystemicDbErrors:
     @pytest.mark.asyncio
-    async def test_error_that_hits_every_insert_stops_after_the_first(self, fake_store):
+    async def test_error_that_hits_every_insert_stops_after_the_first(
+        self, fake_store, embedding_api
+    ):
+        # e.g. source_ref missing because 0001 wasn't applied. The sha256
+        # lookup selects only sha256, so it succeeds; the batch is embedded
+        # once and the first insert fails.
         fake_store.insert_error = ProgrammingError(
             "INSERT", {}, Exception("column source_ref does not exist")
         )
 
         await _review(_diff_with_files(5), pr_number=7)
 
+        assert embedding_api.calls("RETRIEVAL_DOCUMENT") == 1
         assert fake_store.insert_attempts == 1
         assert fake_store.rows == []
 
@@ -460,12 +478,13 @@ class TestStoreStopsOnSystemicDbErrors:
     async def test_failed_duplicate_check_makes_no_document_embedding_call(
         self, fake_store, embedding_api
     ):
-        async def missing_column(session, hashes):
+        # e.g. the table doesn't exist yet, or the database is unreachable.
+        async def missing_table(session, hashes):
             raise ProgrammingError(
-                "SELECT", {}, Exception("column source_ref does not exist")
+                "SELECT", {}, Exception('relation "code_embeddings" does not exist')
             )
 
-        fake_store.existing_hashes = missing_column
+        fake_store.existing_hashes = missing_table
 
         await _review(_diff_with_files(5), pr_number=7)
 
