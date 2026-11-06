@@ -25,7 +25,7 @@ from agents.states import AnalyzerRun, ReviewState, ReviewComment
 from core.config import get_settings
 from models.review import ReviewFinding, ReviewFindings, Severity
 from services.code_parser import parse_diff
-from services.diff_batching import plan_batches
+from services.diff_batching import SKIP_DEADLINE, plan_batches
 from services.llm_client import llm_client
 from services.prompt_builder import (
     PromptContext,
@@ -407,6 +407,7 @@ async def run_review_agent(
     diff_chunks: list | None = None,
     similar_patterns: list[str] | None = None,
     share_prompt: bool = False,
+    deadline_seconds: float | None = None,
 ) -> dict[str, Any]:
     """
     Run the full review agent.
@@ -417,6 +418,11 @@ async def run_review_agent(
     at most review_max_concurrent_batches at a time, and the results are
     merged. A diff that fits in one batch is reviewed exactly as before.
 
+    Batches still running when the deadline passes are cancelled; the
+    findings of finished batches are returned and the unfinished batches'
+    files are reported as skipped with reason "deadline". If a batch fails,
+    the other batches are cancelled and its exception is raised.
+
     Args:
         diff_text: Git diff text
         repo_full_name: Repository full name (owner/repo)
@@ -426,6 +432,8 @@ async def run_review_agent(
         similar_patterns: Retrieved similar code for the security prompt
         share_prompt: Give all three analyzers the security prompt (the
             batch's diff plus similar_patterns), as the router does
+        deadline_seconds: Time the batches may take (default:
+            review_deadline_seconds)
 
     Returns:
         Final state, including synthesized_comments, analyzer_runs,
@@ -451,9 +459,15 @@ async def run_review_agent(
             len(plan.files_skipped),
         )
 
+    if deadline_seconds is None:
+        deadline_seconds = settings.review_deadline_seconds
     semaphore = asyncio.Semaphore(settings.review_max_concurrent_batches)
+    # Set when a batch fails or the deadline passes, so a batch that was
+    # waiting for a slot doesn't start its LLM calls before it is cancelled.
+    stopped = False
 
-    async def review_batch(batch: list) -> dict[str, Any]:
+    async def review_batch(batch: list) -> dict[str, Any] | None:
+        nonlocal stopped
         prompt = ""
         if share_prompt:
             prompt = build_review_prompt(
@@ -475,18 +489,59 @@ async def run_review_agent(
             "model_used": "",
         }
         async with semaphore:
-            return await review_graph.ainvoke(initial_state)
+            if stopped:
+                return None
+            try:
+                return await review_graph.ainvoke(initial_state)
+            except BaseException:
+                stopped = True
+                raise
 
-    # A failing batch (e.g. every provider rate limited) cancels the others,
-    # and its own exception is raised so callers can still catch it by type.
+    tasks = [asyncio.create_task(review_batch(batch)) for batch in plan.batches]
+    pending: set[asyncio.Task] = set()
     try:
-        async with asyncio.TaskGroup() as group:
-            tasks = [group.create_task(review_batch(batch)) for batch in plan.batches]
-    except* Exception as errors:
-        raise errors.exceptions[0]
+        if tasks:
+            _, pending = await asyncio.wait(
+                tasks,
+                timeout=max(deadline_seconds, 0),
+                return_when=asyncio.FIRST_EXCEPTION,
+            )
+    finally:
+        # Also runs if this coroutine is cancelled, so no batch outlives it.
+        unfinished = [task for task in tasks if not task.done()]
+        if unfinished:
+            stopped = True
+            for task in unfinished:
+                task.cancel()
+            await asyncio.gather(*unfinished, return_exceptions=True)
 
-    if tasks:
-        result = _merge_batch_results([task.result() for task in tasks])
+    failed = [
+        task
+        for task in tasks
+        if task not in pending and not task.cancelled() and task.exception()
+    ]
+    if failed:
+        # Its own exception, so callers can still catch it by type.
+        raise failed[0].exception()
+
+    finished = [
+        (batch, task.result())
+        for batch, task in zip(plan.batches, tasks)
+        if task not in pending and task.result() is not None
+    ]
+    timed_out = [batch for batch, task in zip(plan.batches, tasks) if task in pending]
+    if timed_out:
+        logger.warning(
+            "review.deadline repo=%s pr=%s deadline_s=%s finished=%d unfinished=%d",
+            repo_full_name,
+            pr_number,
+            deadline_seconds,
+            len(finished),
+            len(timed_out),
+        )
+
+    if finished:
+        result = _merge_batch_results([batch_result for _, batch_result in finished])
     else:
         result = {
             "security_comments": [],
@@ -496,6 +551,10 @@ async def run_review_agent(
             "analyzer_runs": {},
             "model_used": "",
         }
-    result["files_reviewed"] = plan.files_reviewed
-    result["files_skipped"] = [asdict(skipped) for skipped in plan.files_skipped]
+    result["files_reviewed"] = [c.file_path for batch, _ in finished for c in batch]
+    result["files_skipped"] = [asdict(skipped) for skipped in plan.files_skipped] + [
+        {"file_path": c.file_path, "reason": SKIP_DEADLINE}
+        for batch in timed_out
+        for c in batch
+    ]
     return result

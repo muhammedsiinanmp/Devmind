@@ -16,12 +16,14 @@ from services.prompt_builder import MAX_DIFF_LINES, file_render_cost
 
 SKIP_GENERATED = "generated"
 SKIP_BATCH_LIMIT = "batch_limit"
+# Set by run_review_agent for batches unfinished at the review deadline.
+SKIP_DEADLINE = "deadline"
 
 
 @dataclass
 class SkippedFile:
     file_path: str
-    reason: str  # SKIP_GENERATED or SKIP_BATCH_LIMIT
+    reason: str  # SKIP_GENERATED, SKIP_BATCH_LIMIT or SKIP_DEADLINE
 
 
 @dataclass

@@ -8,6 +8,8 @@ what each batch's prompt contains and what the merged review reports.
 import asyncio
 import json
 import re
+import time
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -69,10 +71,18 @@ def _files_in(prompt: str) -> list[str]:
 class FakeLLM:
     """Reports a finding wherever MARKER is shown, with its line number."""
 
-    def __init__(self, delay: float = 0.0, fail_on: str | None = None):
+    def __init__(
+        self,
+        delay: float = 0.0,
+        fail_on: str | None = None,
+        slow_on: str | None = None,
+    ):
         self.prompts: list[str] = []
         self.delay = delay
         self.fail_on = fail_on
+        # Calls for a batch containing this file take 10 s.
+        self.slow_on = slow_on
+        self.cancelled: list[str] = []
         self.in_flight: list[str] = []
         self.max_calls_in_flight = 0
         self.max_batches_in_flight = 0
@@ -87,7 +97,8 @@ class FakeLLM:
             self.max_batches_in_flight, len(set(self.in_flight))
         )
         try:
-            await asyncio.sleep(self.delay)
+            slow = self.slow_on and self.slow_on in batch
+            await asyncio.sleep(10 if slow else self.delay)
             if self.fail_on and self.fail_on in batch:
                 raise AllProvidersDownError("all providers rate limited")
             findings = []
@@ -95,7 +106,7 @@ class FakeLLM:
             if match:
                 findings.append(
                     {
-                        "file_path": "pkg/third.py",
+                        "file_path": _files_in(prompt[: match.start()])[-1],
                         "line_number": int(match.group(1)),
                         "category": "security",
                         "severity": "error",
@@ -110,8 +121,15 @@ class FakeLLM:
                 prompt_tokens=10,
                 completion_tokens=2,
             )
+        except asyncio.CancelledError:
+            self.cancelled.append(batch)
+            raise
         finally:
             self.in_flight.remove(batch)
+
+
+def _other_tasks() -> list[asyncio.Task]:
+    return [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
 
 
 async def _run(diff: str, fake: FakeLLM, **kwargs) -> dict:
@@ -284,6 +302,82 @@ class TestBatchLimits:
         with pytest.raises(AllProvidersDownError):
             await _run(OVER_BUDGET_DIFF, fake)
 
+    @pytest.mark.asyncio
+    async def test_a_failing_batch_cancels_its_siblings_and_returns_nothing(
+        self, settings
+    ):
+        # Batch 1 (mod0, mod1) is slow; batch 2 (mod2, mod3) fails at once.
+        diff = "".join(_new_file(f"pkg/mod{i}.py", 220) for i in range(4))
+        fake = FakeLLM(slow_on="pkg/mod0.py", fail_on="pkg/mod2.py")
+        started = time.perf_counter()
+
+        with pytest.raises(AllProvidersDownError):
+            await _run(diff, fake)
+
+        assert time.perf_counter() - started < 2
+        assert fake.cancelled == ["pkg/mod0.py,pkg/mod1.py"] * 3
+        assert _other_tasks() == []
+
+    @pytest.mark.asyncio
+    async def test_no_batch_starts_after_one_failed(self, settings):
+        settings.review_max_concurrent_batches = 1
+        diff = "".join(_new_file(f"pkg/mod{i}.py", 220) for i in range(6))
+        fake = FakeLLM(fail_on="pkg/mod0.py")
+
+        with pytest.raises(AllProvidersDownError):
+            await _run(diff, fake)
+
+        # Only the failing batch's three analyzer calls were made.
+        assert {",".join(_files_in(p)) for p in fake.prompts} == {
+            "pkg/mod0.py,pkg/mod1.py"
+        }
+        assert len(fake.prompts) == 3
+        assert _other_tasks() == []
+
+
+class TestDeadline:
+    @pytest.mark.asyncio
+    async def test_deadline_returns_finished_batches_and_skips_the_rest(self, settings):
+        diff = (
+            _new_file("pkg/mod0.py", 220)
+            + _new_file("pkg/mod1.py", 220, marker_at=50)
+            + _new_file("pkg/mod2.py", 220)
+            + _new_file("pkg/mod3.py", 220)
+        )
+        fake = FakeLLM(slow_on="pkg/mod2.py")
+        started = time.perf_counter()
+
+        result = await _run(diff, fake, deadline_seconds=0.3)
+
+        assert time.perf_counter() - started < 2
+        assert [
+            (c["file_path"], c["line_number"]) for c in result["synthesized_comments"]
+        ] == [("pkg/mod1.py", 50)]
+        assert result["files_reviewed"] == ["pkg/mod0.py", "pkg/mod1.py"]
+        assert result["files_skipped"] == [
+            {"file_path": "pkg/mod2.py", "reason": "deadline"},
+            {"file_path": "pkg/mod3.py", "reason": "deadline"},
+        ]
+        # Only the finished batch counts in analyzer_runs.
+        assert all(r["attempts"] == 1 for r in result["analyzer_runs"].values())
+        assert fake.cancelled == ["pkg/mod2.py,pkg/mod3.py"] * 3
+        assert _other_tasks() == []
+
+    @pytest.mark.asyncio
+    async def test_default_deadline_comes_from_settings(self, settings, monkeypatch):
+        monkeypatch.setattr(settings, "review_deadline_seconds", 0.2)
+        fake = FakeLLM(slow_on="app.py")
+
+        result = await _run(SMALL_FILE + UV_LOCK, fake)
+
+        assert result["files_reviewed"] == []
+        assert result["files_skipped"] == [
+            {"file_path": "uv.lock", "reason": "generated"},
+            {"file_path": "app.py", "reason": "deadline"},
+        ]
+        assert result["synthesized_comments"] == []
+        assert _other_tasks() == []
+
 
 def _skipped(skipped: list[dict]) -> list[str]:
     return [f"File: {s['file_path']}" for s in skipped]
@@ -338,3 +432,76 @@ class TestRouterReportsCoverage:
         assert body["files_skipped"] == [
             {"file_path": "uv.lock", "reason": "generated"}
         ]
+
+    @pytest.mark.asyncio
+    async def test_retrieved_patterns_reach_every_batch_and_skip_generated_files(
+        self, settings
+    ):
+        from routers.review import analyze_review
+
+        store = RecordingStore()
+        fake = FakeLLM()
+        with (
+            patch("agents.review_agent.llm_client") as client,
+            patch("services.vector_store.vector_store", store),
+            patch("core.database.AsyncSessionLocal", _session),
+            patch("routers.review.store_review_async", AsyncMock()),
+        ):
+            client.generate = fake
+            response = await analyze_review(
+                ReviewRequest(diff=OVER_BUDGET_DIFF + UV_LOCK, repo_full_name="o/r"),
+                secret="unused",
+            )
+
+        batches = {tuple(_files_in(p)) for p in fake.prompts}
+        # The patterns take prompt space, so each file gets its own batch here.
+        assert len(batches) == 3
+        assert len(fake.prompts) == 9
+        # Every analyzer of every batch gets the retrieved pattern.
+        assert all("lib/legacy.py" in p for p in fake.prompts)
+        # The skipped lockfile was not used as a retrieval query.
+        assert store.queries and not any("requests" in q for q in store.queries)
+        body = response.model_dump()
+        assert [(c["file_path"], c["line_number"]) for c in body["comments"]] == [
+            ("pkg/third.py", 100)
+        ]
+        assert body["files_reviewed"] == [
+            "pkg/first.py",
+            "pkg/second.py",
+            "pkg/third.py",
+        ]
+        assert body["files_skipped"] == [
+            {"file_path": "uv.lock", "reason": "generated"}
+        ]
+
+
+class RecordingStore:
+    """Vector store stub: records query texts, returns one similar chunk."""
+
+    def __init__(self):
+        self.queries: list[str] = []
+
+    async def generate_embeddings(self, texts, task_type=None):
+        self.queries.extend(texts)
+        return [[0.0] for _ in texts]
+
+    async def enable_iterative_scan(self, session):
+        return None
+
+    async def search_similar_by_embedding(self, **kwargs):
+        from services.vector_store import SimilarChunk
+
+        return [
+            SimilarChunk(
+                chunk_text='cursor.execute("SELECT * FROM t WHERE id=" + i)',
+                file_path="lib/legacy.py",
+                language="python",
+                similarity=0.9,
+                chunk_type="hunk",
+            )
+        ]
+
+
+@asynccontextmanager
+async def _session():
+    yield object()

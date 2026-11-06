@@ -77,6 +77,15 @@ class Settings(BaseSettings):
     # per analyzer, so this bounds concurrent provider requests to 3x it.
     review_max_batches: int = Field(default=6, ge=1)
     review_max_concurrent_batches: int = Field(default=2, ge=1)
+    # Seconds a review may spend from the start of POST /review/analyze to the
+    # end of its batches (REVIEW_DEADLINE_SECONDS). Batches still running then
+    # are cancelled and their files reported as skipped ("deadline"). It must
+    # be below Django's FASTAPI_TIMEOUT_SECONDS (default 120), or Django gives
+    # up before the partial review is returned. 100 s fits 6 batches (18
+    # calls, 3 rounds of 2 batches) including one wait for Google's 15
+    # requests-per-minute window (up to 60 s), and leaves 20 s of Django's
+    # timeout for anchoring, the response and network.
+    review_deadline_seconds: float = Field(default=100, gt=0)
     # Glob patterns of generated or vendored files that are not reviewed
     # (reported as skipped, "generated"). Set REVIEW_SKIP_PATTERNS to a JSON
     # list to replace DEFAULT_SKIP_PATTERNS above.

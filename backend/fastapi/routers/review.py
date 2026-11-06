@@ -13,11 +13,13 @@ from dataclasses import asdict
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from core.config import get_settings
 from core.security import verify_internal_token
 from core.metrics import rag_pipeline_duration, agent_iterations, review_errors_total
 from models.review import ReviewRequest, ReviewResponse, ReviewComment
 from services.code_parser import DiffChunk, parse_diff
 from services.comment_anchoring import anchor_comments
+from services.diff_batching import is_skipped_path
 from services.llm_client import AllProvidersDownError
 
 logger = logging.getLogger(__name__)
@@ -62,7 +64,8 @@ async def _prepare_rag_context(
     parse diff -> similarity search per hunk.
 
     The agent builds the prompt from these, one per file batch, and gives it
-    to all three analyzers.
+    to all three analyzers. Retrieval runs once per review, and files the
+    agent will skip (review_skip_patterns) aren't used as queries.
 
     Nothing is stored here. The PR's own chunks are embedded by
     store_review_async after the review, so retrieval only sees other code:
@@ -73,8 +76,21 @@ async def _prepare_rag_context(
     similar_patterns: list[str] = []
 
     all_hunk_texts = [text for text in map(_chunk_text, parsed_chunks) if text]
+    skip_patterns = get_settings().review_skip_patterns
+    query_texts = [
+        text
+        for text in map(
+            _chunk_text,
+            (
+                c
+                for c in parsed_chunks
+                if not is_skipped_path(c.file_path, skip_patterns)
+            ),
+        )
+        if text
+    ]
     # Queries are capped at 20 hunks; the duplicate filter covers the whole diff.
-    hunk_texts = all_hunk_texts[:20]
+    hunk_texts = query_texts[:20]
     current_hunks = {_normalize(text[:4000]) for text in all_hunk_texts}
     legacy_pr_path = f"PR#{request.pr_number}"
 
@@ -181,6 +197,9 @@ async def analyze_review(
             diff_chunks=parsed_chunks,
             similar_patterns=similar_patterns,
             share_prompt=True,
+            # The deadline counts from the start of the request, retrieval included.
+            deadline_seconds=get_settings().review_deadline_seconds
+            - (time.perf_counter() - start),
         )
 
         # Extract comments from agent state
