@@ -75,7 +75,10 @@ class Settings(BaseSettings):
 
     # Server provider models. Pinned stable IDs rather than "-latest" aliases,
     # so a provider-side alias change can't silently change review output.
-    google_model: str = "gemini-3.5-flash"
+    # gemini-3.5-flash is deprecated (Google routes it to gemini-3.6-flash);
+    # gemini-3.6-flash answered a JSON-mode request with no temperature on
+    # 2026-11-06. gemini-3.8-flash returned 503 "high demand" that day.
+    google_model: str = "gemini-3.6-flash"
     groq_model: str = "openai/gpt-oss-120b"
     # Seconds /health caches each provider's model listing
     llm_health_cache_seconds: int = 300
