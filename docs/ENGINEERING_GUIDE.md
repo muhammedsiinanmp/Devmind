@@ -56,6 +56,8 @@ There's no `FERNET_KEY` variable. The encryption key comes from `DJANGO_SECRET_K
 | `LLM_HEALTH_CACHE_SECONDS` | Default `300`. How long FastAPI `/health` caches each provider's model listing. |
 | `LLM_FAILOVER_ENABLED` | Default `True`. When `False`, only the first provider in the chain is tried. |
 | `REVIEW_TEMPERATURE` | Default `0.1`. Sampling temperature for the review analyzers' LLM calls (0.0 to 2.0). |
+| `GOOGLE_TEMPERATURE` | Default `omit`. Temperature for requests to the built-in Google provider: a number (0.0 to 2.0) replaces `REVIEW_TEMPERATURE`, `omit` sends no temperature so the model's default applies, and unset or empty uses `REVIEW_TEMPERATURE`. The default follows Google's guidance for Gemini 3.x models not to change the sampling defaults; its effect on review quality hasn't been measured. |
+| `GROQ_TEMPERATURE` | Default unset (uses `REVIEW_TEMPERATURE`). Same values as `GOOGLE_TEMPERATURE`, for the built-in Groq provider. BYOK keys always use `REVIEW_TEMPERATURE`. |
 | `REVIEW_DEADLINE_SECONDS` | Default `100`. Seconds a review may take from the start of `POST /review/analyze`. Batches still running then are cancelled; finished batches' findings are returned and the rest of the files are reported as skipped (`deadline`). If no batch finished, `/review/analyze` returns 504 `review_deadline` and the review fails (Celery retries it) rather than looking clean. Django reads it from the same `.env` to check `FASTAPI_TIMEOUT_SECONDS`, so set it where both services see it. The default is reasoned from the providers' rate limits, not measured. |
 | `REVIEW_MAX_BATCHES` | Default `6`. Most file batches one review runs; files in later batches are reported as skipped (`batch_limit`). |
 | `REVIEW_MAX_CONCURRENT_BATCHES` | Default `2`. Batches reviewed at once. Each batch makes one call per analyzer, so at most 3x this many provider requests are in flight per review. |
@@ -430,7 +432,7 @@ The eval comment shows one of three results:
 make eval-record EVAL_ARGS="--provider groq --pause 75"   # writes evals/results/<sha>.json/.md
 ```
 
-Commit the re-recorded `evals/cassettes/*.json` and the new results file. If the new run becomes the reference, copy it over `evals/results/after-fixes.json` (and `.md`) and update the README "Review quality" table: `tests/test_eval_compare.py` checks that table against the results files. `make eval` replays the committed cassettes and needs no keys.
+Commit the re-recorded `evals/cassettes/*.json` and the new results file. If the new run becomes the reference, copy it over `evals/results/after-fixes.json` (and `.md`) and update the README "Review quality" table: `tests/test_eval_compare.py` checks that table against the results files. `make eval` replays the committed cassettes and needs no keys. The harness pins the delimiter nonce (`EVAL_DELIMITER_NONCE`), so a recording replays; the cassettes committed before #99 were recorded with the old fixed `<untrusted_data>` tag and no longer replay.
 
 ---
 
