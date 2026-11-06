@@ -23,7 +23,7 @@ flowchart LR
     User["DevMind user<br/>signs in, connects repositories,<br/>reads reviews, adds BYOK keys"]
     DM["DevMind<br/>React app, Django API, Celery worker,<br/>FastAPI AI service, Postgres, Redis"]
     GH["GitHub<br/>OAuth, repositories, webhooks,<br/>pull request reviews"]
-    LLM["LLM and embedding APIs<br/>server keys: Gemini, Groq, GitHub Models<br/>or the user's own keys"]
+    LLM["LLM and embedding APIs<br/>server keys: Gemini, Groq<br/>or the user's own keys"]
 
     Author -->|"push to a pull request"| GH
     User -->|"browser"| DM
@@ -38,7 +38,7 @@ flowchart LR
 flowchart LR
     subgraph External
         GH["GitHub"]
-        LLM["LLM providers<br/>Gemini / Groq / GitHub Models<br/>+ user BYOK"]
+        LLM["LLM providers<br/>Gemini / Groq<br/>+ user BYOK"]
     end
 
     FE["React app<br/>Vite dev server :5173"]
@@ -113,8 +113,9 @@ START -> [analyze_security | analyze_quality | analyze_tests] -> synthesize -> E
 **LLM provider failover** (`backend/fastapi/services/llm_client.py`):
 
 - A user's own active provider configs are tried first, in priority order.
-- After that come the server's providers: Google `gemini-2.0-flash`, then Groq `llama-3.3-70b-versatile`, then GitHub Models `gpt-4o-mini`. Any provider without a configured key is skipped.
-- Any non-200 response (including 429 and 5xx) or a timeout moves the request to the next provider.
+- After that come the server's providers: Google (`GOOGLE_MODEL`, default `gemini-3.5-flash`), then Groq (`GROQ_MODEL`, default `openai/gpt-oss-120b`). Any provider without a configured key is skipped. GitHub Models was retired on 2026-07-30 and was removed.
+- Any non-200 response (including 429 and 5xx) or a timeout moves the request to the next provider. A 404 is logged as `llm.model_not_found`, which usually means the configured model was retired.
+- `make providers-check` lists each keyed provider's models, sends one tiny chat request and prints provider, model, whether the model is listed, the result and latency. On a 404 it also prints the provider's error message, truncated and with keys redacted. It never prints keys and exits non-zero if no provider works. FastAPI's `/health` also reports each provider's configured model and whether the provider lists it (cached for `LLM_HEALTH_CACHE_SECONDS`, default 300). Listed doesn't mean usable, because Google lists models that are closed to new keys. The chat request in `make providers-check` is the authoritative check.
 - Per-provider requests-per-minute limits are enforced with a Redis counter (`services/rate_limiter.py`), so all FastAPI workers share one budget. If Redis is down, requests go through instead of being blocked.
 
 **Security hardening**:
@@ -167,7 +168,7 @@ Prerequisites: Docker with Compose v2 and a [GitHub OAuth App](https://github.co
 cp .env.example .env
 #    Set DJANGO_SECRET_KEY, JWT_SECRET_KEY, FASTAPI_INTERNAL_SECRET,
 #    GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, GITHUB_WEBHOOK_SECRET
-#    and at least one of GOOGLE_AI_API_KEY / GROQ_API_KEY / GITHUB_TOKEN.
+#    and at least one of GOOGLE_AI_API_KEY / GROQ_API_KEY.
 #    Sentry is off by default; set SENTRY_DSN_DJANGO / SENTRY_DSN_FASTAPI to enable it.
 make up
 ```
@@ -176,7 +177,7 @@ make up
 
 Flower, Prometheus and Grafana sit behind the compose `ops` profile. Start them with `make up-ops`.
 
-Other `Makefile` shortcuts: `make down`, `make logs`, `make migrate`, `make test`, and `make frontend-dev` to run Vite on the host instead (needs Node.js 20 and pnpm).
+Other `Makefile` shortcuts: `make down`, `make logs`, `make migrate`, `make test`, `make providers-check` to check the server LLM keys and models (runs on the host, needs `uv`), and `make frontend-dev` to run Vite on the host instead (needs Node.js 20 and pnpm).
 
 | Service | URL |
 |---|---|
@@ -228,7 +229,8 @@ All services read the root `.env` (template: [.env.example](.env.example)). Thes
 | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET` | Django | GitHub OAuth App |
 | `GITHUB_WEBHOOK_SECRET` | Django | Webhook HMAC key. Webhooks are rejected if it's empty. |
 | `DEVMIND_PUBLIC_URL` | Django | Base URL that installed GitHub webhooks point to |
-| `GOOGLE_AI_API_KEY`, `GROQ_API_KEY`, `GITHUB_TOKEN` | FastAPI | Server LLM providers. The Google key is also used for embeddings. |
+| `GOOGLE_AI_API_KEY`, `GROQ_API_KEY` | FastAPI | Server LLM providers. The Google key is also used for embeddings. |
+| `GOOGLE_MODEL`, `GROQ_MODEL` | FastAPI | Model per server provider. Check with `make providers-check`. |
 | `DJANGO_BASE_URL` | FastAPI | Where FastAPI fetches BYOK configs from |
 
 [docs/ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md) lists every variable.
