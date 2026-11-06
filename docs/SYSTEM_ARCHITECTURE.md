@@ -9,7 +9,6 @@
    - [Redis usage by database](#redis-usage-by-database)
 4. [End-to-End Flows](#4-end-to-end-flows)
    - [PR review triggered by a GitHub webhook](#pr-review-triggered-by-a-github-webhook)
-   - [Repository scan flow](#repository-scan-flow)
 5. [AI Review Pipeline](#5-ai-review-pipeline)
 6. [Authentication and Authorization](#6-authentication-and-authorization)
 7. [GitHub Integration](#7-github-integration)
@@ -28,10 +27,10 @@
 DevMind is a monorepo with two backend processes and a React frontend:
 
 - **Django** (`backend/django`) handles GitHub OAuth, users, repositories, webhook ingestion, review orchestration (in Celery tasks), the BYOK settings API and posting comments to GitHub. It uses the Django ORM, DRF, SimpleJWT and Celery. It serves HTTP only; review status reaches the browser by polling (see [Review status updates](#review-status-updates)).
-- **FastAPI** (`backend/fastapi`) runs the AI work: diff parsing, embeddings and pgvector similarity search, prompt building, the LangGraph review agent and the multi-provider LLM client. It also runs a regex-based full-repository scan.
+- **FastAPI** (`backend/fastapi`) runs the AI work: diff parsing, embeddings and pgvector similarity search, prompt building, the LangGraph review agent and the multi-provider LLM client.
 - **Frontend** (`frontend`) is a React + Vite single-page app. It talks only to Django (`/api/v1`) and never calls FastAPI.
 
-Celery workers call FastAPI over HTTP with a shared secret (`X-Internal-Secret`), and FastAPI calls Django's internal BYOK endpoint the same way. In `docker-compose.yml` FastAPI's port 8001 is published to the host, and Nginx proxies `/fastapi-metrics` to it. FastAPI's `/health`, `/metrics` and `/docs` are unauthenticated. The routes that do work (`/review/*`, `/embeddings/*`, `/scan/*`) reject requests without the secret with 403.
+Celery workers call FastAPI over HTTP with a shared secret (`X-Internal-Secret`), and FastAPI calls Django's internal BYOK endpoint the same way. In `docker-compose.yml` FastAPI's port 8001 is published to the host, and Nginx proxies `/fastapi-metrics` to it. FastAPI's `/health`, `/metrics` and `/docs` are unauthenticated. The routes that do work (`/review/*`, `/embeddings/*`) reject requests without the secret with 403.
 
 ---
 
@@ -103,11 +102,10 @@ flowchart TB
     CW --> PG
     FA -->|"asyncpg, pgvector"| PG
 
-    CW -->|"POST /review/analyze and /scan/full<br/>X-Internal-Secret"| FA
+    CW -->|"POST /review/analyze<br/>X-Internal-Secret"| FA
     FA -->|"GET /api/v1/auth/internal/llm-configs/<br/>X-Internal-Secret"| DJ
 
     CW -->|"diff fetch, comment posting,<br/>repo sync, webhook install"| GH
-    FA -->|"scan: repo tree and file contents"| GH
     FA -->|"chat completions, embeddings"| LLM
     DJ -->|"BYOK key test, GET /models"| LLM
 ```
@@ -190,50 +188,6 @@ The orchestrator only writes status to Postgres. While a review is `pending` or 
 `POST /api/v1/reviews/<id>/retrigger/` is available to the repository owner and only when the review is `pending` or `failed`. A review in `processing` returns 409, and a `completed` review returns 400. The view resets the review to `pending`, clears the risk score, summary and completion time, and queues `trigger_review_task`.
 
 There is no API route for creating a review by hand. `GET /api/v1/reviews/` is read-only. (`ReviewCreateView` exists in `apps/reviews/views.py` and returns 405, but it isn't routed.)
-
-### Repository scan flow
-
-A scan is a regex-based check of a whole repository (hard-coded secret patterns, `eval`/`exec`, `os.system`, unsafe deserialization, long lines and functions, TODO markers). It is separate from PR reviews and makes no LLM calls.
-
-```mermaid
-sequenceDiagram
-    participant FE as Frontend
-    participant DJ as Django (web)
-    participant RD as Redis
-    participant CW as Celery worker
-    participant FA as FastAPI
-    participant GH as GitHub
-
-    FE->>DJ: POST /api/v1/repositories/{id}/scan/
-    DJ->>DJ: repo must belong to the user (else 404)
-    DJ->>DJ: latest scan completed and created under 24h ago? then 429 + Retry-After
-    DJ->>DJ: INSERT RepoScan (status=queued)
-    DJ->>RD: enqueue full_repo_scan_task (queue "default")
-    DJ-->>FE: 202 {scan_id, status: "queued"}
-
-    RD->>CW: deliver task
-    CW->>CW: RepoScan.status = scanning
-    CW->>FA: POST /scan/full {repo_full_name, repo_url, branch}<br/>X-Internal-Secret, 5s timeout
-    FA->>FA: scan_id = hash(name + time) % 100000<br/>progress kept in SCAN_PROGRESS (process memory)
-    FA-->>CW: 202 {scan_id, status: "queued"}
-    CW->>CW: save FastAPI scan_id on RepoScan
-
-    FA->>GH: GET repository tree, then file contents in batches of 50<br/>(no token sent, so requests are unauthenticated)
-    FA->>FA: regex checks, health score into SCAN_PROGRESS
-
-    Note over DJ,FA: Nothing calls GET /scan/status or /scan/report,<br/>so RepoScan stays "scanning" in Django
-
-    FE->>DJ: GET /api/v1/reviews/scans/{id}/ (page load or Refresh button)
-    DJ-->>FE: RepoScan row
-```
-
-What the code shows about this flow:
-
-- **Scans never complete in Django.** `full_repo_scan_task` (`apps/reviews/tasks.py`) stores FastAPI's `scan_id` and returns. No task or view reads `/scan/status/{id}` or `/scan/report/{id}`, so `progress`, issue counts and `completed_at` are never filled in, and the row stays `scanning`.
-- **The 24-hour limit doesn't apply yet.** `RepoScanTriggerView` only blocks a new scan when the latest one is `completed`, which never happens today.
-- **Results are lost on restart.** FastAPI keeps scan progress and issues in a module-level dict. Restarting the process, including a `--reload`, drops them.
-- **Failure handling.** If FastAPI doesn't answer 202, the task marks the scan `failed` and retries (`max_retries=3`, 60 s apart). Each retry sets the status back to `scanning` first.
-- **No GitHub token.** Django doesn't send `github_token`, so FastAPI's `GitHubClient` makes unauthenticated requests. Private repository contents need a token.
 
 ---
 
@@ -399,7 +353,7 @@ There are no WebSockets. `devmind/asgi.py` is the plain Django ASGI app, the pro
 ### Service-to-service authentication
 
 - Header: `X-Internal-Secret: <FASTAPI_INTERNAL_SECRET>`
-- FastAPI checks it with `hmac.compare_digest` (`core/security.py`) on the `/review`, `/embeddings` and `/scan` routers. An empty secret on either side counts as a failure (403).
+- FastAPI checks it with `hmac.compare_digest` (`core/security.py`) on the `/review` and `/embeddings` routers. An empty secret on either side counts as a failure (403).
 - Django's `InternalLLMConfigListView` applies the same check to `GET /api/v1/auth/internal/llm-configs/`. That endpoint returns decrypted BYOK keys to FastAPI.
 
 ### DRF defaults
@@ -542,30 +496,11 @@ erDiagram
         text body
         text suggested_fix
     }
-    RepoScan {
-        bigint id PK
-        bigint repository_id FK
-        bigint triggered_by_id FK
-        varchar status
-        int progress
-        int total_files
-        int files_scanned
-        int total_issues
-        int critical_count
-        int warning_count
-        int info_count
-        int scan_duration_ms "nullable"
-        int scan_id "nullable, FastAPI scan ID"
-        text summary
-        timestamptz completed_at "nullable"
-    }
 
     CustomUser ||--o| GithubToken : has
     CustomUser ||--o{ UserLLMConfig : owns
     CustomUser ||--o{ Repository : owns
-    CustomUser ||--o{ RepoScan : triggers
     Repository ||--o{ Review : has
-    Repository ||--o{ RepoScan : has
     Review ||--o| ReviewRun : produces
     Review ||--o{ ReviewComment : contains
 ```
@@ -575,7 +510,7 @@ Constraints the diagram can't show:
 - `UserLLMConfig`: unique on `(user, provider, model_name)`, default ordering `priority`, then newest first.
 - `Review` has no unique constraint on `(repository, pr_number, head_sha)`. Duplicate webhooks are filtered in `repositories.trigger_review` instead (see [Idempotency](#idempotency)).
 - `Repository.github_id` is unique, so a GitHub repository has exactly one DevMind owner. `initial_sync` upserts by `github_id` and sets `owner` to the syncing user, so a second user syncing the same repository takes it over.
-- Deleting a user cascades to their token, LLM configs, repositories (and so their reviews and scans).
+- Deleting a user cascades to their token, LLM configs and repositories (and so their reviews).
 
 ### Indexes
 
@@ -583,7 +518,6 @@ Constraints the diagram can't show:
 |---|---|
 | `reviews_review` | `(repository, pr_number)`, `(completed_at)`, `status` |
 | `reviews_reviewcomment` | `(review, severity)`, `(review, file_path, line_number)` |
-| `reviews_reposcan` | `status` |
 | `repositories_repository` | `(owner, is_active)`, `(github_id)`, `full_name`, `is_active` |
 
 ### FastAPI tables (SQLAlchemy, `models/embeddings.py`)
@@ -644,7 +578,6 @@ There are B-tree indexes on `repo_full_name`, `language`, `review_id`, `user_id`
 - `ReviewComment.severity`: `info`, `warning`, `error`, `critical`
 - `ReviewComment.category`: `security`, `quality`, `tests`, `style`, `performance`
 - `UserLLMConfig.provider`: `openai`, `anthropic`, `google_vertex`, `mistral`, `custom`
-- `RepoScan.status`: `queued`, `scanning`, `completed`, `failed`
 
 ---
 
@@ -688,7 +621,7 @@ Routes from `CELERY_TASK_ROUTES` in `base.py`:
 | Queue | Tasks |
 |---|---|
 | `review` | `repositories.trigger_review` |
-| `default` | `apps.reviews.tasks.trigger_review_task`, `post_github_comments_task`, `full_repo_scan_task`, `cleanup_old_reviews`, `repositories.initial_sync`, `install_webhook`, `remove_webhook`; also the default for unrouted tasks |
+| `default` | `apps.reviews.tasks.trigger_review_task`, `post_github_comments_task`, `cleanup_old_reviews`, `repositories.initial_sync`, `install_webhook`, `remove_webhook`; also the default for unrouted tasks |
 | `notifications` | Consumed by the worker; no task is currently routed to it |
 
 There is no Celery beat service, so `cleanup_old_reviews` runs only if someone calls it.
@@ -914,7 +847,7 @@ Each decision lists what the code does, why, and the trade-offs. Some also note 
 
 ### Polling instead of WebSockets for review status
 
-**What:** The dashboard and review pages fetch `GET /reviews/` or `GET /reviews/<id>/` when they load. For each review shown as `pending` or `processing`, `ReviewStatus.tsx` then polls `GET /reviews/<id>/` every 3 seconds until the status is `completed` or `failed` or the component unmounts. The scan page fetches `GET /reviews/scans/<id>/` on load and when the user clicks Refresh; it doesn't poll.
+**What:** The dashboard and review pages fetch `GET /reviews/` or `GET /reviews/<id>/` when they load. For each review shown as `pending` or `processing`, `ReviewStatus.tsx` then polls `GET /reviews/<id>/` every 3 seconds until the status is `completed` or `failed` or the component unmounts.
 
 **Why:** Django Channels consumers and an optional Supabase status push used to exist but were never served: there was no ASGI server, the production image runs gunicorn on WSGI and Nginx had no upgrade block. They were removed rather than finished. Polling reuses the existing authenticated REST endpoint and its ownership checks, so there's no second auth path (such as a JWT in a WebSocket query string) to secure.
 
@@ -940,7 +873,7 @@ Each decision lists what the code does, why, and the trade-offs. Some also note 
 
 ### Shared-secret service-to-service authentication
 
-**What:** Celery to FastAPI (`/review`, `/embeddings`, `/scan`) and FastAPI to Django (`/api/v1/auth/internal/llm-configs/`) both authenticate with one value, `FASTAPI_INTERNAL_SECRET`, sent as `X-Internal-Secret` and compared with `hmac.compare_digest`. An empty secret on either side fails closed with 403.
+**What:** Celery to FastAPI (`/review`, `/embeddings`) and FastAPI to Django (`/api/v1/auth/internal/llm-configs/`) both authenticate with one value, `FASTAPI_INTERNAL_SECRET`, sent as `X-Internal-Secret` and compared with `hmac.compare_digest`. An empty secret on either side fails closed with 403.
 
 **Why:** Both services run on one compose network and are deployed together, so one environment variable is enough. There are no certificates to issue and no token service to run.
 

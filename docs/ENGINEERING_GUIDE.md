@@ -283,16 +283,14 @@ All Django routes need `Authorization: Bearer <access_jwt>` unless marked otherw
 | `repositories/` | GET | User's active repositories; `?review_enabled=true` filter |
 | `repositories/<id>/` | GET, PATCH | Detail; PATCH updates `review_enabled` and `default_branch` |
 | `repositories/connect/` | POST | Queues a GitHub repository sync, which installs webhooks on new repos (202) |
-| `repositories/<id>/scan/` | POST | Queues a full-repository scan. Limited to one per repository per 24 hours (429 with `retry_after`). |
 
-### Reviews and scans
+### Reviews
 
 | Endpoint | Method | Description |
 |---|---|---|
 | `reviews/` | GET | Paginated (20 per page). Filters `status`, `repository`; `search` over PR title and repo name; `ordering` by `created_at`, `risk_score`, `status`; `detail=true` returns full objects. |
 | `reviews/<id>/` | GET | Review with nested comments and run (owner only) |
 | `reviews/<id>/retrigger/` | POST | Re-queue a `pending`/`failed` review (409 if processing, 400 if completed) |
-| `reviews/scans/<id>/` | GET | Scan status |
 
 ### LLM settings (BYOK)
 
@@ -324,9 +322,6 @@ All Django routes need `Authorization: Bearer <access_jwt>` unless marked otherw
 | `/review/analyze` | POST | `X-Internal-Secret` | Run the retrieval steps and review agent. Returns comments, risk score, model, provider, latency and per-analyzer `analyzer_runs`. |
 | `/embeddings/store` | POST | `X-Internal-Secret` | Store a code embedding |
 | `/embeddings/search` | POST, GET | `X-Internal-Secret` | Similarity search |
-| `/scan/full` | POST | `X-Internal-Secret` | Start a background repository scan (202) |
-| `/scan/status/{scan_id}` | GET | `X-Internal-Secret` | Scan progress (in-process memory) |
-| `/scan/report/{scan_id}` | GET | `X-Internal-Secret` | Scan report |
 | `/health` | GET | none | DB, pgvector and, per server provider, the configured model and whether the provider lists it (`llm`; listings cached for `LLM_HEALTH_CACHE_SECONDS`). Listed doesn't mean usable; use `make providers-check` for that. 503 if DB or pgvector check fails |
 | `/metrics` | GET | none | Prometheus instrumentator |
 | `/docs` | GET | none | OpenAPI UI (off when `SENTRY_ENVIRONMENT=production`) |
@@ -363,7 +358,7 @@ Test modules:
 |---|---|
 | Accounts | `apps/accounts/tests/test_views.py`, `test_oauth.py`, `test_byok.py`, `test_base_url_ssrf.py`, `test_url_safety.py`, `test_models.py` |
 | Repositories | `apps/repositories/tests/test_webhooks.py`, `test_views.py`, `test_tasks.py`, `test_services.py`, `test_models.py`, `test_managers.py`, `test_admin.py` |
-| Reviews | `apps/reviews/tests/test_orchestrator.py`, `test_views.py`, `test_github_poster.py`, `test_models.py` |
+| Reviews | `apps/reviews/tests/test_orchestrator.py`, `test_views.py`, `test_github_poster.py`, `test_models.py`, `test_scan_removed.py` |
 | Core (migrations) | `apps/core/tests/test_pgvector_migration.py`, `test_drop_organizations_migration.py` |
 | End to end | `tests/test_e2e.py` |
 
@@ -380,11 +375,11 @@ uv run pytest            # pyproject addopts include --cov
 make test-fastapi
 ```
 
-The tests in `backend/fastapi/tests/` cover the agent, diff parser, prompt builder, LLM client, rate limiter (with `fakeredis`), vector store, review/embeddings/scan/health routers and internal-secret enforcement.
+The tests in `backend/fastapi/tests/` cover the agent, diff parser, prompt builder, LLM client, rate limiter (with `fakeredis`), vector store, review/embeddings/health routers, internal-secret enforcement and the absence of the removed `/scan` routes.
 
 ### Frontend
 
-Vitest covers the review status polling loop (`src/lib/reviewStatusPolling.test.ts`): the 3-second interval, stopping on `completed` and `failed`, stopping when the component unmounts, and retrying after a failed request. There are no component or page tests. CI runs:
+Vitest covers the review status polling loop (`src/lib/reviewStatusPolling.test.ts`): the 3-second interval, stopping on `completed` and `failed`, stopping when the component unmounts, and retrying after a failed request. `src/api/scanRemoved.test.ts` checks that the removed scan page and API stay removed. There are no component or page tests. CI runs:
 
 ```bash
 cd frontend
@@ -401,8 +396,8 @@ These were measured locally on this branch. Coverage method: `pytest --cov`, the
 
 | Suite | Result | Line coverage |
 |---|---|---|
-| Django | 241 passed | 83% |
-| FastAPI | 176 passed | 80% |
+| Django | 225 passed | 86% |
+| FastAPI | 226 passed | 91% |
 | Frontend | `tsc`, `build` pass; `lint` 0 errors, 3 warnings | n/a |
 
 ### CI
@@ -566,10 +561,6 @@ Nothing loads repository conventions, so they never reach the prompt, even thoug
 
 `GET /api/v1/auth/github/token/` returns the decrypted OAuth token, and the frontend calls it (`src/api/client.ts`). JWTs are stored in `localStorage`.
 
-### Repository scans don't complete in Django
-
-`full_repo_scan_task` starts `/scan/full` and records the FastAPI scan ID. Django never calls `/scan/status` or `/scan/report`, so `RepoScan` stays in `scanning`. Django also passes no GitHub token, so private repositories can't be read. FastAPI keeps progress in a module-level dict, which is lost on restart and not shared between workers.
-
 ### Token counts not reported
 
 `ReviewResponse` has no top-level token fields. Token counts are returned only per analyzer in `analyzer_runs`, which Django doesn't read, so `ReviewRun.prompt_tokens`, `completion_tokens` and `agent_iterations` keep their defaults.
@@ -596,4 +587,4 @@ The task exists in `apps/reviews/tasks.py`, but there is no Celery beat service,
 
 ### Frontend tests are minimal
 
-Vitest covers only the review status polling loop. There are no component or page tests.
+Vitest covers only the review status polling loop and the scan-removal check. There are no component or page tests.

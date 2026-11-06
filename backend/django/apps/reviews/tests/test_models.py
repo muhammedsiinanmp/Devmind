@@ -11,9 +11,8 @@ Tests match acceptance criteria from P2-01:
 import pytest
 from django.db import connection
 
-from apps.reviews.models import Review, ReviewComment, RepoScan
+from apps.reviews.models import Review, ReviewComment
 from apps.reviews.tests.factories import (
-    RepoScanFactory,
     ReviewCommentFactory,
     ReviewFactory,
     ReviewRunFactory,
@@ -130,35 +129,6 @@ class TestReviewRunModel:
 
 
 @pytest.mark.django_db
-class TestRepoScanModel:
-    """Tests for the RepoScan model."""
-
-    def test_create_scan(self) -> None:
-        """Test creating a basic repo scan."""
-        scan = RepoScanFactory()
-        assert scan.pk is not None
-        assert scan.status == "queued"
-        assert scan.progress == 0
-
-    def test_scan_str_format(self) -> None:
-        """Test RepoScan.__str__ format."""
-        scan = RepoScanFactory(status="scanning", progress=50)
-        assert "scanning" in str(scan)
-        assert "50%" in str(scan)
-
-    def test_scan_status_choices(self) -> None:
-        """Test all status choices are valid."""
-        for status, _ in RepoScan.STATUS_CHOICES:
-            scan = RepoScanFactory(status=status)
-            assert scan.status == status
-
-    def test_scan_progress_bounds(self) -> None:
-        """Test progress is 0-100."""
-        scan = RepoScanFactory(progress=50)
-        assert scan.progress == 50
-
-
-@pytest.mark.django_db
 class TestReviewQuerySet:
     """Tests for ReviewQuerySet methods."""
 
@@ -251,14 +221,6 @@ class TestModelIntegration:
 
         assert repo.reviews.count() == 3
 
-    def test_repository_with_scans(self) -> None:
-        """Test Repository can have multiple scans."""
-        repo = ReviewFactory().repository
-        RepoScanFactory(repository=repo)
-        RepoScanFactory(repository=repo)
-
-        assert repo.scans.count() == 2
-
 
 @pytest.mark.django_db
 class TestMigrationIntegrity:
@@ -275,4 +237,3 @@ class TestMigrationIntegrity:
         assert "reviews_review" in tables
         assert "reviews_reviewcomment" in tables
         assert "reviews_reviewrun" in tables
-        assert "reviews_reposcan" in tables

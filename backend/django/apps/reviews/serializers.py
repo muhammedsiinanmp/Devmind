@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from apps.reviews.models import RepoScan, Review, ReviewComment, ReviewRun
+from apps.reviews.models import Review, ReviewComment, ReviewRun
 
 
 class ReviewCommentSerializer(serializers.ModelSerializer):
@@ -94,39 +94,6 @@ class ReviewListSerializer(serializers.ModelSerializer):
             "head_sha",
             "status",
             "risk_score",
-            "created_at",
-            "completed_at",
-        ]
-        read_only_fields = ["id", "created_at", "completed_at"]
-
-
-class RepoScanSerializer(serializers.ModelSerializer):
-    """Serializer for RepoScan model."""
-
-    repository_name = serializers.CharField(
-        source="repository.full_name", read_only=True
-    )
-    triggered_by_email = serializers.CharField(
-        source="triggered_by.email", read_only=True
-    )
-
-    class Meta:
-        model = RepoScan
-        fields = [
-            "id",
-            "repository",
-            "repository_name",
-            "triggered_by",
-            "triggered_by_email",
-            "status",
-            "progress",
-            "total_files",
-            "files_scanned",
-            "total_issues",
-            "critical_count",
-            "warning_count",
-            "info_count",
-            "scan_duration_ms",
             "created_at",
             "completed_at",
         ]
