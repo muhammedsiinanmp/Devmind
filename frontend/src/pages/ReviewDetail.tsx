@@ -3,6 +3,7 @@ import { useParams, Link } from "react-router-dom";
 import apiClient, { authApi } from "../api/client";
 import ReviewStatus from "../components/review/ReviewStatus";
 import { createTerminalStatusHandler } from "../lib/reviewStatusPolling";
+import { createReviewLoader, initialReviewLoadState, type ReviewLoadState } from "../lib/reviewLoader";
 import DiffViewer, { type DiffFile } from "../components/review/DiffViewer";
 import {
   Loader2, CheckCircle, AlertTriangle, Info, ArrowLeft, ExternalLink,
@@ -128,9 +129,16 @@ function parseUnifiedDiff(diffText: string): DiffFile[] {
 
 export default function ReviewDetail() {
   const { id } = useParams<{ id: string }>();
-  const [review, setReview] = useState<ReviewDetail | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [{ review, isLoading, error, refreshError }, setLoadState] = useState<ReviewLoadState<ReviewDetail>>(
+    initialReviewLoadState
+  );
+  // Ignores late responses for a previous review id; see lib/reviewLoader.ts
+  const [loader] = useState(() =>
+    createReviewLoader<ReviewDetail>({
+      fetchReview: async (reviewId) => (await apiClient.get<ReviewDetail>(`/reviews/${reviewId}/`)).data,
+      update: setLoadState,
+    })
+  );
   const [activeFilter, setActiveFilter] = useState("all");
   const [retriggering, setRetriggering] = useState(false);
   const [diffFiles, setDiffFiles] = useState<DiffFile[]>([]);
@@ -138,32 +146,8 @@ export default function ReviewDetail() {
   const [diffError, setDiffError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (id) fetchReview(parseInt(id, 10));
-  }, [id]);
-
-  const fetchReview = async (reviewId: number) => {
-    setIsLoading(true);
-    setError(null);
-    try {
-      const res = await apiClient.get<ReviewDetail>(`/reviews/${reviewId}/`);
-      setReview(res.data);
-    } catch {
-      setError("Failed to load review");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  // Reload the review in place (no loading screen) once polling reports a
-  // terminal status, so the summary and comments appear without a reload.
-  const refreshReview = async (reviewId: number) => {
-    try {
-      const res = await apiClient.get<ReviewDetail>(`/reviews/${reviewId}/`);
-      setReview(res.data);
-    } catch {
-      setError("Failed to load review");
-    }
-  };
+    if (id) loader.load(parseInt(id, 10));
+  }, [id, loader]);
 
   const fetchDiffFiles = async (reviewData: ReviewDetail) => {
     setDiffLoading(true);
@@ -234,7 +218,7 @@ export default function ReviewDetail() {
     setRetriggering(true);
     try {
       await apiClient.post(`/reviews/${id}/retrigger/`);
-      await fetchReview(parseInt(id, 10));
+      await loader.load(parseInt(id, 10));
     } catch (err: unknown) {
       const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error || "Failed to retrigger";
       alert(msg);
@@ -323,8 +307,18 @@ export default function ReviewDetail() {
               <ReviewStatus
                 reviewId={review.id}
                 initialStatus={review.status}
-                onStatusChange={createTerminalStatusHandler(() => refreshReview(review.id))}
+                onStatusChange={createTerminalStatusHandler(() => loader.refresh(review.id))}
               />
+              {refreshError && (
+                <span
+                  role="status"
+                  className="inline-flex items-center gap-1 text-xs"
+                  style={{ color: "var(--error)" }}
+                >
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  {refreshError}
+                </span>
+              )}
               <div className="flex items-center gap-2 px-3 py-1.5 border" style={{ backgroundColor: "var(--bg-tertiary)", borderColor: "var(--border)" }}>
                 <span className="text-xs font-bold uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>Risk Score</span>
                 <span className="text-sm font-bold" style={{ color: riskColor(review.risk_score) }}>

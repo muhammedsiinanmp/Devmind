@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   createTerminalStatusHandler,
+  pollErrorFor,
   startReviewStatusPolling,
   type ReviewStatusValue,
 } from "./reviewStatusPolling";
@@ -214,5 +215,19 @@ describe("createTerminalStatusHandler (ReviewDetail refetch on completion)", () 
     onStatusChange("pending");
     onStatusChange("processing");
     expect(refetch).not.toHaveBeenCalled();
+  });
+});
+
+describe("pollErrorFor (ReviewStatus error reset)", () => {
+  it("shows the error recorded for the current review", () => {
+    expect(pollErrorFor({ reviewId: 5, reason: "gave_up" }, 5)).toBe("gave_up");
+  });
+
+  it("drops the error once the review id changes", () => {
+    expect(pollErrorFor({ reviewId: 5, reason: "not_found" }, 6)).toBeNull();
+  });
+
+  it("has no error before one is recorded", () => {
+    expect(pollErrorFor(null, 5)).toBeNull();
   });
 });
