@@ -82,6 +82,70 @@ def post_github_comments_task(self, review_id: int):
         raise self.retry(exc=e)
 
 
+def rate_limit_countdown(reset_at: int, now: float) -> int:
+    """Seconds to wait for GitHub's quota reset: at least 60, at most an hour."""
+    return int(min(max(reset_at - now, 60), 3600))
+
+
+@shared_task(bind=True, max_retries=5, default_retry_delay=60, acks_late=True)
+def fetch_comment_reactions_task(self, repo_id: int, pr_number: int):
+    """
+    Record 👍/👎 feedback on DevMind's comments when a PR closes.
+
+    On a GitHub rate limit the task waits for the quota reset (up to an
+    hour) and runs again; recording is idempotent, so a rerun is safe.
+    """
+    import time
+
+    from apps.repositories.exceptions import GitHubRateLimitError, GitHubServiceError
+    from apps.reviews.services.feedback import fetch_reaction_feedback
+
+    try:
+        checked = fetch_reaction_feedback(repo_id, pr_number)
+    except GitHubRateLimitError as exc:
+        countdown = rate_limit_countdown(exc.reset_at, time.time())
+        logger.warning(
+            "feedback.reactions.rate_limited repo_id=%d pr=%d retry_in=%ds",
+            repo_id,
+            pr_number,
+            countdown,
+        )
+        raise self.retry(exc=exc, countdown=countdown)
+    except GitHubServiceError as exc:
+        logger.error(
+            "feedback.reactions.github_error repo_id=%d pr=%d error=%s",
+            repo_id,
+            pr_number,
+            str(exc),
+        )
+        raise self.retry(exc=exc)
+
+    logger.info(
+        "feedback.reactions.done repo_id=%d pr=%d comments=%d",
+        repo_id,
+        pr_number,
+        checked,
+    )
+    return checked
+
+
+@shared_task(bind=True, max_retries=5, default_retry_delay=60)
+def sync_comment_feedback_task(self, comment_id: int):
+    """Send a comment's feedback verdict to FastAPI for embedding."""
+    from apps.reviews.services.feedback import (
+        FeedbackSyncError,
+        sync_comment_feedback,
+    )
+
+    try:
+        sync_comment_feedback(comment_id)
+    except FeedbackSyncError as exc:
+        logger.warning(
+            "feedback.sync.failed comment_id=%d error=%s", comment_id, str(exc)
+        )
+        raise self.retry(exc=exc)
+
+
 @shared_task
 def cleanup_old_reviews(days: int = 30):
     """

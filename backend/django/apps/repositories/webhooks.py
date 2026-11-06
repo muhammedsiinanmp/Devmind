@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import hashlib
 import hmac
-from typing import TYPE_CHECKING
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 import structlog
 from django.conf import settings
@@ -23,6 +24,11 @@ from apps.repositories.exceptions import WebhookVerificationError
 from apps.repositories.models import Repository
 from apps.repositories.tasks import trigger_review_task
 from apps.repositories.types import GitHubPayload
+from apps.reviews.services.feedback import (
+    handle_review_comment_event,
+    handle_review_thread_event,
+)
+from apps.reviews.tasks import fetch_comment_reactions_task
 
 if TYPE_CHECKING:
     pass
@@ -99,18 +105,65 @@ class WebhookDispatcher:
 
         if event_type == "pull_request":
             self._handle_pull_request(payload)
+        elif event_type == "pull_request_review_thread":
+            self._handle_feedback(handle_review_thread_event, payload, event_type)
+        elif event_type == "pull_request_review_comment":
+            self._handle_feedback(handle_review_comment_event, payload, event_type)
         elif event_type == "ping":
             log.info("webhook.ping.received")
         else:
             log.debug("webhook.event.ignored", event_type=event_type)
 
+    def _handle_feedback(
+        self, handler: Callable[[GitHubPayload], bool], payload: Any, event_type: str
+    ) -> None:
+        """
+        Records a resolved thread or a reply on a DevMind comment as feedback.
+        Events about other comments are ignored. This is one small DB write,
+        so it runs here rather than in a task.
+        """
+        if not isinstance(payload, dict):
+            return
+        recorded = handler(payload)
+        log.info(
+            "webhook.feedback.handled",
+            event_type=event_type,
+            action=str(payload.get("action", "")),
+            recorded=recorded,
+        )
+
+    def _handle_pull_request_closed(self, payload: GitHubPayload) -> None:
+        """Queues the 👍/👎 count on DevMind's comments of the closed PR."""
+        repo_data = payload.get("repository", {})
+        pr_data = payload.get("pull_request", {})
+        if not isinstance(repo_data, dict) or not isinstance(pr_data, dict):
+            return
+        try:
+            github_id = int(str(repo_data.get("id", 0)))
+            pr_number = int(str(pr_data.get("number", 0)))
+        except ValueError:
+            return
+        repo = Repository.objects.active().filter(github_id=github_id).first()
+        if repo is None or not pr_number:
+            return
+        fetch_comment_reactions_task.delay(repo_id=repo.pk, pr_number=pr_number)
+        log.info(
+            "webhook.pr.closed.feedback_queued",
+            repo=repo.full_name,
+            pr_number=pr_number,
+        )
+
     def _handle_pull_request(self, payload: GitHubPayload) -> None:
         """
         Handles pull_request events.
-        Only routes opened/synchronize/reopened actions to review processing.
-        Closed, labeled, review_requested, etc. are ignored.
+        Routes opened/synchronize/reopened actions to review processing and
+        closed to the feedback reaction count. Labeled, review_requested,
+        etc. are ignored.
         """
         action = str(payload.get("action", ""))
+        if action == "closed":
+            self._handle_pull_request_closed(payload)
+            return
         if action not in PR_REVIEW_ACTIONS:
             log.debug("webhook.pr.action.ignored", action=action)
             return
