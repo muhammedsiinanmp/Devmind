@@ -501,3 +501,66 @@ class TestModelListing:
         monkeypatch.setattr(module.settings, "llm_health_cache_seconds", 0)
         await module.cached_model_listed(MODEL_CHAIN[0])
         assert check.await_count == 2
+
+
+class TestJsonModeFallback:
+    """A provider that rejects response_format is retried once without it."""
+
+    @staticmethod
+    async def _generate(statuses, **kwargs):
+        with patch("services.llm_client.httpx.AsyncClient") as mock_client:
+            mock_instance = AsyncMock()
+            mock_client.return_value.__aenter__.return_value = mock_instance
+            mock_instance.post.side_effect = _post_returning(statuses)
+            result = await LLMClient().generate(
+                [{"role": "user", "content": "JSON please"}], **kwargs
+            )
+        bodies = [c.kwargs["json"] for c in mock_instance.post.call_args_list]
+        return result, bodies
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", [400, 422])
+    async def test_rejected_json_mode_retries_same_provider_without_it(
+        self, status, caplog
+    ):
+        with caplog.at_level("WARNING", logger="services.llm_client"):
+            result, bodies = await self._generate([status, 200], json_mode=True)
+
+        assert result.model_used == f"google/{MODEL_CHAIN[0].model}"
+        assert len(bodies) == 2
+        assert bodies[0]["response_format"] == {"type": "json_object"}
+        assert "response_format" not in bodies[1]
+        assert bodies[1]["model"] == MODEL_CHAIN[0].model
+        assert "llm.failover" not in caplog.text
+        assert (
+            f"llm.json_mode_rejected provider=google model={MODEL_CHAIN[0].model}"
+            f" status={status}" in caplog.text
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("status", [404, 429, 401, 403])
+    async def test_other_errors_still_fail_over(self, status, caplog):
+        with caplog.at_level("WARNING", logger="services.llm_client"):
+            result, bodies = await self._generate([status, 200], json_mode=True)
+
+        assert "groq" in result.model_used
+        assert len(bodies) == 2
+        assert bodies[1]["model"] == MODEL_CHAIN[1].model
+        assert bodies[1]["response_format"] == {"type": "json_object"}
+        assert "llm.json_mode_rejected" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_400_without_json_mode_fails_over(self):
+        result, bodies = await self._generate([400, 200])
+
+        assert "groq" in result.model_used
+        assert len(bodies) == 2
+
+    @pytest.mark.asyncio
+    async def test_second_rejection_fails_over(self):
+        result, bodies = await self._generate([400, 400, 200], json_mode=True)
+
+        assert "groq" in result.model_used
+        assert len(bodies) == 3
+        assert "response_format" not in bodies[1]
+        assert bodies[2]["response_format"] == {"type": "json_object"}

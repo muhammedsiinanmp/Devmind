@@ -55,6 +55,14 @@ class ModelNotFoundError(ServiceUnavailableError):
     pass
 
 
+class JSONModeRejectedError(ServiceUnavailableError):
+    """Raised on a 4xx to a request with response_format (not 401/403/404/429)."""
+
+    def __init__(self, message: str, status: int):
+        super().__init__(message)
+        self.status = status
+
+
 class TimeoutError(Exception):
     """Raised when provider request times out."""
 
@@ -172,6 +180,21 @@ def _request_body(
     if kwargs.get("json_mode") and config.provider in JSON_MODE_PROVIDERS:
         body["response_format"] = {"type": "json_object"}
     return body
+
+
+def _raise_if_json_mode_rejected(
+    config: LLMConfig, body: dict[str, Any], status: int
+) -> None:
+    """
+    A 4xx to a JSON-mode request may mean the provider rejected
+    response_format, e.g. Groq's 400 json_validate_failed. Auth errors, a
+    missing model and rate limits are not about JSON mode.
+    """
+    if "response_format" in body and 400 <= status < 500:
+        if status not in (401, 403, 404, 429):
+            raise JSONModeRejectedError(
+                f"JSON mode rejected: {config.provider.value} {status}", status
+            )
 
 
 class LLMClient:
@@ -326,6 +349,32 @@ class LLMClient:
         **kwargs: Any,
     ) -> LLMResponse:
         """
+        Call a provider; if it rejects JSON mode, retry it once without.
+
+        Free tiers can leave a single working provider, so a provider that
+        doesn't accept response_format must not fail the review. A second
+        failure raises as usual and the caller fails over.
+        """
+        try:
+            return await self._post_chat(config, messages, **kwargs)
+        except JSONModeRejectedError as exc:
+            logger.warning(
+                "llm.json_mode_rejected provider=%s model=%s status=%s",
+                config.provider.value,
+                config.model,
+                exc.status,
+            )
+            return await self._post_chat(
+                config, messages, **{**kwargs, "json_mode": False}
+            )
+
+    async def _post_chat(
+        self,
+        config: LLMConfig,
+        messages: list[dict[str, str]],
+        **kwargs: Any,
+    ) -> LLMResponse:
+        """
         Call a specific LLM provider.
 
         Args:
@@ -345,6 +394,8 @@ class LLMClient:
 
         base_url = config.base_url.rstrip("/")
 
+        body = _request_body(config, messages, kwargs)
+
         async with httpx.AsyncClient(timeout=30.0) as client:
             try:
                 response = await client.post(
@@ -353,8 +404,9 @@ class LLMClient:
                         "Authorization": f"Bearer {config.api_key}",
                         "Content-Type": "application/json",
                     },
-                    json=_request_body(config, messages, kwargs),
+                    json=body,
                 )
+                _raise_if_json_mode_rejected(config, body, response.status_code)
 
                 if response.status_code == 429:
                     raise RateLimitError(f"Rate limited: {config.provider.value}")
