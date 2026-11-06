@@ -3,8 +3,10 @@ import { AlertTriangle, CheckCircle, Clock, XCircle, RefreshCw } from "lucide-re
 import { reviewsApi } from "../../api/reviews";
 import {
   isTerminalStatus,
+  pollErrorFor,
   startReviewStatusPolling,
   type ReviewPollError,
+  type ReviewPollErrorFor,
   type ReviewStatusValue,
 } from "../../lib/reviewStatusPolling";
 
@@ -24,7 +26,9 @@ interface ReviewStatusProps {
 
 export default function ReviewStatus({ reviewId, initialStatus, onStatusChange }: ReviewStatusProps) {
   const [status, setStatus] = useState<ReviewStatusType>(initialStatus || "pending");
-  const [pollError, setPollError] = useState<ReviewPollError | null>(null);
+  // Stored with the review id it belongs to, so it resets when reviewId changes
+  const [storedPollError, setStoredPollError] = useState<ReviewPollErrorFor | null>(null);
+  const pollError = pollErrorFor(storedPollError, reviewId);
   // Keep the latest callback without restarting the poll when it changes
   const onStatusChangeRef = useRef(onStatusChange);
   const statusRef = useRef(status);
@@ -48,7 +52,7 @@ export default function ReviewStatus({ reviewId, initialStatus, onStatusChange }
         setStatus(next);
         onStatusChangeRef.current?.(next);
       },
-      onError: setPollError,
+      onError: (reason) => setStoredPollError({ reviewId, reason }),
     });
   }, [reviewId, done]);
 
