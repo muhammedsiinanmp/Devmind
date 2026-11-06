@@ -12,29 +12,36 @@
 -- the running code's inserts fail on the NOT NULL column; the store task logs
 -- each one (store_review.chunk_error) and the review itself is unaffected.
 --
--- Existing rows: their model isn't recorded, so every row without one is set
--- to 'text-embedding-004', the model used before gemini-embedding-001. That
+-- Existing rows: their model isn't recorded, so every existing row gets
+-- 'text-embedding-004', the model used before gemini-embedding-001. That
 -- is the safe guess. Rows that really are text-embedding-004 vectors must
 -- never be compared with gemini-embedding-001 queries; tagged as the old
 -- model, they are left out of search, and a chunk is no longer blocked from
 -- being stored with the current model when a later review's diff contains
 -- it. If some of them were in fact written by gemini-embedding-001, the cost
--- is only that they aren't retrieved. Nothing re-embeds old rows; delete the
--- rows tagged 'text-embedding-004' when you no longer want them.
+-- is only that they aren't retrieved. Nothing re-embeds old rows. Once this
+-- has run, delete them:
 --
--- The backfill rewrites every existing row, and the new unique index is
--- built while writes to the table are blocked. Runs in one transaction and is
--- safe to run more than once.
+--   DELETE FROM code_embeddings WHERE embedding_model = 'text-embedding-004';
+--
+-- Until then they stay in the HNSW graph, where filtered searches still visit
+-- them and iterative scans take longer.
+--
+-- The tag is applied as the column's default when it is added, so no row is
+-- rewritten (Postgres 11+ stores a constant default without touching rows),
+-- and the default is then dropped so new rows must name their model. ADD
+-- COLUMN takes an ACCESS EXCLUSIVE lock, held until COMMIT, so reads and
+-- searches on code_embeddings wait too, not only writes, while the unique
+-- index below is built. Runs in one transaction and is safe to run more than
+-- once.
 
 BEGIN;
 
-ALTER TABLE code_embeddings ADD COLUMN IF NOT EXISTS embedding_model varchar(100);
+ALTER TABLE code_embeddings
+    ADD COLUMN IF NOT EXISTS embedding_model varchar(100) NOT NULL
+    DEFAULT 'text-embedding-004';
 
-UPDATE code_embeddings
-SET embedding_model = 'text-embedding-004'
-WHERE embedding_model IS NULL;
-
-ALTER TABLE code_embeddings ALTER COLUMN embedding_model SET NOT NULL;
+ALTER TABLE code_embeddings ALTER COLUMN embedding_model DROP DEFAULT;
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_code_embeddings_repo_sha256_model
     ON code_embeddings (repo_full_name, sha256, embedding_model);
