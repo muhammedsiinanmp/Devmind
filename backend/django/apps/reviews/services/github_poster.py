@@ -116,6 +116,42 @@ class CommentPayload:
     path: str
     line: int
     body: str
+    # ReviewComment pk, so the GitHub id of the posted comment can be stored.
+    comment_id: int | None = None
+
+
+def _normalized_body(body: str) -> str:
+    return body.replace("\r\n", "\n").strip()
+
+
+def match_posted_comments(
+    sent: list[CommentPayload], posted: list[dict[str, Any]]
+) -> dict[int, int]:
+    """
+    Map ReviewComment pk -> GitHub comment id for one posted review.
+
+    ``posted`` is GitHub's list of the review's comments. Each sent comment
+    takes the first unused posted comment with the same path and body, so
+    two identical comments on one file still get one id each.
+    """
+    used: set[int] = set()
+    matched: dict[int, int] = {}
+    for payload in sent:
+        if payload.comment_id is None:
+            continue
+        for item in posted:
+            github_id = item.get("id")
+            if (
+                isinstance(github_id, int)
+                and github_id not in used
+                and item.get("path") == payload.path
+                and _normalized_body(str(item.get("body") or ""))
+                == _normalized_body(payload.body)
+            ):
+                used.add(github_id)
+                matched[payload.comment_id] = github_id
+                break
+    return matched
 
 
 class GitHubPoster:
@@ -135,6 +171,8 @@ class GitHubPoster:
                 "X-GitHub-Api-Version": "2022-11-28",
             }
         )
+        # ReviewComment pk -> id of the inline comment GitHub created for it.
+        self.posted_comment_ids: dict[int, int] = {}
 
     def post_review_comments(
         self,
@@ -273,6 +311,7 @@ class GitHubPoster:
             path=comment.get("file_path", ""),
             line=comment.get("line_number", 1),
             body=body,
+            comment_id=comment.get("id"),
         )
 
     def format_suggestion_block(
@@ -347,6 +386,8 @@ class GitHubPoster:
                 "comments": [],
             }
             response = self._session.post(url, json=fallback_payload, timeout=30.0)
+        elif response.status_code in (200, 201) and payload["comments"]:
+            self._record_posted_ids(repo_full_name, pr_number, response, comments)
 
         if response.status_code not in (200, 201):
             logger.error(
@@ -357,6 +398,43 @@ class GitHubPoster:
             )
 
         return response.status_code
+
+    def _record_posted_ids(
+        self,
+        repo_full_name: str,
+        pr_number: int,
+        response: requests.Response,
+        comments: list[CommentPayload],
+    ) -> None:
+        """
+        Look up the GitHub ids of a posted review's inline comments, so
+        reactions, replies and resolved threads can be traced back to them.
+        A failure here only loses feedback for these comments.
+        """
+        if all(c.comment_id is None for c in comments):
+            return
+        try:
+            review_id = int(response.json()["id"])
+            listed = self._session.get(
+                f"{GITHUB_API_BASE}/repos/{repo_full_name}/pulls/{pr_number}"
+                f"/reviews/{review_id}/comments",
+                params={"per_page": 100},
+                timeout=30.0,
+            )
+            if listed.status_code != 200:
+                raise ValueError(f"status {listed.status_code}")
+            posted = listed.json()
+            if not isinstance(posted, list):
+                raise ValueError("not a list")
+        except Exception as exc:
+            logger.warning(
+                "github_poster.comment_ids_unavailable repo=%s pr=%d error=%s",
+                repo_full_name,
+                pr_number,
+                str(exc),
+            )
+            return
+        self.posted_comment_ids.update(match_posted_comments(comments, posted))
 
     def __del__(self) -> None:
         self._session.close()
@@ -384,7 +462,13 @@ def post_github_comments(review_id: int) -> list[int]:
 
     comments = list(
         review.comments.values(
-            "file_path", "line_number", "category", "severity", "body", "suggested_fix"
+            "id",
+            "file_path",
+            "line_number",
+            "category",
+            "severity",
+            "body",
+            "suggested_fix",
         )
     )
 
@@ -395,10 +479,17 @@ def post_github_comments(review_id: int) -> list[int]:
     access_token = review.repository.owner.github_token.access_token
     poster = GitHubPoster(access_token)
 
-    return poster.post_review_comments(
+    status_codes = poster.post_review_comments(
         repo_full_name=review.repository.full_name,
         pr_number=review.pr_number,
         head_sha=review.head_sha,
         comments=comments,
         summary=review.summary or "AI Code Review Complete",
     )
+
+    for comment_pk, github_comment_id in poster.posted_comment_ids.items():
+        review.comments.filter(pk=comment_pk).update(
+            github_comment_id=github_comment_id
+        )
+
+    return status_codes
