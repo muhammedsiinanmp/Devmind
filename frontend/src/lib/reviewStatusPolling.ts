@@ -14,6 +14,23 @@ export const REVIEW_POLL_MAX_FAILURES = 10;
  */
 export type ReviewPollError = "forbidden" | "not_found" | "gave_up";
 
+/** A poll error together with the review it was reported for. */
+export interface ReviewPollErrorFor {
+  reviewId: number | undefined;
+  reason: ReviewPollError;
+}
+
+/**
+ * The poll error to show for `reviewId`. An error recorded for a different
+ * review is dropped, so it resets when the review id changes.
+ */
+export function pollErrorFor(
+  stored: ReviewPollErrorFor | null,
+  reviewId: number | undefined,
+): ReviewPollError | null {
+  return stored !== null && stored.reviewId === reviewId ? stored.reason : null;
+}
+
 export function isTerminalStatus(status: ReviewStatusValue): boolean {
   return status === "completed" || status === "failed";
 }

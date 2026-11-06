@@ -149,7 +149,7 @@ Measured locally on this branch:
 
 Coverage method: `pytest --cov`, then `coverage report --omit='*/tests/*,*/migrations/*,*conftest.py'`, so test files, migrations and conftest are excluded. Including the test files would give a higher figure.
 
-CI doesn't enforce a coverage threshold. The frontend has 19 Vitest tests: 17 for the review status polling loop (including error handling and the review page's refetch-on-completion handler) and 2 checking that the removed scan page and API stay removed. Frontend coverage isn't measured.
+CI doesn't enforce a coverage threshold. The frontend has 31 Vitest tests: 20 for the review status polling loop (including error handling and the review page's refetch-on-completion handler), 9 for the review page's load and refetch logic and 2 checking that the removed scan page and API stay removed. Frontend coverage isn't measured.
 
 ## Tech stack
 
@@ -366,7 +366,7 @@ These are current gaps in the code, listed so nobody has to find them by surpris
 - **Token counts are always zero in Django.** FastAPI returns token counts only per analyzer in `analyzer_runs`, which Django doesn't read, so `ReviewRun.prompt_tokens` and `completion_tokens` stay at 0.
 - **The coverage line is posted only with comments.** A review with no findings posts nothing to GitHub (as before), so its "Reviewed X of Y files" line is only in the stored summary.
 - **Anthropic keys aren't used for reviews.** They can be saved and validated, but the FastAPI client sends only OpenAI-compatible `/chat/completions` requests, so it skips them.
-- **Frontend tests are minimal.** Vitest covers only the review status polling loop and the review page's refetch-on-completion handler (`frontend/src/lib/reviewStatusPolling.test.ts`) and a check that the removed scan page and API stay removed (`frontend/src/api/scanRemoved.test.ts`); there are no component or page tests.
+- **Frontend tests are minimal.** Vitest covers only the review status polling loop and the review page's refetch-on-completion handler (`frontend/src/lib/reviewStatusPolling.test.ts`), the review page's load and refetch logic (`frontend/src/lib/reviewLoader.test.ts`) and a check that the removed scan page and API stay removed (`frontend/src/api/scanRemoved.test.ts`); there are no component or page tests.
 
 ## Further reading
 
