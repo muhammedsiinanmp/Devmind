@@ -19,7 +19,7 @@ from core.metrics import rag_pipeline_duration, agent_iterations, review_errors_
 from models.review import ReviewRequest, ReviewResponse, ReviewComment
 from services.code_parser import DiffChunk, parse_diff
 from services.comment_anchoring import anchor_comments
-from services.diff_batching import is_skipped_path
+from services.diff_batching import ReviewDeadlineError, is_skipped_path
 from services.llm_client import AllProvidersDownError
 
 logger = logging.getLogger(__name__)
@@ -252,6 +252,16 @@ async def analyze_review(
             **asdict(anchor_stats),
         )
 
+    except ReviewDeadlineError as exc:
+        review_errors_total.labels(error_type="review_deadline").inc()
+        logger.warning("review.deadline_no_result error=%s", str(exc))
+        raise HTTPException(
+            status_code=status.HTTP_504_GATEWAY_TIMEOUT,
+            detail={
+                "error": "review_deadline",
+                "message": f"Nothing was reviewed: {exc}.",
+            },
+        )
     except AllProvidersDownError:
         review_errors_total.labels(error_type="llm_unavailable").inc()
         raise HTTPException(

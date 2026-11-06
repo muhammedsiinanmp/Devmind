@@ -20,6 +20,10 @@ SKIP_BATCH_LIMIT = "batch_limit"
 SKIP_DEADLINE = "deadline"
 
 
+class ReviewDeadlineError(Exception):
+    """The review deadline passed before any batch finished: nothing was reviewed."""
+
+
 @dataclass
 class SkippedFile:
     file_path: str

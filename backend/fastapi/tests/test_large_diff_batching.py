@@ -17,7 +17,11 @@ import pytest
 from core.config import DEFAULT_SKIP_PATTERNS, get_settings
 from models.review import ReviewRequest
 from services.code_parser import parse_diff
-from services.diff_batching import is_skipped_path, plan_batches
+from services.diff_batching import (
+    ReviewDeadlineError,
+    is_skipped_path,
+    plan_batches,
+)
 from services.llm_client import AllProvidersDownError, LLMResponse
 from services.prompt_builder import (
     PromptContext,
@@ -148,6 +152,7 @@ def settings(monkeypatch):
         "review_max_batches",
         "review_max_concurrent_batches",
         "review_skip_patterns",
+        "review_deadline_seconds",
     ):
         monkeypatch.setattr(s, name, getattr(s, name))
     return s
@@ -364,19 +369,37 @@ class TestDeadline:
         assert _other_tasks() == []
 
     @pytest.mark.asyncio
-    async def test_default_deadline_comes_from_settings(self, settings, monkeypatch):
+    async def test_no_batch_finished_raises_instead_of_an_empty_review(
+        self, settings, monkeypatch
+    ):
+        # Default deadline from settings; the only batch is too slow for it.
         monkeypatch.setattr(settings, "review_deadline_seconds", 0.2)
         fake = FakeLLM(slow_on="app.py")
 
-        result = await _run(SMALL_FILE + UV_LOCK, fake)
+        with pytest.raises(ReviewDeadlineError, match="before any of 1 batches"):
+            await _run(SMALL_FILE + UV_LOCK, fake)
 
-        assert result["files_reviewed"] == []
-        assert result["files_skipped"] == [
-            {"file_path": "uv.lock", "reason": "generated"},
-            {"file_path": "app.py", "reason": "deadline"},
-        ]
-        assert result["synthesized_comments"] == []
+        assert fake.cancelled == ["app.py"] * 3
         assert _other_tasks() == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("deadline", [0, -5])
+    async def test_expired_deadline_starts_no_llm_call(self, settings, deadline):
+        fake = FakeLLM()
+
+        with pytest.raises(ReviewDeadlineError, match="before any of"):
+            await _run(OVER_BUDGET_DIFF, fake, deadline_seconds=deadline)
+
+        assert fake.prompts == []
+        assert _other_tasks() == []
+
+    @pytest.mark.asyncio
+    async def test_only_generated_files_is_not_a_deadline_error(self, settings):
+        result = await _run(UV_LOCK, FakeLLM(), deadline_seconds=0)
+
+        assert result["files_skipped"] == [
+            {"file_path": "uv.lock", "reason": "generated"}
+        ]
 
 
 def _skipped(skipped: list[dict]) -> list[str]:
@@ -505,3 +528,68 @@ class RecordingStore:
 @asynccontextmanager
 async def _session():
     yield object()
+
+
+class SlowRetrievalStore(RecordingStore):
+    """Embedding call that outlasts the review deadline."""
+
+    async def generate_embeddings(self, texts, task_type=None):
+        await asyncio.sleep(0.3)
+        return await super().generate_embeddings(texts, task_type)
+
+
+class TestRouterDeadline:
+    @pytest.mark.asyncio
+    async def test_deadline_spent_in_retrieval_returns_504_and_calls_no_llm(
+        self, settings, monkeypatch
+    ):
+        from fastapi import HTTPException
+
+        from routers.review import analyze_review
+
+        monkeypatch.setattr(settings, "review_deadline_seconds", 0.1)
+        fake = FakeLLM()
+        with (
+            patch("agents.review_agent.llm_client") as client,
+            patch("services.vector_store.vector_store", SlowRetrievalStore()),
+            patch("core.database.AsyncSessionLocal", _session),
+            patch("routers.review.store_review_async", AsyncMock()),
+        ):
+            client.generate = fake
+            with pytest.raises(HTTPException) as raised:
+                await analyze_review(
+                    ReviewRequest(diff=SMALL_FILE, repo_full_name="o/r"),
+                    secret="unused",
+                )
+
+        assert raised.value.status_code == 504
+        assert raised.value.detail["error"] == "review_deadline"
+        assert fake.prompts == []
+
+    @pytest.mark.asyncio
+    async def test_partial_result_is_still_200(self, settings):
+        from routers.review import analyze_review
+
+        diff = (
+            _new_file("pkg/mod0.py", 220)
+            + _new_file("pkg/mod1.py", 220)
+            + _new_file("pkg/mod2.py", 220)
+            + _new_file("pkg/mod3.py", 220)
+        )
+        settings.review_deadline_seconds = 0.5
+        with (
+            patch("agents.review_agent.llm_client") as client,
+            patch(
+                "services.vector_store.vector_store.generate_embeddings",
+                AsyncMock(side_effect=RuntimeError("no embeddings in tests")),
+            ),
+            patch("routers.review.store_review_async", AsyncMock()),
+        ):
+            client.generate = FakeLLM(slow_on="pkg/mod2.py")
+            response = await analyze_review(
+                ReviewRequest(diff=diff, repo_full_name="o/r"), secret="unused"
+            )
+
+        body = response.model_dump()
+        assert body["files_reviewed"] == ["pkg/mod0.py", "pkg/mod1.py"]
+        assert {s["reason"] for s in body["files_skipped"]} == {"deadline"}

@@ -25,7 +25,7 @@ from agents.states import AnalyzerRun, ReviewState, ReviewComment
 from core.config import get_settings
 from models.review import ReviewFinding, ReviewFindings, Severity
 from services.code_parser import parse_diff
-from services.diff_batching import SKIP_DEADLINE, plan_batches
+from services.diff_batching import SKIP_DEADLINE, ReviewDeadlineError, plan_batches
 from services.llm_client import llm_client
 from services.prompt_builder import (
     PromptContext,
@@ -420,8 +420,10 @@ async def run_review_agent(
 
     Batches still running when the deadline passes are cancelled; the
     findings of finished batches are returned and the unfinished batches'
-    files are reported as skipped with reason "deadline". If a batch fails,
-    the other batches are cancelled and its exception is raised.
+    files are reported as skipped with reason "deadline". If no batch
+    finished (or the deadline had passed before any started),
+    ReviewDeadlineError is raised instead. If a batch fails, the other
+    batches are cancelled and its exception is raised.
 
     Args:
         diff_text: Git diff text
@@ -497,6 +499,11 @@ async def run_review_agent(
                 stopped = True
                 raise
 
+    if plan.batches and deadline_seconds <= 0:
+        # Don't start calls (or take rate-limit tokens) for a review that's over.
+        raise ReviewDeadlineError(
+            f"review deadline passed before any of {len(plan.batches)} batches started"
+        )
     tasks = [asyncio.create_task(review_batch(batch)) for batch in plan.batches]
     pending: set[asyncio.Task] = set()
     try:
@@ -538,6 +545,12 @@ async def run_review_agent(
             deadline_seconds,
             len(finished),
             len(timed_out),
+        )
+    if timed_out and not finished:
+        # An empty result would look like a clean review of an unreviewed diff.
+        raise ReviewDeadlineError(
+            f"review deadline ({deadline_seconds:.0f}s) passed before any of "
+            f"{len(timed_out)} batches finished"
         )
 
     if finished:
