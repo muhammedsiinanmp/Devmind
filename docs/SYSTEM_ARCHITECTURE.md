@@ -166,12 +166,12 @@ sequenceDiagram
     CW->>GH: GET pull request diff (user's OAuth token)
     CW->>FA: POST /review/analyze {diff, repo_full_name, pr_number, user_id}
     FA->>FA: parse diff, similarity search per hunk (excluding this PR)
-    FA->>FA: build prompt (8192-token budget), run LangGraph agent
-    FA-->>CW: {comments[], risk_score, model_used, provider, latency_ms, analyzer_runs}
+    FA->>FA: skip generated files, batch files to fit prompts (8192-token budget), run LangGraph agent per batch
+    FA-->>CW: {comments[], risk_score, model_used, provider, latency_ms, analyzer_runs, files_reviewed, files_skipped}
     FA->>FA: background task: embed this PR's hunks (source_ref PR#<n>)
 
     CW->>PG: INSERT ReviewRun (+ diff_text) and ReviewComment rows
-    CW->>PG: Review.status = completed, risk_score, summary, completed_at
+    CW->>PG: Review.status = completed, risk_score, summary (+ "Reviewed X of Y files"), completed_at
     CW->>RD: enqueue post_github_comments_task
 
     CW->>GH: POST /repos/{owner}/{repo}/pulls/{pr}/reviews (event COMMENT)
@@ -208,7 +208,18 @@ flowchart TD
     SY --> END([Return state])
 ```
 
-**One pass.** The graph has no loop. A review makes one LLM call per analyzer, so 3 calls in total whether or not anything is found, unless a response can't be parsed (below).
+**One pass.** The graph has no loop. A batch makes one LLM call per analyzer, so 3 calls whether or not anything is found, unless a response can't be parsed (below). A diff that fits one prompt is one batch.
+
+**File batches.** `run_review_agent` plans the diff with `plan_batches` (`services/diff_batching.py`) before running the graph:
+
+- Files whose path or name matches a glob in `REVIEW_SKIP_PATTERNS` (lockfiles, `*.min.js`, `*.map`, `*.snap`, `*_snapshot.json`, `*_pb2.py`, `vendor/`, `node_modules/` and similar) are skipped with reason `generated`. A diff of only such files makes no LLM call.
+- The other files are packed in diff order. A file's cost is the lines it shows on its own (after the 120-per-hunk and 200-per-file caps) and the tokens of that rendering. A batch takes files while their lines total at most 600 and their tokens at most the prompt's diff budget (`diff_token_budget`, computed with the retrieved patterns). A file too big on its own gets its own batch and is trimmed by the caps as before.
+- At most `REVIEW_MAX_BATCHES` (default 6) batches run; files in later batches are skipped with reason `batch_limit`.
+- Batches run concurrently in an `asyncio.TaskGroup`, at most `REVIEW_MAX_CONCURRENT_BATCHES` (default 2) at a time, so at most 6 analyzer calls are in flight. If one batch fails (for example every provider is rate limited), the others are cancelled and that batch's exception is raised, so the router still returns 429 for `AllProvidersDownError`.
+- The batches' findings are deduplicated and sorted again over the whole diff. `analyzer_runs` keeps one entry per analyzer, summing latency, tokens and attempts over batches; `parsed` is true only if every batch's reply parsed. `model_used` is the first batch's.
+- The response lists `files_reviewed` and `files_skipped`. Django appends "Reviewed X of Y files." and the skipped files with their reasons (`coverage_line` in `apps/reviews/services/github_poster.py`) to the review summary, which is the body of the GitHub review.
+
+A diff that fits in one batch with nothing skipped gets exactly the prompts it got before batching; `tests/test_review_golden.py` compares them byte for byte with prompts captured before the change.
 
 **One output schema.** `ReviewFindings` and `ReviewFinding` in `models/review.py` define the reply: a JSON object `{"findings": [...]}` whose items have `file_path`, `line_number`, `category`, `severity` (the `Severity` enum: `critical`, `error`, `warning`, `info`), `body` and `suggested_fix`. `output_format_text()` generates the "Output format" part of `REVIEW_SYSTEM_PROMPT` from these models, and the parser validates every item with `ReviewFinding`, so the prompt and the parser can't disagree.
 
@@ -247,11 +258,13 @@ merge results                          -> drop untagged rows with file_path "PR#
                                           drop results whose whitespace-normalized text equals a hunk
                                           of this diff, dedupe by text (keep highest similarity),
                                           keep the top 5
-build_review_prompt(...)               -> user message, 8192-token budget (tiktoken cl100k_base; the
+plan_batches(chunks, ...)             -> skip generated files, pack the rest into batches that each
+                                          fit one prompt (see "File batches")
+build_review_prompt(...)  per batch   -> user message, 8192-token budget (tiktoken cl100k_base; the
                                           system prompt is sent separately and not counted); diff first,
                                           then similar patterns, quality patterns, past reviews, conventions,
                                           each in untrusted-data delimiters
-run_review_agent(...)
+run_review_agent(...)                  -> the graph once per batch, results merged
 anchor_comments(chunks, comments)      -> keep comments on added/context lines; see "Comment anchoring"
 store_review_async(...)                -> background task after the response is built: of up to 20
                                           chunks, drop those whose sha256 is already stored, embed

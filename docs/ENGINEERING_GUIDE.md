@@ -56,6 +56,9 @@ There's no `FERNET_KEY` variable. The encryption key comes from `DJANGO_SECRET_K
 | `LLM_HEALTH_CACHE_SECONDS` | Default `300`. How long FastAPI `/health` caches each provider's model listing. |
 | `LLM_FAILOVER_ENABLED` | Default `True`. When `False`, only the first provider in the chain is tried. |
 | `REVIEW_TEMPERATURE` | Default `0.1`. Sampling temperature for the review analyzers' LLM calls (0.0 to 2.0). |
+| `REVIEW_MAX_BATCHES` | Default `6`. Most file batches one review runs; files in later batches are reported as skipped (`batch_limit`). |
+| `REVIEW_MAX_CONCURRENT_BATCHES` | Default `2`. Batches reviewed at once. Each batch makes one call per analyzer, so at most 3x this many provider requests are in flight per review. |
+| `REVIEW_SKIP_PATTERNS` | JSON list of glob patterns, e.g. `["uv.lock", "*.min.js"]`. Changed files matching one (by path or file name; `*` also matches `/`) are not reviewed and are reported as skipped (`generated`). Setting it replaces the defaults (`DEFAULT_SKIP_PATTERNS` in `core/config.py`: lockfiles, minified bundles and source maps, snapshots, generated protobuf code, `vendor/` and `node_modules/`). |
 
 GitHub Models was retired on 2026-07-30 ([GitHub docs](https://docs.github.com/en/github-models)) and was removed. `GITHUB_TOKEN` is no longer read; a leftover value in `.env` is ignored.
 
@@ -321,7 +324,7 @@ All Django routes need `Authorization: Bearer <access_jwt>` unless marked otherw
 
 | Endpoint | Method | Auth | Description |
 |---|---|---|---|
-| `/review/analyze` | POST | `X-Internal-Secret` | Run the retrieval steps and review agent. Returns comments, risk score, model, provider, latency and per-analyzer `analyzer_runs`. |
+| `/review/analyze` | POST | `X-Internal-Secret` | Run the retrieval steps and review agent. Returns comments, risk score, model, provider, latency, per-analyzer `analyzer_runs`, and `files_reviewed` / `files_skipped` (`[{file_path, reason}]`, reason `generated` or `batch_limit`). |
 | `/embeddings/store` | POST | `X-Internal-Secret` | Store a code embedding |
 | `/embeddings/search` | POST, GET | `X-Internal-Secret` | Similarity search |
 | `/health` | GET | none | DB, pgvector and, per server provider, the configured model and whether the provider lists it (`llm`; listings cached for `LLM_HEALTH_CACHE_SECONDS`). Listed doesn't mean usable; use `make providers-check` for that. 503 if DB or pgvector check fails |
