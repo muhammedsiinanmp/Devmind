@@ -330,7 +330,7 @@ All Django routes need `Authorization: Bearer <access_jwt>` unless marked otherw
 
 ### Review status (polling, no WebSocket)
 
-There are no WebSocket routes. While a review is `pending` or `processing`, the frontend's `ReviewStatus` component polls `GET /api/v1/reviews/<id>/` every 3 seconds and stops on `completed`, `failed` or unmount. A 403 or 404 stops polling at once. A 5xx or network failure backs off: the next request waits 3, 6, 12, 24, 48 and then 60 seconds, and polling gives up after 10 consecutive failures. A successful request resets the backoff. When polling stops on an error, the badge keeps the last known status and shows "Status updates stopped". A 401 is handled by the API client's token-refresh interceptor. The review page refetches the review when the status becomes terminal. See [SYSTEM_ARCHITECTURE.md, Review status updates](SYSTEM_ARCHITECTURE.md#review-status-updates).
+There are no WebSocket routes. While a review is `pending` or `processing`, the frontend's `ReviewStatus` component polls `GET /api/v1/reviews/<id>/` every 3 seconds and stops on `completed`, `failed` or unmount. A 403 or 404 stops polling at once. A 5xx or network failure backs off: the next request waits 3, 6, 12, 24, 48 and then 60 seconds, and polling gives up after 10 consecutive failures. A successful request resets the backoff. When polling stops on an error, the badge keeps the last known status and shows "Status updates stopped". A 401 is handled by the API client's token-refresh interceptor. The review page refetches the review when the status becomes terminal; if that refetch fails, the review stays on screen with an inline notice. See [SYSTEM_ARCHITECTURE.md, Review status updates](SYSTEM_ARCHITECTURE.md#review-status-updates).
 
 ---
 
@@ -381,7 +381,7 @@ The tests in `backend/fastapi/tests/` cover the agent, diff parser, prompt build
 
 ### Frontend
 
-Vitest covers the review status polling loop (`src/lib/reviewStatusPolling.test.ts`): the 3-second interval, stopping on `completed` and `failed`, stopping when the component unmounts, stopping after one request on 403 and 404, exponential backoff on 5xx and network errors, giving up after 10 consecutive failures, resetting the backoff after a success, and the handler `ReviewDetail` uses to refetch the review on a terminal status. `src/api/scanRemoved.test.ts` checks that the removed scan page and API stay removed. There are no component or page tests. CI runs:
+Vitest covers the review status polling loop (`src/lib/reviewStatusPolling.test.ts`): the 3-second interval, stopping on `completed` and `failed`, stopping when the component unmounts, stopping after one request on 403 and 404, exponential backoff on 5xx and network errors, giving up after 10 consecutive failures, resetting the backoff after a success, the handler `ReviewDetail` uses to refetch the review on a terminal status, and clearing a poll error when the review id changes. `src/lib/reviewLoader.test.ts` covers the review page's load and refetch: a failed refetch keeps the review and sets the inline notice, and a late load or refetch response for a previous review id is ignored. `src/api/scanRemoved.test.ts` checks that the removed scan page and API stay removed. There are no component or page tests. CI runs:
 
 ```bash
 cd frontend
@@ -605,4 +605,4 @@ The task exists in `apps/reviews/tasks.py`, but there is no Celery beat service,
 
 ### Frontend tests are minimal
 
-Vitest covers only the review status polling loop and the scan-removal check. There are no component or page tests.
+Vitest covers only the review status polling loop, the review page's load and refetch logic, and the scan-removal check. There are no component or page tests.

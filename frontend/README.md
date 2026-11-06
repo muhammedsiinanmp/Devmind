@@ -27,7 +27,7 @@ pnpm lint       # eslint .
 pnpm preview    # serve the production build locally
 ```
 
-CI (`.github/workflows/ci.yml`) runs `pnpm exec tsc -p tsconfig.app.json --noEmit`, `pnpm build`, `pnpm lint` and `pnpm test`. `pnpm test` runs Vitest, which currently covers only the review status polling loop and the review page's refetch-on-completion handler (`src/lib/reviewStatusPolling.test.ts`) and a check that the removed scan page and API stay removed (`src/api/scanRemoved.test.ts`).
+CI (`.github/workflows/ci.yml`) runs `pnpm exec tsc -p tsconfig.app.json --noEmit`, `pnpm build`, `pnpm lint` and `pnpm test`. `pnpm test` runs Vitest, which currently covers only the review status polling loop and the review page's refetch-on-completion handler (`src/lib/reviewStatusPolling.test.ts`), the review page's load and refetch logic (`src/lib/reviewLoader.test.ts`) and a check that the removed scan page and API stay removed (`src/api/scanRemoved.test.ts`).
 
 ## How it talks to the backend
 
@@ -36,7 +36,7 @@ CI (`.github/workflows/ci.yml`) runs `pnpm exec tsc -p tsconfig.app.json --noEmi
 - **Sign-in.** `Login` calls `GET /api/v1/auth/github/start/` and redirects to the returned GitHub URL. GitHub sends the user back to `/auth/callback`, which calls `GET /api/v1/auth/github/callback/?code=&state=` and stores the returned `access` / `refresh` JWTs in `localStorage`. The GitHub OAuth App's callback URL must be `http://localhost:5173/auth/callback`.
 - **Auth headers.** An axios request interceptor adds `Authorization: Bearer <access>`. On a 401 it calls `POST /api/v1/auth/token/refresh/` once, queues other requests until the refresh finishes, and sends the user to `/login` if the refresh fails.
 - **Live status.** While a review is `pending` or `processing`, `ReviewStatus` polls `GET /api/v1/reviews/<id>/` every 3 seconds. It stops when the status becomes `completed` or `failed`, or when the component unmounts. Each request waits for the previous one to finish. A 403 or 404 stops polling at once. A 5xx or network failure backs off: the next request waits 3, 6, 12, 24, 48 and then 60 seconds, and polling gives up after 10 consecutive failures. A successful request resets the backoff. When polling stops on an error, the badge keeps the last known status and shows "Status updates stopped". A 401 is handled by the API client's token-refresh interceptor.
-- **Finished reviews.** On the review page, a change to `completed` or `failed` refetches the review, so the summary and comments appear without a reload.
+- **Finished reviews.** On the review page, a change to `completed` or `failed` refetches the review, so the summary and comments appear without a reload. If the refetch fails, the review stays on screen with an inline notice ("Couldn't load the final results. Reload to try again."). A response that arrives after you have moved to a different review is ignored (`src/lib/reviewLoader.ts`).
 
 ## Environment variables
 
