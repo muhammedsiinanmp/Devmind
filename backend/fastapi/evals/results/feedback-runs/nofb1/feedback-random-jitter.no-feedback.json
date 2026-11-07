@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "case_id": "feedback-random-jitter",
+  "case_sha256": "0142c26e93141498e526e516c947221b7ea8138e9ec48d2f000679be3b45875f",
+  "latency_ms": 2278,
+  "calls": [
+    {
+      "prompt_sha256": "fcc1801e31dafefcbcde3977685f41b3ce2e94aeadb319f0339c8fd2672116d8",
+      "response": "{\"findings\": []}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 722,
+      "completion_tokens": 74,
+      "provider": "groq"
+    },
+    {
+      "prompt_sha256": "de0a19b5a4b02583c7923943d891fc4ed0b5fe35b859213a322c277d75ade39e",
+      "response": "{\"findings\": [{\"file_path\": \"clients/retry.py\", \"line_number\": 3, \"category\": \"test coverage\", \"severity\": \"warning\", \"body\": \"The new random.uniform call makes backoff_delay nondeterministic, but existing tests likely assume a deterministic output. No tests are provided to verify the random component or to mock it, risking flaky tests.\", \"suggested_fix\": \"Add a unit test that patches random.uniform (e.g., using unittest.mock.patch) to return a fixed value and asserts the correct delay, and also test that the returned value falls within the expected range when not mocked.\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 712,
+      "completion_tokens": 295,
+      "provider": "groq"
+    },
+    {
+      "prompt_sha256": "d3f830595e4fbc1424cf147c16ae51b701ce8b09f6634ae3ea0953a5ac10a2ed",
+      "response": "{\"findings\": [{\"file_path\": \"clients/retry.py\", \"line_number\": 3, \"category\": \"quality\", \"severity\": \"warning\", \"body\": \"The function does not validate the 'attempt' argument; negative or non‑integer values could produce unexpected backoff values or raise errors.\", \"suggested_fix\": \"def backoff_delay(attempt: int, base: float = 0.5) -> float:\\n    if not isinstance(attempt, int) or attempt < 0:\\n        raise ValueError(\\\"'attempt' must be a non‑negative integer\\\")\\n    return base * 2 ** attempt + random.uniform(0, base)\"}, {\"file_path\": \"clients/retry.py\", \"line_number\": 1, \"category\": \"quality\", \"severity\": \"info\", \"body\": \"The module lacks a docstring and type hints, reducing readability and maintainability.\", \"suggested_fix\": \"'''Utility for exponential backoff with jitter.'''\\n\\nimport random\\n\\ndef backoff_delay(attempt: int, base: float = 0.5) -> float:\\n    \\\"\\\"\\\"Calculate backoff delay.\\n\\n    Args:\\n        attempt: Number of retry attempts (must be non‑negative).\\n        base: Base delay in seconds.\\n    Returns:\\n        Delay in seconds with exponential backoff and a random jitter up to ``base``.\\n    \\\"\\\"\\\"\\n    if not isinstance(attempt, int) or attempt < 0:\\n        raise ValueError(\\\"'attempt' must be a non‑negative integer\\\")\\n    return base * 2 ** attempt + random.uniform(0, base)\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 716,
+      "completion_tokens": 736,
+      "provider": "groq"
+    }
+  ],
+  "recorded_utc": "2026-11-07T09:13:33Z"
+}

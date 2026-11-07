@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "case_id": "feedback-md5-cache-key",
+  "case_sha256": "bc4bc1e5c60a05d8712efea9e7a9d2ae1f1b64141f5dd04e17f2ccc889e0851d",
+  "latency_ms": 2804,
+  "calls": [
+    {
+      "prompt_sha256": "02e79116f1549912fe0dd346d67e5c20e60b8a40c130057a6226bda87a4d1193",
+      "response": "{\"findings\": []}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 738,
+      "completion_tokens": 245,
+      "provider": "groq"
+    },
+    {
+      "prompt_sha256": "be93ef251d4b2bd658d38962d2f90a46a00011e17ec30ad7e0e759de9746e841",
+      "response": "{\"findings\": [{\"file_path\": \"web/cache.py\", \"line_number\": 2, \"category\": \"test\", \"severity\": \"warning\", \"body\": \"The new cache_key signature and implementation are not covered by any tests. Missing test cases for: empty params, params with special characters, non‑string values, ordering independence, and backward‑compatibility with the previous single‑argument API.\", \"suggested_fix\": \"Add unit tests in the test suite, e.g.,\\n\\n```python\\ndef test_cache_key_empty_params():\\n    assert cache_key('http://example.com', {}) == 'page:' + hashlib.md5('http://example.com?'.encode()).hexdigest()\\n\\ndef test_cache_key_param_order_independence():\\n    key1 = cache_key('http://example.com', {'b': '2', 'a': '1'})\\n    key2 = cache_key('http://example.com', {'a': '1', 'b': '2'})\\n    assert key1 == key2\\n\\ndef test_cache_key_special_characters():\\n    key = cache_key('http://example.com', {'q': 'a+b&c'})\\n    # verify expected hash value\\n    expected = hashlib.md5('http://example.com?q=a+b&c'.encode()).hexdigest()\\n    assert key == 'page:' + expected\\n\\ndef test_cache_key_backward_compatibility():\\n    # Ensure old single‑arg usage raises a clear error or is handled\\n    with pytest.raises(TypeError):\\n        cache_key('http://example.com')\\n```\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 728,
+      "completion_tokens": 720,
+      "provider": "groq"
+    },
+    {
+      "prompt_sha256": "c2d94583eb38747633e1e9962b68f16969c76b7b3f0b6680b39626363cda77cf",
+      "response": "{\"findings\": [{\"file_path\": \"web/cache.py\", \"line_number\": 2, \"category\": \"quality\", \"severity\": \"warning\", \"body\": \"The function signature was changed from cache_key(url) to cache_key(url, params), which will break existing callers expecting the original signature.\", \"suggested_fix\": \"def cache_key(url, params=None):\"}, {\"file_path\": \"web/cache.py\", \"line_number\": 3, \"category\": \"correctness\", \"severity\": \"warning\", \"body\": \"The params handling uses sorted(params) which, for a dict, sorts only the keys and joins them without values, leading to incorrect query strings and potential errors with empty or None params.\", \"suggested_fix\": \"import urllib.parse\\ndef cache_key(url, params=None):\\n    if params:\\n        query = urllib.parse.urlencode(sorted(params.items()))\\n        canonical = f\\\"{url}?{query}\\\"\\n    else:\\n        canonical = url\\n    return \\\"page:\\\" + hashlib.md5(canonical.encode()).hexdigest()\"}, {\"file_path\": \"web/cache.py\", \"line_number\": 4, \"category\": \"security\", \"severity\": \"info\", \"body\": \"MD5 is used for hashing the cache key; while acceptable for non-cryptographic purposes, using a stronger hash like SHA-256 reduces collision risk.\", \"suggested_fix\": \"return \\\"page:\\\" + hashlib.sha256(canonical.encode()).hexdigest()\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 732,
+      "completion_tokens": 901,
+      "provider": "groq"
+    }
+  ],
+  "recorded_utc": "2026-11-07T09:12:30Z"
+}

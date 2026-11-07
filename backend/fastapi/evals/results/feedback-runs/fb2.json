@@ -1,0 +1,255 @@
+{
+  "mode": "live",
+  "commit": "3d590c699527d5ad10145e0468750677a0784720",
+  "dirty_worktree": false,
+  "date_utc": "2026-11-07T09:14:35Z",
+  "date_source": "run",
+  "run_flags": {
+    "pause": 60.0,
+    "provider": "groq",
+    "only": [
+      "feedback-control-md5-password",
+      "feedback-md5-cache-key",
+      "feedback-random-jitter"
+    ],
+    "record": true,
+    "allow_partial": true,
+    "feedback": true,
+    "temperatures": {
+      "review": 0.1,
+      "google": "omit",
+      "groq": null
+    }
+  },
+  "harness_sha256": "8d1f184b568fce2decc12a20bee0647bca457e64f4b64504fa7a6c85e770f09d",
+  "case_set_sha256": "b9ccd516fedd14bce2110ac422c6464f1033eff8fbcd205ef67f43790f0907cc",
+  "models_used": [
+    "groq/openai/gpt-oss-120b"
+  ],
+  "providers_used": [
+    "groq"
+  ],
+  "case_count": 3,
+  "cases_scored": 3,
+  "scored_case_ids": [
+    "feedback-control-md5-password",
+    "feedback-md5-cache-key",
+    "feedback-random-jitter"
+  ],
+  "errors": {},
+  "post_processing": [
+    "anchor_comments",
+    "drop_empty_body",
+    "review_comment_validation"
+  ],
+  "anchoring": {
+    "anchored": 7,
+    "snapped": 0,
+    "unanchored": 0
+  },
+  "parse_failures": {
+    "analyzer_runs_failed": 0,
+    "cases_unknown": 0,
+    "note": null
+  },
+  "metrics": {
+    "cases": 3,
+    "cases_scored": 3,
+    "cases_errored": 0,
+    "clean_cases": 2,
+    "clean_cases_with_findings": 2,
+    "clean_cases_errored": 0,
+    "clean_findings_total": 6,
+    "expected_total": 1,
+    "findings_total": 7,
+    "unique_findings_total": 6,
+    "matched": 1,
+    "matched_dedup": 1,
+    "near": 0,
+    "partial": 0,
+    "missed": 0,
+    "extra": 6,
+    "raw_findings_total": 7,
+    "valid_line_findings": 7,
+    "precision": 0.14285714285714285,
+    "precision_dedup": 0.16666666666666666,
+    "precision_tolerant": 0.14285714285714285,
+    "recall": 1.0,
+    "recall_tolerant": 1.0,
+    "clean_false_positive_rate": 1.0,
+    "valid_line_rate": 1.0
+  },
+  "latency_ms": {
+    "source": "measured",
+    "mean": 2646,
+    "p50": 2704,
+    "max": 2941,
+    "note": "Latency depends on the provider chain, quotas and network; compare it only between runs that used the same providers."
+  },
+  "tokens": {
+    "model_calls": 9,
+    "prompt": 7794,
+    "completion": 5175
+  },
+  "cost_usd": null,
+  "cases": [
+    {
+      "id": "feedback-control-md5-password",
+      "clean": false,
+      "error": null,
+      "expected": 1,
+      "findings": 1,
+      "matched": 1,
+      "near": 0,
+      "partial": 0,
+      "missed": 0,
+      "extra": 0,
+      "valid_lines": 1,
+      "parse_failures": 0,
+      "latency_ms": 2704,
+      "model_calls": 3,
+      "raw_findings": [
+        {
+          "file_path": "accounts/passwords.py",
+          "line_number": 3,
+          "category": "security",
+          "severity": "critical",
+          "body": "Replacing the secure make_password call with a raw MD5 hash stores passwords using an unsalted, fast, broken hash algorithm. MD5 is vulnerable to precomputed attacks and does not provide adequate protection for stored passwords."
+        }
+      ],
+      "posted_findings": [
+        {
+          "file_path": "accounts/passwords.py",
+          "line_number": 3,
+          "category": "security",
+          "severity": "critical",
+          "body": "Replacing the secure make_password call with a raw MD5 hash stores passwords using an unsalted, fast, broken hash algorithm. MD5 is vulnerable to precomputed attacks and does not provide adequate protection for stored passwords."
+        }
+      ]
+    },
+    {
+      "id": "feedback-md5-cache-key",
+      "clean": true,
+      "error": null,
+      "expected": 0,
+      "findings": 4,
+      "matched": 0,
+      "near": 0,
+      "partial": 0,
+      "missed": 0,
+      "extra": 4,
+      "valid_lines": 4,
+      "parse_failures": 0,
+      "latency_ms": 2941,
+      "model_calls": 3,
+      "raw_findings": [
+        {
+          "file_path": "web/cache.py",
+          "line_number": 2,
+          "category": "quality",
+          "severity": "error",
+          "body": "The function signature changed from cache_key(url) to cache_key(url, params), breaking backward compatibility and causing TypeError for existing callers."
+        },
+        {
+          "file_path": "web/cache.py",
+          "line_number": 3,
+          "category": "correctness",
+          "severity": "error",
+          "body": "The code assumes 'params' is an iterable of strings; if a dict is passed (common for query parameters), '&'.join(sorted(params)) will join only the keys, losing values and producing an incorrect cache key."
+        },
+        {
+          "file_path": "web/cache.py",
+          "line_number": 3,
+          "category": "quality",
+          "severity": "info",
+          "body": "When 'params' is empty, the code produces a URL ending with a trailing '?', which may be undesirable for cache key consistency."
+        },
+        {
+          "file_path": "web/cache.py",
+          "line_number": 4,
+          "category": "quality",
+          "severity": "info",
+          "body": "MD5 is used for generating the cache key; while not a security issue here, using a stronger hash like SHA-256 improves consistency across the codebase."
+        }
+      ],
+      "posted_findings": [
+        {
+          "file_path": "web/cache.py",
+          "line_number": 2,
+          "category": "quality",
+          "severity": "error",
+          "body": "The function signature changed from cache_key(url) to cache_key(url, params), breaking backward compatibility and causing TypeError for existing callers."
+        },
+        {
+          "file_path": "web/cache.py",
+          "line_number": 3,
+          "category": "correctness",
+          "severity": "error",
+          "body": "The code assumes 'params' is an iterable of strings; if a dict is passed (common for query parameters), '&'.join(sorted(params)) will join only the keys, losing values and producing an incorrect cache key."
+        },
+        {
+          "file_path": "web/cache.py",
+          "line_number": 3,
+          "category": "quality",
+          "severity": "info",
+          "body": "When 'params' is empty, the code produces a URL ending with a trailing '?', which may be undesirable for cache key consistency."
+        },
+        {
+          "file_path": "web/cache.py",
+          "line_number": 4,
+          "category": "quality",
+          "severity": "info",
+          "body": "MD5 is used for generating the cache key; while not a security issue here, using a stronger hash like SHA-256 improves consistency across the codebase."
+        }
+      ]
+    },
+    {
+      "id": "feedback-random-jitter",
+      "clean": true,
+      "error": null,
+      "expected": 0,
+      "findings": 2,
+      "matched": 0,
+      "near": 0,
+      "partial": 0,
+      "missed": 0,
+      "extra": 2,
+      "valid_lines": 2,
+      "parse_failures": 0,
+      "latency_ms": 2292,
+      "model_calls": 3,
+      "raw_findings": [
+        {
+          "file_path": "clients/retry.py",
+          "line_number": 3,
+          "category": "quality",
+          "severity": "warning",
+          "body": "The function backoff_delay does not validate its inputs or provide type hints/documentation. Passing a negative or non‑integer 'attempt' will produce unexpected fractional delays, and the lack of a docstring makes the jitter behavior unclear."
+        },
+        {
+          "file_path": "clients/retry.py",
+          "line_number": 3,
+          "category": "test",
+          "severity": "info",
+          "body": "The added random jitter makes the function nondeterministic, which can cause flaky tests if not covered. Add unit tests that assert the returned delay is within the expected range and consider allowing injection of a random generator for deterministic testing."
+        }
+      ],
+      "posted_findings": [
+        {
+          "file_path": "clients/retry.py",
+          "line_number": 3,
+          "category": "quality",
+          "severity": "warning",
+          "body": "The function backoff_delay does not validate its inputs or provide type hints/documentation. Passing a negative or non‑integer 'attempt' will produce unexpected fractional delays, and the lack of a docstring makes the jitter behavior unclear."
+        },
+        {
+          "file_path": "clients/retry.py",
+          "line_number": 3,
+          "category": "test",
+          "severity": "info",
+          "body": "The added random jitter makes the function nondeterministic, which can cause flaky tests if not covered. Add unit tests that assert the returned delay is within the expected range and consider allowing injection of a random generator for deterministic testing."
+        }
+      ]
+    }
+  ]
+}

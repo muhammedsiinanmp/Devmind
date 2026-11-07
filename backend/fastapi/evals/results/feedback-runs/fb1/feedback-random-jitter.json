@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "case_id": "feedback-random-jitter",
+  "case_sha256": "0142c26e93141498e526e516c947221b7ea8138e9ec48d2f000679be3b45875f",
+  "latency_ms": 2648,
+  "calls": [
+    {
+      "prompt_sha256": "85907615d5c0a5e798737ab33f4657af020b680fb7d5a66cf2ee316a2ccc7358",
+      "response": "{\"findings\": []}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 866,
+      "completion_tokens": 251,
+      "provider": "groq"
+    },
+    {
+      "prompt_sha256": "7065b026fc719b975bb6ffcf67fb3729fd053b9519c154b7ea12ddc6ea6d3e0d",
+      "response": "{\"findings\": [{\"file_path\": \"clients/retry.py\", \"line_number\": 3, \"category\": \"test coverage\", \"severity\": \"info\", \"body\": \"The added random jitter makes backoff_delay nondeterministic, which can cause flaky tests if not properly mocked. Currently there are no tests verifying the function's behavior or range, leading to potential gaps in test coverage.\", \"suggested_fix\": \"Add unit tests that assert the returned delay is within the expected range (base * 2**attempt <= delay <= base * 2**attempt + base). Consider adding an optional jitter parameter or allowing injection of a random.Random instance for deterministic testing, e.g.,\\n\\ndef backoff_delay(attempt, base=0.5, jitter_func=None):\\n    jitter = jitter_func() if jitter_func else random.uniform(0, base)\\n    return base * 2 ** attempt + jitter\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 856,
+      "completion_tokens": 485,
+      "provider": "groq"
+    },
+    {
+      "prompt_sha256": "c6c7dc5ce738b8300c7baac4a74011d4ed9106bb2892685bf513b94d330ed3d9",
+      "response": "{\"findings\":[{\"file_path\":\"clients/retry.py\",\"line_number\":3,\"category\":\"quality\",\"severity\":\"info\",\"body\":\"The function lacks a docstring and input validation; adding a docstring and checking that 'attempt' is a non‑negative integer improves readability and prevents misuse.\",\"suggested_fix\":\"def backoff_delay(attempt: int, base: float = 0.5) -> float:\\n    \\\"\\\"\\\"Calculate exponential backoff delay with jitter.\\n\\n    Args:\\n        attempt: Non‑negative retry attempt count.\\n        base: Base delay in seconds.\\n\\n    Returns:\\n        Delay in seconds.\\n    \\\"\\\"\\\"\\n    if attempt < 0:\\n        raise ValueError(\\\"attempt must be non‑negative\\\")\\n    return base * 2 ** attempt + random.uniform(0, base)\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 860,
+      "completion_tokens": 737,
+      "provider": "groq"
+    }
+  ],
+  "recorded_utc": "2026-11-07T09:10:25Z"
+}
