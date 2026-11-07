@@ -30,13 +30,20 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import datetime
 from typing import Any
 
 import httpx
 from django.conf import settings
 from django.db import transaction
+from django.utils import timezone
+from django.utils.dateparse import parse_datetime
 
-from apps.reviews.models import CommentFeedback, ReviewComment
+from apps.reviews.models import (
+    CommentFeedback,
+    DeletedFeedbackReply,
+    ReviewComment,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -114,10 +121,16 @@ def record_feedback(
     source: str,
     signal: str | None,
     source_github_id: int | None = None,
+    event_at: datetime | None = None,
 ) -> bool:
     """
-    Store (or with signal=None remove) the comment's verdict from ``source``.
+    Store (or with signal=None clear) the comment's verdict from ``source``.
     ``source_github_id`` is the reply that gave a reply verdict.
+
+    ``event_at`` is when the event happened (default: now). An event
+    older than the one that last set this source is ignored, so a
+    retried or redelivered event can't undo a newer one. Clearing keeps
+    the row with no signal as the marker that holds that time.
 
     Returns True when the comment's effective verdict changed; the change is
     then sent to FastAPI after the transaction commits.
@@ -125,15 +138,23 @@ def record_feedback(
     with transaction.atomic():
         # Lock the comment so concurrent events for it apply one at a time.
         ReviewComment.objects.select_for_update().filter(pk=comment.pk).first()
-        before = effective_signal(comment)
-        if signal is None:
-            CommentFeedback.objects.filter(comment=comment, source=source).delete()
-        else:
-            CommentFeedback.objects.update_or_create(
-                comment=comment,
-                source=source,
-                defaults={"signal": signal, "source_github_id": source_github_id},
+        event_at = event_at or timezone.now()
+        row = CommentFeedback.objects.filter(comment=comment, source=source).first()
+        if row is not None and row.event_at and event_at < row.event_at:
+            logger.info(
+                "feedback.stale_event comment_id=%d source=%s", comment.pk, source
             )
+            return False
+        before = effective_signal(comment)
+        CommentFeedback.objects.update_or_create(
+            comment=comment,
+            source=source,
+            defaults={
+                "signal": signal,
+                "source_github_id": source_github_id,
+                "event_at": event_at,
+            },
+        )
         after = effective_signal(comment)
         changed = before != after
         if changed:
@@ -186,18 +207,34 @@ def _user_type(user: Any) -> str:
     return str(user.get("type") or "") if isinstance(user, dict) else ""
 
 
-def _pr_fields(payload: dict[str, Any]) -> tuple[str, int]:
+def _user_id(user: Any) -> int | None:
+    return _int_or_none(user.get("id")) if isinstance(user, dict) else None
+
+
+def _pr_fields(payload: dict[str, Any]) -> tuple[str, int | None, int]:
+    """(author login, author id, PR number) of the payload's pull request."""
     pr = payload.get("pull_request")
     if not isinstance(pr, dict):
-        return "", 0
-    return _login(pr.get("user")), _int_or_none(pr.get("number")) or 0
+        return "", None, 0
+    user = pr.get("user")
+    return _login(user), _user_id(user), _int_or_none(pr.get("number")) or 0
+
+
+def _event_time(value: Any, received_at: datetime) -> str:
+    """GitHub's ISO timestamp if it parses, else the receipt time (ISO)."""
+    parsed = parse_datetime(value) if isinstance(value, str) else None
+    if parsed is None or timezone.is_naive(parsed):
+        parsed = received_at
+    return parsed.isoformat()
 
 
 class TrustChecker:
     """
     Decides whose feedback counts on one repository and pull request.
 
-    Trusted: the DevMind user who connected the repository, the repository
+    Trusted: the DevMind user who connected the repository (matched by
+    GitHub user id, never by login: a renamed owner's old login can be
+    taken by someone else), the repository
     owner (author_association OWNER) and users whose repository permission
     is write or admin. MEMBER and COLLABORATOR don't imply write access (an
     organization member can have read-only access, and a collaborator can be
@@ -210,22 +247,33 @@ class TrustChecker:
     (one task run).
     """
 
-    def __init__(self, repo, pr_author: str, service=None) -> None:
+    def __init__(
+        self, repo, pr_author: str, service=None, pr_author_id: int | None = None
+    ) -> None:
         self._repo = repo
         self._pr_author = pr_author.lower()
-        self._owner_login = (getattr(repo.owner, "github_login", "") or "").lower()
+        self._pr_author_id = pr_author_id
+        self._owner_id = _int_or_none(getattr(repo.owner, "github_id", None))
         self._service = service
         self._cache: dict[str, bool] = {}
 
     def is_trusted(
-        self, login: str, association: str | None = None, user_type: str = ""
+        self,
+        login: str,
+        association: str | None = None,
+        user_type: str = "",
+        user_id: int | None = None,
     ) -> bool:
         key = login.lower()
         if not key or user_type == "Bot":
             return False
-        if not self._pr_author or key == self._pr_author:
+        if not self._pr_author and self._pr_author_id is None:
             return False
-        if self._owner_login and key == self._owner_login:
+        if key == self._pr_author or (
+            user_id is not None and user_id == self._pr_author_id
+        ):
+            return False
+        if self._owner_id is not None and user_id == self._owner_id:
             return True
         if association is not None:
             if association not in TRUSTED_ASSOCIATIONS:
@@ -252,7 +300,9 @@ def _service_for(repo):
     return GitHubService(access_token=github_token.access_token, user=repo.owner)
 
 
-def parse_review_thread_event(payload: dict[str, Any]) -> dict[str, Any] | None:
+def parse_review_thread_event(
+    payload: dict[str, Any], received_at: datetime | None = None
+) -> dict[str, Any] | None:
     """
     pull_request_review_thread resolved/unresolved, reduced to what
     apply_feedback_event needs, or None. No database access.
@@ -278,10 +328,14 @@ def parse_review_thread_event(payload: dict[str, Any]) -> dict[str, Any] | None:
     ]
     if not ids:
         return None
-    pr_author, pr_number = _pr_fields(payload)
+    pr_author, pr_author_id, pr_number = _pr_fields(payload)
     sender = payload.get("sender")
     return {
         "kind": "thread",
+        # The payload has no time for the (un)resolve itself.
+        "event_at": (received_at or timezone.now()).isoformat(),
+        "actor_id": _user_id(sender),
+        "pr_author_id": pr_author_id,
         "action": action,
         "repo_github_id": repo_github_id,
         "comment_ids": ids,
@@ -294,7 +348,9 @@ def parse_review_thread_event(payload: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
-def parse_review_comment_event(payload: dict[str, Any]) -> dict[str, Any] | None:
+def parse_review_comment_event(
+    payload: dict[str, Any], received_at: datetime | None = None
+) -> dict[str, Any] | None:
     """
     A created, edited or deleted reply to an inline comment, reduced to what
     apply_feedback_event needs, or None (not a reply, or a new reply with
@@ -316,10 +372,20 @@ def parse_review_comment_event(payload: dict[str, Any]) -> dict[str, Any] | None
         signal = classify_reply(str(reply.get("body") or ""))
         if signal is None and action == "created":
             return None
-    pr_author, pr_number = _pr_fields(payload)
+    pr_author, pr_author_id, pr_number = _pr_fields(payload)
     user = reply.get("user")
+    received_at = received_at or timezone.now()
     return {
         "kind": "reply",
+        # Created/edited: the reply's updated_at; deleted: the receipt
+        # time (its updated_at is the last edit, before the deletion).
+        "event_at": (
+            received_at.isoformat()
+            if action == "deleted"
+            else _event_time(reply.get("updated_at"), received_at)
+        ),
+        "actor_id": _user_id(user),
+        "pr_author_id": pr_author_id,
         "action": action,
         "repo_github_id": repo_github_id,
         "comment_ids": [parent_id],
@@ -333,14 +399,26 @@ def parse_review_comment_event(payload: dict[str, Any]) -> dict[str, Any] | None
     }
 
 
-def _remove_reply_verdict(comment: ReviewComment, reply_id: int) -> bool:
-    """Remove the comment's reply verdict if this reply gave it."""
+def _remove_reply_verdict(
+    comment: ReviewComment, reply_id: int, event_at: datetime, deleted: bool
+) -> bool:
+    """
+    Clear the comment's reply verdict if this reply gave it. A deleted
+    reply is remembered (DeletedFeedbackReply), so its created or edited
+    event arriving late is ignored.
+    """
+    if deleted:
+        DeletedFeedbackReply.objects.get_or_create(
+            github_reply_id=reply_id, defaults={"deleted_at": event_at}
+        )
     if not CommentFeedback.objects.filter(
-        comment=comment, source="reply", source_github_id=reply_id
+        comment=comment,
+        source="reply",
+        source_github_id=reply_id,
+        signal__isnull=False,
     ).exists():
         return False
-    record_feedback(comment, "reply", None)
-    return True
+    return record_feedback(comment, "reply", None, reply_id, event_at)
 
 
 def apply_feedback_event(event: dict[str, Any]) -> bool:
@@ -366,12 +444,29 @@ def apply_feedback_event(event: dict[str, Any]) -> bool:
     if comment is None:
         return False
 
-    if event["kind"] == "reply" and event["signal"] is None:
-        return _remove_reply_verdict(comment, event["reply_id"])
+    event_at = parse_datetime(event.get("event_at") or "") or timezone.now()
+    if event["kind"] == "reply":
+        if event["signal"] is None:
+            return _remove_reply_verdict(
+                comment, event["reply_id"], event_at, event["action"] == "deleted"
+            )
+        if DeletedFeedbackReply.objects.filter(
+            github_reply_id=event["reply_id"]
+        ).exists():
+            logger.info("feedback.deleted_reply_event comment_id=%d", comment.pk)
+            return False
 
-    checker = TrustChecker(repo, event.get("pr_author") or "", _service_for(repo))
+    checker = TrustChecker(
+        repo,
+        event.get("pr_author") or "",
+        _service_for(repo),
+        pr_author_id=event.get("pr_author_id"),
+    )
     if not checker.is_trusted(
-        event.get("actor") or "", event.get("association"), event.get("user_type", "")
+        event.get("actor") or "",
+        event.get("association"),
+        event.get("user_type", ""),
+        user_id=event.get("actor_id"),
     ):
         logger.info(
             "feedback.untrusted_actor comment_id=%d kind=%s",
@@ -382,16 +477,28 @@ def apply_feedback_event(event: dict[str, Any]) -> bool:
 
     if event["kind"] == "reply":
         record_feedback(
-            comment, "reply", event["signal"], source_github_id=event["reply_id"]
+            comment,
+            "reply",
+            event["signal"],
+            source_github_id=event["reply_id"],
+            event_at=event_at,
         )
     else:
         record_feedback(
-            comment, "resolved", ACCEPTED if event["action"] == "resolved" else None
+            comment,
+            "resolved",
+            ACCEPTED if event["action"] == "resolved" else None,
+            event_at=event_at,
         )
     return True
 
 
-def fetch_reaction_feedback(repo_id: int, pr_number: int, pr_author: str = "") -> int:
+def fetch_reaction_feedback(
+    repo_id: int,
+    pr_number: int,
+    pr_author: str = "",
+    pr_author_id: int | None = None,
+) -> int:
     """
     Count trusted 👍/👎 on DevMind's inline comments of a closed PR and
     record them.
@@ -426,8 +533,10 @@ def fetch_reaction_feedback(repo_id: int, pr_number: int, pr_author: str = "") -
     if service is None:
         logger.warning("feedback.reactions.no_token repo_id=%d", repo_id)
         return 0
-    pr_author = pr_author or service.get_pull_request_author(repo.full_name, pr_number)
-    checker = TrustChecker(repo, pr_author, service)
+    if not pr_author:
+        author = service.get_pull_request_author(repo.full_name, pr_number)
+        pr_author, pr_author_id = _login(author), _user_id(author)
+    checker = TrustChecker(repo, pr_author, service, pr_author_id=pr_author_id)
     items = service.list_pull_request_review_comments(repo.full_name, pr_number)
     by_id = {
         _int_or_none(item.get("id")): item for item in items if isinstance(item, dict)
@@ -452,7 +561,9 @@ def fetch_reaction_feedback(repo_id: int, pr_number: int, pr_author: str = "") -
                 if content not in ("+1", "-1"):
                     continue
                 user = reaction.get("user")
-                if not checker.is_trusted(_login(user), None, _user_type(user)):
+                if not checker.is_trusted(
+                    _login(user), None, _user_type(user), user_id=_user_id(user)
+                ):
                     continue
                 if content == "+1":
                     plus += 1

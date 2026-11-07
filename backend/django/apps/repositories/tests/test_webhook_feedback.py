@@ -23,6 +23,14 @@ from apps.repositories.webhooks import WebhookDispatcher
 WEBHOOK_SECRET = "test-webhook-secret-32-chars-here"
 PERMISSION_URL = "https://api.github.com/repos/acme/api/collaborators/{}/permission"
 PR_AUTHOR = "pr-author"
+PR_AUTHOR_ID = 777
+# GitHub user ids by login; payloads carry them like GitHub's do.
+KNOWN_IDS: dict[str, int] = {PR_AUTHOR: PR_AUTHOR_ID}
+
+
+def _user(login: str, user_id: int | None = None) -> dict[str, Any]:
+    uid = user_id if user_id is not None else KNOWN_IDS.get(login, 50_000)
+    return {"login": login, "id": uid, "type": "User"}
 
 
 def _post_signed(
@@ -53,11 +61,13 @@ def devmind_comment(db: Any) -> Any:
 @pytest.fixture
 def owner(devmind_comment: Any) -> str:
     """Login of the DevMind user who connected the repository."""
-    return devmind_comment.review.repository.owner.github_login
+    owner = devmind_comment.review.repository.owner
+    KNOWN_IDS[owner.github_login] = owner.github_id
+    return owner.github_login
 
 
 def _pr(author: str = PR_AUTHOR) -> dict[str, Any]:
-    return {"number": 42, "user": {"login": author, "type": "User"}}
+    return {"number": 42, "user": _user(author)}
 
 
 def _thread_payload(
@@ -71,7 +81,7 @@ def _thread_payload(
         },
         "pull_request": _pr(pr_author),
         "repository": {"id": 123456789, "full_name": "acme/api"},
-        "sender": {"login": sender, "type": "User"},
+        "sender": _user(sender),
     }
 
 
@@ -83,11 +93,14 @@ def _reply_payload(
     action: str = "created",
     reply_id: int = 9100,
     pr_author: str = PR_AUTHOR,
+    user_id: int | None = None,
+    updated_at: str = "2026-11-07T10:00:00Z",
 ) -> dict[str, Any]:
     comment: dict[str, Any] = {
         "id": reply_id,
         "body": body,
-        "user": {"login": user, "type": "User"},
+        "updated_at": updated_at,
+        "user": _user(user, user_id),
         "author_association": association,
     }
     if in_reply_to_id is not None:
@@ -109,7 +122,9 @@ def _closed_payload(repo_id: int = 123456789) -> dict[str, Any]:
 
 
 def _feedback(comment: Any) -> list[tuple[str, str]]:
-    return sorted(comment.feedback.values_list("source", "signal"))
+    """Verdicts in force; rows cleared to no signal are ordering markers."""
+    rows = comment.feedback.exclude(signal__isnull=True)
+    return sorted(rows.values_list("source", "signal"))
 
 
 def _permission(login: str, permission: str) -> None:
@@ -139,7 +154,7 @@ class TestFeedbackWebhookSignatures:
         response = _post_signed(payload, event_type)
 
         assert response.status_code == 200
-        assert devmind_comment.feedback.count() == 1
+        assert len(_feedback(devmind_comment)) == 1
 
     @pytest.mark.parametrize("index", [0, 1])
     def test_wrong_signature_returns_403_and_records_nothing(
@@ -197,6 +212,7 @@ class TestFeedbackWebhookSignatures:
             repo_id=devmind_comment.review.repository_id,
             pr_number=42,
             pr_author=PR_AUTHOR,
+            pr_author_id=PR_AUTHOR_ID,
         )
 
     def test_wrongly_signed_pr_closed_queues_nothing(
@@ -574,3 +590,166 @@ class TestReplyDeleteAndEdit:
             "pull_request_review_comment",
         )
         assert _feedback(devmind_comment) == [("reply", "accepted")]
+
+
+@pytest.mark.django_db
+class TestOwnerIsTrustedByIdNotLogin:
+    """Re-review fix 1: a renamed owner's freed login can be claimed by anyone."""
+
+    def test_someone_holding_the_owners_old_login_is_not_trusted(
+        self, devmind_comment: Any, owner: str
+    ) -> None:
+        WebhookDispatcher().dispatch(
+            _reply_payload("False positive", owner, "NONE", user_id=424242),
+            "pull_request_review_comment",
+        )
+        assert _feedback(devmind_comment) == []
+
+    def test_owner_who_changed_login_is_still_trusted(
+        self, devmind_comment: Any
+    ) -> None:
+        owner_id = devmind_comment.review.repository.owner.github_id
+        WebhookDispatcher().dispatch(
+            _reply_payload("False positive", "new-login", "NONE", user_id=owner_id),
+            "pull_request_review_comment",
+        )
+        assert _feedback(devmind_comment) == [("reply", "rejected")]
+
+    def test_pr_author_is_matched_by_id_too(self, devmind_comment: Any) -> None:
+        # The author renamed after opening the PR: the login differs, the id doesn't.
+        WebhookDispatcher().dispatch(
+            _reply_payload(
+                "False positive", "renamed-author", "OWNER", user_id=PR_AUTHOR_ID
+            ),
+            "pull_request_review_comment",
+        )
+        assert _feedback(devmind_comment) == []
+
+
+@pytest.mark.django_db
+class TestOutOfOrderEvents:
+    """Re-review fix 2: a late, older event can't undo a newer one."""
+
+    def test_created_arriving_after_delete_is_ignored(
+        self, devmind_comment: Any, owner: str
+    ) -> None:
+        dispatcher = WebhookDispatcher()
+        dispatcher.dispatch(
+            _reply_payload("False positive", owner, reply_id=7, action="deleted"),
+            "pull_request_review_comment",
+        )
+        dispatcher.dispatch(
+            _reply_payload("False positive", owner, reply_id=7),
+            "pull_request_review_comment",
+        )
+        assert _feedback(devmind_comment) == []
+
+    def test_created_then_deleted_in_order_is_removed(
+        self, devmind_comment: Any, owner: str
+    ) -> None:
+        dispatcher = WebhookDispatcher()
+        dispatcher.dispatch(
+            _reply_payload("False positive", owner, reply_id=7),
+            "pull_request_review_comment",
+        )
+        dispatcher.dispatch(
+            _reply_payload("False positive", owner, reply_id=7, action="deleted"),
+            "pull_request_review_comment",
+        )
+        dispatcher.dispatch(  # a retry of the old "created"
+            _reply_payload("False positive", owner, reply_id=7),
+            "pull_request_review_comment",
+        )
+        assert _feedback(devmind_comment) == []
+
+    def test_retried_create_cannot_undo_a_newer_edit(
+        self, devmind_comment: Any, owner: str
+    ) -> None:
+        dispatcher = WebhookDispatcher()
+        dispatcher.dispatch(
+            _reply_payload(
+                "Fixed",
+                owner,
+                reply_id=7,
+                action="edited",
+                updated_at="2026-11-07T11:00:00Z",
+            ),
+            "pull_request_review_comment",
+        )
+        dispatcher.dispatch(
+            _reply_payload(
+                "False positive", owner, reply_id=7, updated_at="2026-11-07T10:00:00Z"
+            ),
+            "pull_request_review_comment",
+        )
+        assert _feedback(devmind_comment) == [("reply", "accepted")]
+
+    @staticmethod
+    def _thread(action: str, owner: str, minute: int) -> dict[str, Any]:
+        from datetime import datetime, timezone as dt_timezone
+
+        from apps.reviews.services.feedback import parse_review_thread_event
+
+        received = datetime(2026, 11, 7, 10, minute, tzinfo=dt_timezone.utc)
+        event = parse_review_thread_event(
+            _thread_payload(action, [9001], owner), received
+        )
+        assert event is not None
+        return event
+
+    def test_late_resolved_does_not_undo_a_newer_unresolve(
+        self, devmind_comment: Any, owner: str
+    ) -> None:
+        from apps.reviews.services.feedback import apply_feedback_event
+
+        apply_feedback_event(self._thread("resolved", owner, 1))
+        apply_feedback_event(self._thread("unresolved", owner, 3))
+        apply_feedback_event(self._thread("resolved", owner, 1))  # retry, older
+        assert _feedback(devmind_comment) == []
+
+    def test_unresolve_seen_first_still_wins_over_older_resolve(
+        self, devmind_comment: Any, owner: str
+    ) -> None:
+        from apps.reviews.services.feedback import apply_feedback_event
+
+        apply_feedback_event(self._thread("unresolved", owner, 3))
+        apply_feedback_event(self._thread("resolved", owner, 1))
+        assert _feedback(devmind_comment) == []
+
+    def test_newer_resolve_after_unresolve_counts(
+        self, devmind_comment: Any, owner: str
+    ) -> None:
+        from apps.reviews.services.feedback import apply_feedback_event
+
+        apply_feedback_event(self._thread("unresolved", owner, 1))
+        apply_feedback_event(self._thread("resolved", owner, 3))
+        assert _feedback(devmind_comment) == [("resolved", "accepted")]
+
+
+@pytest.mark.django_db
+class TestPermissionApiErrors:
+    """A 403 from the permission API records nothing and isn't retried."""
+
+    @responses.activate
+    @pytest.mark.parametrize("kind", ["reply", "thread"])
+    def test_permission_403_records_nothing_without_retry(
+        self, kind: str, devmind_comment: Any
+    ) -> None:
+        responses.add(
+            responses.GET,
+            PERMISSION_URL.format("maintainer"),
+            json={"message": "Must have push access"},
+            status=403,
+            headers={"X-RateLimit-Remaining": "4000"},
+        )
+        if kind == "reply":
+            payload = _reply_payload("False positive", "maintainer", "COLLABORATOR")
+            event_type = "pull_request_review_comment"
+        else:
+            payload = _thread_payload("resolved", [9001], "maintainer")
+            event_type = "pull_request_review_thread"
+
+        WebhookDispatcher().dispatch(payload, event_type)
+
+        assert _feedback(devmind_comment) == []
+        assert len(responses.calls) == 1

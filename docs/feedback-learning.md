@@ -6,7 +6,7 @@ DevMind records what trusted developers think of its inline comments, and shows 
 
 Only signals from **trusted users** count (`TrustChecker` in `backend/django/apps/reviews/services/feedback.py`):
 
-- the DevMind user who connected the repository (matched by GitHub login);
+- the DevMind user who connected the repository, matched by GitHub numeric user id (`CustomUser.github_id`), never by login: a renamed owner's old login is free for anyone to take;
 - the repository owner (`author_association` `OWNER` on a reply);
 - anyone whose permission on the repository is `write` or `admin`, according to `GET /repos/{repo}/collaborators/{user}/permission`. GitHub reports `maintain` as `write` and `triage` as `read` in that field, and maps a custom role to its base role.
 
@@ -32,6 +32,15 @@ A reply verdict remembers which reply gave it (`CommentFeedback.source_github_id
 - Editing it re-evaluates it: a new verdict replaces the old one, and no verdict removes it.
 
 These removals don't need a trusted actor, since only the reply's author or a maintainer can delete or edit it. Deleting or editing a different reply leaves the verdict alone.
+
+**Event order.** Celery retries and GitHub redeliveries can deliver an old event after a newer one, so each row stores `event_at`, the time of the event that set it, and an older event for the same comment and source is ignored.
+- **Clearing keeps a marker:** a tie, an unresolve or a removed reply keeps the row with no signal, holding its time.
+- **Where `event_at` comes from:**
+  - created or edited replies: the reply's `updated_at`;
+  - deleted replies and thread events: the time the webhook was received (GitHub sends no time for those);
+  - reaction counts: the time the task runs.
+- **Deleted replies:** the reply's id is also recorded (`DeletedFeedbackReply`), so a created or edited event for it that arrives later is always ignored.
+- **Limit:** a manual redelivery of an old thread event gets a new receipt time, so it counts as new.
 
 Each comment has at most one `CommentFeedback` row per source (unique on comment and source). A later event from the same source replaces the row: a second reaction count, a later reply with a verdict, or unresolving a thread. Reactions are counted again if the PR is reopened and closed again.
 
@@ -87,6 +96,8 @@ Rejected examples steer later reviews of a repository away from similar findings
 
   Their signals are dropped before anything is stored.
 - **Can't influence the same PR's later reviews:** feedback is stored tagged with its PR and that PR's reviews leave it out.
+- **Can't impersonate the owner:** the connecting owner is recognised by GitHub user id, so someone who registers the owner's old login after a rename gets no trust from it, and the PR author is excluded by id as well as login.
+- **Can't replay old events to undo newer ones:** see "Event order" above.
 - **Can influence feedback:** the DevMind user who connected the repository, the repository owner, and users with write or admin permission. Their verdicts on comments in *other people's* pull requests are stored and can suppress similar findings in later reviews of the repository.
 - **What remains:** a malicious or careless collaborator with write access can mark real findings as rejected on someone else's PR and so make similar findings less likely later. Write access already lets them merge code, so this doesn't give them anything they couldn't already do.
 

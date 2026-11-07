@@ -355,13 +355,15 @@ class GitHubService:
             f"{comment_id}/reactions"
         )
 
-    def get_pull_request_author(self, repo_full_name: str, pr_number: int) -> str:
-        """Login of the user who opened the pull request."""
+    def get_pull_request_author(
+        self, repo_full_name: str, pr_number: int
+    ) -> dict[str, Any]:
+        """The user who opened the pull request ({"login", "id", ...})."""
         response = self._budgeted_get(
             f"{GITHUB_API_BASE}/repos/{repo_full_name}/pulls/{pr_number}"
         )
-        user = response.json().get("user") or {}
-        return str(user.get("login") or "")
+        user = response.json().get("user")
+        return user if isinstance(user, dict) else {}
 
     def list_pull_request_review_comments(
         self, repo_full_name: str, pr_number: int

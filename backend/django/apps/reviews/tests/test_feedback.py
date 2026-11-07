@@ -48,6 +48,7 @@ PR_COMMENTS_URL = "https://api.github.com/repos/acme/api/pulls/42/comments"
 REACTIONS_URL = "https://api.github.com/repos/acme/api/pulls/comments/{}/reactions"
 PERMISSION_URL = "https://api.github.com/repos/acme/api/collaborators/{}/permission"
 PR_AUTHOR = "pr-author"
+KNOWN_IDS: dict[str, int] = {PR_AUTHOR: 777}
 
 
 def _gh_comment(comment_id: int, plus: int = 0, minus: int = 0) -> dict[str, Any]:
@@ -65,7 +66,14 @@ def _reactions(comment_id: int, votes: list[tuple[str, str]]) -> None:
         responses.GET,
         REACTIONS_URL.format(comment_id),
         json=[
-            {"content": content, "user": {"login": login, "type": "User"}}
+            {
+                "content": content,
+                "user": {
+                    "login": login,
+                    "id": KNOWN_IDS.get(login, 50_000),
+                    "type": "User",
+                },
+            }
             for login, content in votes
         ],
     )
@@ -87,7 +95,9 @@ def review(db: Any) -> Any:
 
 @pytest.fixture
 def owner(review: Any) -> str:
-    return review.repository.owner.github_login
+    user = review.repository.owner
+    KNOWN_IDS[user.github_login] = user.github_id
+    return user.github_login
 
 
 def _fetch(review: Any) -> int:
@@ -95,8 +105,11 @@ def _fetch(review: Any) -> int:
 
 
 def _signals(review: Any) -> dict[int, list[tuple[str, str]]]:
+    """Verdicts in force; rows cleared to no signal are ordering markers."""
     return {
-        c.github_comment_id: sorted(c.feedback.values_list("source", "signal"))
+        c.github_comment_id: sorted(
+            c.feedback.exclude(signal__isnull=True).values_list("source", "signal")
+        )
         for c in review.comments.all()
     }
 
@@ -159,7 +172,12 @@ class TestFetchReactionFeedback:
         responses.replace(
             responses.GET,
             REACTIONS_URL.format(1),
-            json=[{"content": "-1", "user": {"login": owner, "type": "User"}}],
+            json=[
+                {
+                    "content": "-1",
+                    "user": {"login": owner, "id": KNOWN_IDS[owner], "type": "User"},
+                }
+            ],
         )
 
         _fetch(review)
@@ -354,7 +372,7 @@ class TestOnlyTrustedReactionsCount:
         responses.add(
             responses.GET,
             "https://api.github.com/repos/acme/api/pulls/42",
-            json={"user": {"login": PR_AUTHOR}},
+            json={"user": {"login": PR_AUTHOR, "id": 777}},
         )
         responses.add(responses.GET, PR_COMMENTS_URL, json=[_gh_comment(1, minus=1)])
         _reactions(1, [(PR_AUTHOR, "-1")])
@@ -707,3 +725,50 @@ class TestReviewDetailFeedback:
         assert by_id[voted.pk]["signal"] == "rejected"
         assert by_id[voted.pk]["source"] == "reaction"
         assert by_id[silent.pk] is None
+
+
+@pytest.mark.django_db
+class TestReactionOwnerById:
+    """Re-review fix 1 for reactions."""
+
+    @responses.activate
+    def test_owners_old_login_with_another_id_is_not_the_owner(
+        self, review: Any, owner: str
+    ) -> None:
+        ReviewCommentFactory(review=review, github_comment_id=1)
+        responses.add(responses.GET, PR_COMMENTS_URL, json=[_gh_comment(1, minus=1)])
+        responses.add(
+            responses.GET,
+            REACTIONS_URL.format(1),
+            json=[
+                {
+                    "content": "-1",
+                    "user": {"login": owner, "id": 424242, "type": "User"},
+                }
+            ],
+        )
+        _permission(owner, "read")
+
+        _fetch(review)
+
+        assert _signals(review) == {1: []}
+
+    @responses.activate
+    def test_renamed_owner_still_counts(self, review: Any) -> None:
+        ReviewCommentFactory(review=review, github_comment_id=1)
+        responses.add(responses.GET, PR_COMMENTS_URL, json=[_gh_comment(1, minus=1)])
+        owner_id = review.repository.owner.github_id
+        responses.add(
+            responses.GET,
+            REACTIONS_URL.format(1),
+            json=[
+                {
+                    "content": "-1",
+                    "user": {"login": "new-login", "id": owner_id, "type": "User"},
+                }
+            ],
+        )
+
+        _fetch(review)
+
+        assert _signals(review) == {1: [("reaction", "rejected")]}

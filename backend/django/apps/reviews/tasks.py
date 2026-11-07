@@ -89,7 +89,11 @@ def rate_limit_countdown(reset_at: int, now: float) -> int:
 
 @shared_task(bind=True, max_retries=5, default_retry_delay=60, acks_late=True)
 def fetch_comment_reactions_task(
-    self, repo_id: int, pr_number: int, pr_author: str = ""
+    self,
+    repo_id: int,
+    pr_number: int,
+    pr_author: str = "",
+    pr_author_id: int | None = None,
 ):
     """
     Record trusted 👍/👎 feedback on DevMind's comments when a PR closes.
@@ -108,7 +112,7 @@ def fetch_comment_reactions_task(
     from apps.reviews.services.feedback import fetch_reaction_feedback
 
     try:
-        checked = fetch_reaction_feedback(repo_id, pr_number, pr_author)
+        checked = fetch_reaction_feedback(repo_id, pr_number, pr_author, pr_author_id)
     except PERMANENT_GITHUB_ERRORS as exc:
         logger.warning(
             "feedback.reactions.not_retried repo_id=%d pr=%d error=%s",

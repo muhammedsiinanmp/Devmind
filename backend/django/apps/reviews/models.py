@@ -204,7 +204,12 @@ class CommentFeedback(models.Model):
         on_delete=models.CASCADE,
         related_name="feedback",
     )
-    signal = models.CharField(max_length=10, choices=SIGNAL_CHOICES)
+    # Null means cleared (a tie, an unresolved thread, a removed reply):
+    # the row stays as a marker with its event_at, so a late, older
+    # event can't bring the verdict back.
+    signal = models.CharField(
+        max_length=10, choices=SIGNAL_CHOICES, null=True, blank=True
+    )
     source = models.CharField(max_length=10, choices=SOURCE_CHOICES)
     source_github_id = models.BigIntegerField(
         null=True,
@@ -212,6 +217,15 @@ class CommentFeedback(models.Model):
         help_text=(
             "For reply verdicts, the GitHub id of the reply that gave it, so "
             "deleting or editing that reply can remove it."
+        ),
+    )
+    event_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text=(
+            "When the event that set this row happened. An event older than "
+            "this is ignored, so retried or redelivered events can't undo a "
+            "newer one."
         ),
     )
     created_at = models.DateTimeField(auto_now_add=True)
@@ -238,11 +252,28 @@ class CommentFeedback(models.Model):
         ``rows`` are one comment's feedback rows. The source that comes first
         in SOURCE_PRECEDENCE wins.
         """
-        by_source = {row.source: row for row in rows}
+        by_source = {row.source: row for row in rows if row.signal}
         for source in cls.SOURCE_PRECEDENCE:
             if source in by_source:
                 return by_source[source]
         return None
+
+
+class DeletedFeedbackReply(models.Model):
+    """
+    A reply to a DevMind comment that was deleted on GitHub. A created or
+    edited event for it that arrives later (a retry or redelivery) is
+    ignored, so a deleted reply's verdict can't come back.
+    """
+
+    github_reply_id = models.BigIntegerField(unique=True)
+    deleted_at = models.DateTimeField()
+
+    class Meta:
+        db_table = "reviews_deletedfeedbackreply"
+
+    def __str__(self) -> str:
+        return f"Deleted reply {self.github_reply_id}"
 
 
 class ReviewRun(models.Model):

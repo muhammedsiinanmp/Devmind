@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 from django.conf import settings
 from django.http import HttpRequest
+from django.utils import timezone
 
 from apps.repositories.exceptions import WebhookVerificationError
 from apps.repositories.models import Repository
@@ -116,7 +117,7 @@ class WebhookDispatcher:
 
     def _handle_feedback(
         self,
-        parse: Callable[[Any], dict[str, Any] | None],
+        parse: Callable[..., dict[str, Any] | None],
         payload: Any,
         event_type: str,
     ) -> None:
@@ -127,7 +128,8 @@ class WebhookDispatcher:
         """
         if not isinstance(payload, dict):
             return
-        event = parse(payload)
+        # Receipt time: the fallback event time for ordering events.
+        event = parse(payload, timezone.now())
         if event is not None:
             record_feedback_event_task.delay(event)
         log.info(
@@ -153,8 +155,12 @@ class WebhookDispatcher:
             return
         pr_user = pr_data.get("user")
         pr_author = str(pr_user.get("login") or "") if isinstance(pr_user, dict) else ""
+        pr_author_id = pr_user.get("id") if isinstance(pr_user, dict) else None
         fetch_comment_reactions_task.delay(
-            repo_id=repo.pk, pr_number=pr_number, pr_author=pr_author
+            repo_id=repo.pk,
+            pr_number=pr_number,
+            pr_author=pr_author,
+            pr_author_id=pr_author_id if isinstance(pr_author_id, int) else None,
         )
         log.info(
             "webhook.pr.closed.feedback_queued",
