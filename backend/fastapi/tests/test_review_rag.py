@@ -675,6 +675,8 @@ class TestFeedbackRetrieval:
         assert embedding_api.calls("RETRIEVAL_QUERY") == 1
         session, embeddings, repo, model = search.call_args.args
         assert (repo, model) == (REPO, fake_store.embedding_model)
+        # Security review of #109, rule 2: this PR's own feedback is left out.
+        assert search.call_args.kwargs["exclude_source_ref"] == "PR#1"
         [query_text] = embedding_api.requests[0]["requests"]
         assert embeddings == [_fake_embed(query_text["content"]["parts"][0]["text"])]
 

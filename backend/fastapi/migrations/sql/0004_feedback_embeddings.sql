@@ -33,8 +33,14 @@ CREATE TABLE IF NOT EXISTS feedback_embeddings (
     code_hunk text NOT NULL DEFAULT '',
     embedding vector(768) NOT NULL,
     embedding_model varchar(100) NOT NULL,
+    source_ref varchar(100),
     created_at timestamp with time zone NOT NULL DEFAULT now()
 );
+
+-- source_ref ("PR#<n>") is the PR the comment was on; reviews of that PR
+-- leave its rows out. Added here too for a table created by an earlier
+-- draft of this file.
+ALTER TABLE feedback_embeddings ADD COLUMN IF NOT EXISTS source_ref varchar(100);
 
 CREATE UNIQUE INDEX IF NOT EXISTS ux_feedback_embeddings_comment_model
     ON feedback_embeddings (comment_id, embedding_model);

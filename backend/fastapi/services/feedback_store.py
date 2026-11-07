@@ -149,8 +149,12 @@ async def replace_feedback(
     code_hunk: str,
     embedding: list[float],
     embedding_model: str,
+    source_ref: Optional[str] = None,
 ) -> None:
-    """Store a comment's example for ``embedding_model``, replacing an older one."""
+    """
+    Store a comment's example for ``embedding_model``, replacing an older one.
+    ``source_ref`` ("PR#<n>") is the PR the comment was on.
+    """
     await session.execute(
         delete(FeedbackEmbedding).where(
             FeedbackEmbedding.comment_id == comment_id,
@@ -169,6 +173,7 @@ async def replace_feedback(
             code_hunk=code_hunk[:MAX_STORED_CHARS],
             embedding=embedding,
             embedding_model=embedding_model,
+            source_ref=source_ref,
         )
     )
     await session.commit()
@@ -220,24 +225,29 @@ async def search_feedback(
     embedding_model: str,
     top_k: int = FEEDBACK_TOP_K,
     threshold: float = FEEDBACK_THRESHOLD,
+    exclude_source_ref: Optional[str] = None,
 ) -> FeedbackContext:
     """
     The repository's accepted and rejected examples closest to the review's
-    hunks, formatted for the prompt. Only rows of ``embedding_model`` are read.
+    hunks, formatted for the prompt. Only rows of ``embedding_model`` are
+    read, and rows with ``exclude_source_ref`` (the PR under review) are
+    left out, so a PR's own feedback never steers its later reviews.
     """
     rows: list[tuple[FeedbackEmbedding, float]] = []
     for query_embedding in query_embeddings:
         distance = FeedbackEmbedding.embedding.cosine_distance(query_embedding).label(
             "distance"
         )
-        result = await session.execute(
-            select(FeedbackEmbedding, distance)
-            .where(
-                FeedbackEmbedding.repo_full_name == repo_full_name,
-                FeedbackEmbedding.embedding_model == embedding_model,
+        stmt = select(FeedbackEmbedding, distance).where(
+            FeedbackEmbedding.repo_full_name == repo_full_name,
+            FeedbackEmbedding.embedding_model == embedding_model,
+        )
+        if exclude_source_ref is not None:
+            stmt = stmt.where(
+                FeedbackEmbedding.source_ref.is_distinct_from(exclude_source_ref)
             )
-            .order_by(distance)
-            .limit(FEEDBACK_CANDIDATES)
+        result = await session.execute(
+            stmt.order_by(distance).limit(FEEDBACK_CANDIDATES)
         )
         rows.extend((row, 1.0 - float(dist)) for row, dist in result.all())
     accepted, rejected = select_examples(rows, top_k, threshold)

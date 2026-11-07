@@ -195,7 +195,9 @@ class TestQueries:
                 await _insert(store, session, REPO)
 
 
-async def _store_feedback(session, comment_id, signal, vector, repo=REPO, model="m1"):
+async def _store_feedback(
+    session, comment_id, signal, vector, repo=REPO, model="m1", source_ref="PR#1"
+):
     from services import feedback_store
 
     await feedback_store.replace_feedback(
@@ -210,6 +212,7 @@ async def _store_feedback(session, comment_id, signal, vector, repo=REPO, model=
         code_hunk="+x = 1",
         embedding=vector,
         embedding_model=model,
+        source_ref=source_ref,
     )
 
 
@@ -276,3 +279,36 @@ class TestFeedbackEmbeddings:
 
             assert await delete_feedback(session, 1) == 2
             assert not await search_feedback(session, [VECTOR], REPO, "m1")
+
+    @pytest.mark.asyncio
+    async def test_search_leaves_out_the_current_prs_feedback(self, session_factory):
+        """Security review of #109, rule 2."""
+        from services.feedback_store import search_feedback
+
+        async with session_factory() as session:
+            await _store_feedback(session, 1, "rejected", VECTOR, source_ref="PR#7")
+            await _store_feedback(session, 2, "rejected", VECTOR, source_ref="PR#8")
+            await _store_feedback(session, 3, "rejected", VECTOR, source_ref=None)
+
+            found = await search_feedback(
+                session, [VECTOR], REPO, "m1", exclude_source_ref="PR#7"
+            )
+
+        names = sorted(line.split(" ")[0] for line in found.rejected)
+        assert names == ["f2.py", "f3.py"]
+
+    @pytest.mark.asyncio
+    async def test_0004_adds_source_ref_to_an_earlier_table(self, migrated_schema):
+        """0004 is safe on a table created by its first draft (no source_ref)."""
+        _, conn = migrated_schema
+        await conn.execute("ALTER TABLE feedback_embeddings DROP COLUMN source_ref")
+        sql = (SQL_DIR / "0004_feedback_embeddings.sql").read_text()
+
+        await conn.execute(sql)
+
+        columns = await conn.fetch(
+            "SELECT column_name FROM information_schema.columns"
+            " WHERE table_schema = current_schema()"
+            " AND table_name = 'feedback_embeddings' AND column_name = 'source_ref'"
+        )
+        assert len(columns) == 1

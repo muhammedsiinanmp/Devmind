@@ -58,7 +58,7 @@ def _normalize(text: str) -> str:
 
 
 async def _retrieve_feedback(
-    repo_full_name: str, query_embeddings: list[list[float]]
+    repo_full_name: str, query_embeddings: list[list[float]], pr_number: int = 0
 ) -> FeedbackContext:
     """
     The repository's accepted and rejected feedback examples closest to the
@@ -77,6 +77,7 @@ async def _retrieve_feedback(
                 query_embeddings,
                 repo_full_name,
                 vector_store.embedding_model,
+                exclude_source_ref=_source_ref(pr_number),
             )
     except Exception as exc:
         logger.warning(
@@ -180,7 +181,9 @@ async def _prepare_rag_context(
 
     feedback = FeedbackContext()
     if query_embeddings:
-        feedback = await _retrieve_feedback(request.repo_full_name, query_embeddings)
+        feedback = await _retrieve_feedback(
+            request.repo_full_name, query_embeddings, request.pr_number
+        )
 
     return parsed_chunks, similar_patterns, feedback
 

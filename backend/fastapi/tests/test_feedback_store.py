@@ -151,12 +151,15 @@ class TestUpsertEndpoint:
                     "severity": "error",
                     "body": "SQL injection",
                     "code_hunk": HUNK,
+                    "pr_number": 12,
                 },
                 headers=_headers(),
             )
 
         assert response.status_code == 200
         assert response.json() == {"stored": True, "deleted": 0}
+        # Rule 2: tagged with its PR, so that PR's reviews can leave it out.
+        assert replace.call_args.kwargs["source_ref"] == "PR#12"
         [texts] = embed.call_args.args
         assert texts == [document_text("app.py", HUNK, "SQL injection", _chunk_text)]
         assert embed.call_args.kwargs == {"task_type": "RETRIEVAL_DOCUMENT"}
@@ -210,6 +213,56 @@ class TestUpsertEndpoint:
 
         assert response.status_code == 500
         assert "relation" not in response.text
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "field,size",
+        [
+            ("code_hunk", 20_001),
+            ("body", 10_001),
+            ("file_path", 1_001),
+            ("category", 51),
+            ("severity", 51),
+        ],
+    )
+    async def test_oversized_fields_are_rejected(self, client, field, size):
+        """Security review of #109, rule 6."""
+        replace = AsyncMock()
+        with (
+            patch("core.database.AsyncSessionLocal", _session),
+            patch("services.feedback_store.replace_feedback", replace),
+            patch(
+                "services.vector_store.vector_store.generate_embeddings",
+                AsyncMock(return_value=[[0.1] * 768]),
+            ),
+        ):
+            response = await client.post(
+                "/feedback/upsert",
+                json={
+                    "comment_id": 7,
+                    "repo_full_name": "o/r",
+                    "signal": "accepted",
+                    "body": "x",
+                    field: "y" * size,
+                },
+                headers=_headers(),
+            )
+        assert response.status_code == 422
+        replace.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_negative_pr_number_is_rejected(self, client):
+        response = await client.post(
+            "/feedback/upsert",
+            json={
+                "comment_id": 7,
+                "repo_full_name": "o/r",
+                "signal": None,
+                "pr_number": -1,
+            },
+            headers=_headers(),
+        )
+        assert response.status_code == 422
 
     @pytest.mark.asyncio
     async def test_unknown_signal_is_rejected(self, client):

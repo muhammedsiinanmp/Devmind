@@ -91,6 +91,8 @@ class FeedbackEmbedding(Base):
     code_hunk: Mapped[str] = mapped_column(Text, nullable=False, default="")
     embedding: Mapped[list[float]] = mapped_column(Vector(768), nullable=False)
     embedding_model: Mapped[str] = mapped_column(String(100), nullable=False)
+    # PR the comment was on ("PR#12"); that PR's reviews leave the row out.
+    source_ref: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=datetime.utcnow
     )

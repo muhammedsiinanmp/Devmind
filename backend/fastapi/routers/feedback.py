@@ -25,13 +25,17 @@ class FeedbackUpsertRequest(BaseModel):
 
     comment_id: int = Field(gt=0)
     repo_full_name: str = Field(min_length=1, max_length=200)
+    # The PR the comment was on; its own later reviews leave it out.
+    pr_number: int = Field(default=0, ge=0)
     signal: Optional[Literal["accepted", "rejected"]] = None
-    file_path: str = ""
+    # Limits well above what Django sends (hunks are cut to 4000 characters),
+    # so a bad request can't make FastAPI embed or store huge text.
+    file_path: str = Field(default="", max_length=1000)
     line_number: int = 0
-    category: str = ""
-    severity: str = ""
-    body: str = ""
-    code_hunk: str = ""
+    category: str = Field(default="", max_length=50)
+    severity: str = Field(default="", max_length=50)
+    body: str = Field(default="", max_length=10_000)
+    code_hunk: str = Field(default="", max_length=20_000)
 
 
 class FeedbackUpsertResponse(BaseModel):
@@ -46,7 +50,7 @@ async def upsert_feedback(request: FeedbackUpsertRequest):
     example of the same comment, or delete it when the signal is null.
     """
     from core.database import AsyncSessionLocal
-    from routers.review import _chunk_text
+    from routers.review import _chunk_text, _source_ref
     from services import feedback_store
     from services.vector_store import vector_store
 
@@ -83,6 +87,7 @@ async def upsert_feedback(request: FeedbackUpsertRequest):
                 code_hunk=request.code_hunk,
                 embedding=embedding,
                 embedding_model=vector_store.embedding_model,
+                source_ref=_source_ref(request.pr_number),
             )
     except HTTPException:
         raise
