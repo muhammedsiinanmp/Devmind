@@ -330,6 +330,7 @@ All Django routes need `Authorization: Bearer <access_jwt>` unless marked otherw
 | Endpoint | Method | Auth | Description |
 |---|---|---|---|
 | `/review/analyze` | POST | `X-Internal-Secret` | Run the retrieval steps and review agent. Returns comments, risk score, model, provider, latency, per-analyzer `analyzer_runs`, and `files_reviewed` / `files_skipped` (`[{file_path, reason}]`, reason `generated` or `batch_limit`). |
+| `/feedback/upsert` | POST | `X-Internal-Secret` | Store (or, with `signal: null`, delete) a comment's accepted/rejected feedback example; called by Django ([feedback-learning.md](feedback-learning.md)) |
 | `/embeddings/store` | POST | `X-Internal-Secret` | Store a code embedding |
 | `/embeddings/search` | POST, GET | `X-Internal-Secret` | Similarity search |
 | `/health` | GET | none | DB, pgvector and, per server provider, the configured model and whether the provider lists it (`llm`; listings cached for `LLM_HEALTH_CACHE_SECONDS`). Listed doesn't mean usable; use `make providers-check` for that. 503 if DB or pgvector check fails |
@@ -367,8 +368,8 @@ Test modules:
 | Area | Files |
 |---|---|
 | Accounts | `apps/accounts/tests/test_views.py`, `test_oauth.py`, `test_byok.py`, `test_base_url_ssrf.py`, `test_url_safety.py`, `test_models.py` |
-| Repositories | `apps/repositories/tests/test_webhooks.py`, `test_views.py`, `test_tasks.py`, `test_services.py`, `test_models.py`, `test_managers.py`, `test_admin.py` |
-| Reviews | `apps/reviews/tests/test_orchestrator.py`, `test_views.py`, `test_github_poster.py`, `test_models.py`, `test_scan_removed.py` |
+| Repositories | `apps/repositories/tests/test_webhooks.py`, `test_webhook_feedback.py`, `test_views.py`, `test_tasks.py`, `test_services.py`, `test_models.py`, `test_managers.py`, `test_admin.py` |
+| Reviews | `apps/reviews/tests/test_orchestrator.py`, `test_views.py`, `test_github_poster.py`, `test_feedback.py`, `test_models.py`, `test_scan_removed.py` |
 | Core (migrations) | `apps/core/tests/test_pgvector_migration.py`, `test_drop_organizations_migration.py` |
 | End to end | `tests/test_e2e.py` |
 
@@ -573,7 +574,7 @@ These gaps are confirmed in the current code.
 
 ### Embedding tables are never created
 
-The `vector` extension is enabled by a Django migration, but nothing creates `code_embeddings` / `review_embeddings` (FastAPI never calls `create_all`, and no Django migration covers them). Until they exist, the retrieval steps log errors and reviews run without similar-code context. For a table created by hand, apply `backend/fastapi/migrations/sql/0001_code_embeddings_source_ref.sql`, `0002_code_embeddings_hnsw_index.sql` and `0003_code_embeddings_model_tag.sql` in order; the second adds the HNSW cosine index, and the third adds `embedding_model` and the unique `(repo_full_name, sha256, embedding_model)` index (`models/embeddings.py` declares the same indexes). `tests/test_vector_store_pgvector.py` applies them to a scratch schema and runs the vector store queries against it when `PGVECTOR_TEST_URL` is set; CI doesn't set it.
+The `vector` extension is enabled by a Django migration, but nothing creates `code_embeddings` / `review_embeddings` (FastAPI never calls `create_all`, and no Django migration covers them). Until they exist, the retrieval steps log errors and reviews run without similar-code context. For a table created by hand, apply `backend/fastapi/migrations/sql/0001_code_embeddings_source_ref.sql`, `0002_code_embeddings_hnsw_index.sql` and `0003_code_embeddings_model_tag.sql` in order; the second adds the HNSW cosine index, and the third adds `embedding_model` and the unique `(repo_full_name, sha256, embedding_model)` index (`models/embeddings.py` declares the same indexes). `0004_feedback_embeddings.sql` creates the `feedback_embeddings` table used for feedback examples ([feedback-learning.md](feedback-learning.md)); until it is applied, storing feedback fails and reviews run without examples. `tests/test_vector_store_pgvector.py` applies them to a scratch schema and runs the vector store queries against it when `PGVECTOR_TEST_URL` is set; CI doesn't set it.
 
 ### `review_embeddings` is never written
 
