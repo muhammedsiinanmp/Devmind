@@ -149,7 +149,7 @@ jobs:
   evals:
     name: Evals (replay)
     # Replays the committed cassettes in backend/fastapi/evals/cassettes and
-    # compares the scores with evals/results/after-fixes.json. No secrets and
+    # compares the scores with evals/results/after-a7.json. No secrets and
     # no provider calls. Eval results never fail the job; it fails only if the
     # harness or the comparison can't run.
     if: github.event_name == 'pull_request'
@@ -197,13 +197,13 @@ jobs:
             > "$RUNNER_TEMP/eval-replay.log" 2>&1 || echo "replay exited with $?"
           tail -n 40 "$RUNNER_TEMP/eval-replay.log"
           test -f "$RUNNER_TEMP/evals/current.json"
-      - name: Compare with the committed after-fixes results
+      - name: Compare with the committed reference results (after-a7)
         if: steps.changes.outputs.run == 'true'
         working-directory: backend/fastapi
         run: |
-          uv run python -m scripts.eval_compare evals/results/after-fixes.json \
+          uv run python -m scripts.eval_compare evals/results/after-a7.json \
             "$RUNNER_TEMP/evals/current.json" \
-            --base-name "after-fixes.json" --current-name "this PR" \
+            --base-name "after-a7.json" --current-name "this PR" \
             > "$RUNNER_TEMP/eval-report.md"
           cat "$RUNNER_TEMP/eval-report.md"
           cat "$RUNNER_TEMP/eval-report.md" >> "$GITHUB_STEP_SUMMARY"

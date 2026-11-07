@@ -1,0 +1,1454 @@
+{
+  "mode": "live",
+  "commit": "9dd6824c7a893bd7615594d52b456b6e58841bbd",
+  "dirty_worktree": true,
+  "date_utc": "2026-11-06T19:16:23Z",
+  "date_source": "run",
+  "run_flags": {
+    "pause": 75.0,
+    "provider": "groq",
+    "only": null,
+    "record": true,
+    "allow_partial": true
+  },
+  "harness_sha256": "eaac3e46dc90dc92228161c909a55ddba241c567e098a0461d14e17cec5f4ec4",
+  "case_set_sha256": "00dad82dc88b8d2f4a99441e8c61e8257369fbea980af86a8f2f08b42bdf56b6",
+  "models_used": [
+    "groq/openai/gpt-oss-120b"
+  ],
+  "providers_used": [
+    "groq"
+  ],
+  "case_count": 27,
+  "cases_scored": 23,
+  "scored_case_ids": [
+    "bare-except-swallows",
+    "clean-config-timeout",
+    "clean-docstring",
+    "clean-function-with-tests",
+    "clean-js-const",
+    "clean-log-message",
+    "clean-parameterized-query",
+    "clean-rename-variable",
+    "clean-test-only",
+    "clean-type-hints",
+    "command-injection",
+    "go-ignored-error",
+    "hardcoded-secret",
+    "insecure-deserialization",
+    "jwt-signature-disabled",
+    "missing-auth-check",
+    "missing-await",
+    "missing-test-for-new-branch",
+    "mutable-default-argument",
+    "n-plus-one-query",
+    "off-by-one-range",
+    "path-traversal",
+    "sql-injection-fstring"
+  ],
+  "errors": {
+    "ssrf-user-url": "AllProvidersDownError: All LLM providers unavailable",
+    "unhandled-none": "AllProvidersDownError: All LLM providers unavailable",
+    "weak-password-hash": "AllProvidersDownError: All LLM providers unavailable",
+    "xss-innerhtml": "AllProvidersDownError: All LLM providers unavailable"
+  },
+  "post_processing": [
+    "anchor_comments",
+    "drop_empty_body",
+    "review_comment_validation"
+  ],
+  "anchoring": {
+    "anchored": 58,
+    "snapped": 0,
+    "unanchored": 0
+  },
+  "parse_failures": {
+    "analyzer_runs_failed": 0,
+    "cases_unknown": 0,
+    "note": null
+  },
+  "metrics": {
+    "cases": 27,
+    "cases_scored": 23,
+    "cases_errored": 4,
+    "clean_cases": 9,
+    "clean_cases_with_findings": 8,
+    "clean_cases_errored": 0,
+    "clean_findings_total": 17,
+    "expected_total": 18,
+    "findings_total": 58,
+    "unique_findings_total": 55,
+    "matched": 14,
+    "matched_dedup": 14,
+    "near": 0,
+    "partial": 0,
+    "missed": 4,
+    "extra": 44,
+    "raw_findings_total": 58,
+    "valid_line_findings": 58,
+    "precision": 0.2413793103448276,
+    "precision_dedup": 0.2545454545454545,
+    "precision_tolerant": 0.2413793103448276,
+    "recall": 0.7777777777777778,
+    "recall_tolerant": 0.7777777777777778,
+    "clean_false_positive_rate": 0.8888888888888888,
+    "valid_line_rate": 1.0
+  },
+  "latency_ms": {
+    "source": "measured",
+    "mean": 2358,
+    "p50": 2263,
+    "max": 4740,
+    "note": "Latency depends on the provider chain, quotas and network; compare it only between runs that used the same providers."
+  },
+  "tokens": {
+    "model_calls": 69,
+    "prompt": 48328,
+    "completion": 24687
+  },
+  "cost_usd": null,
+  "cases": [
+    {
+      "id": "bare-except-swallows",
+      "clean": false,
+      "error": null,
+      "expected": 1,
+      "findings": 3,
+      "matched": 1,
+      "near": 0,
+      "partial": 0,
+      "missed": 0,
+      "extra": 2,
+      "valid_lines": 3,
+      "parse_failures": 0,
+      "latency_ms": 4740,
+      "model_calls": 3,
+      "raw_findings": [
+        {
+          "file_path": "notes/store.py",
+          "line_number": 18,
+          "category": "quality",
+          "severity": "error",
+          "body": "Catching all exceptions with a bare except and silently ignoring them hides errors and always returns True, which can lead to data loss and makes debugging difficult."
+        },
+        {
+          "file_path": "notes/store.py",
+          "line_number": 20,
+          "category": "security",
+          "severity": "warning",
+          "body": "Broad except clause swallows all exceptions and silently ignores insertion failures, causing the function to always return True even when the note is not saved, which can lead to security/consistency issues."
+        },
+        {
+          "file_path": "notes/store.py",
+          "line_number": 22,
+          "category": "quality",
+          "severity": "info",
+          "body": "Returning True unconditionally after a failed insert misleads callers about operation success."
+        }
+      ],
+      "posted_findings": [
+        {
+          "file_path": "notes/store.py",
+          "line_number": 18,
+          "category": "quality",
+          "severity": "error",
+          "body": "Catching all exceptions with a bare except and silently ignoring them hides errors and always returns True, which can lead to data loss and makes debugging difficult."
+        },
+        {
+          "file_path": "notes/store.py",
+          "line_number": 20,
+          "category": "security",
+          "severity": "warning",
+          "body": "Broad except clause swallows all exceptions and silently ignores insertion failures, causing the function to always return True even when the note is not saved, which can lead to security/consistency issues."
+        },
+        {
+          "file_path": "notes/store.py",
+          "line_number": 22,
+          "category": "quality",
+          "severity": "info",
+          "body": "Returning True unconditionally after a failed insert misleads callers about operation success."
+        }
+      ]
+    },
+    {
+      "id": "clean-config-timeout",
+      "clean": true,
+      "error": null,
+      "expected": 0,
+      "findings": 2,
+      "matched": 0,
+      "near": 0,
+      "partial": 0,
+      "missed": 0,
+      "extra": 2,
+      "valid_lines": 2,
+      "parse_failures": 0,
+      "latency_ms": 1428,
+      "model_calls": 3,
+      "raw_findings": [
+        {
+          "file_path": "integrations/settings.py",
+          "line_number": 3,
+          "category": "test coverage",
+          "severity": "warning",
+          "body": "The change to REQUEST_TIMEOUT_SECONDS is not covered by existing tests. Without a test, regressions or unintended side effects (e.g., incorrect timeout handling in API calls) may go unnoticed."
+        },
+        {
+          "file_path": "integrations/settings.py",
+          "line_number": 3,
+          "category": "quality",
+          "severity": "info",
+          "body": "The timeout value is hard‑coded, making it difficult to adjust without code changes. Consider making it configurable via environment variable or a settings file."
+        }
+      ],
+      "posted_findings": [
+        {
+          "file_path": "integrations/settings.py",
+          "line_number": 3,
+          "category": "test coverage",
+          "severity": "warning",
+          "body": "The change to REQUEST_TIMEOUT_SECONDS is not covered by existing tests. Without a test, regressions or unintended side effects (e.g., incorrect timeout handling in API calls) may go unnoticed."
+        },
+        {
+          "file_path": "integrations/settings.py",
+          "line_number": 3,
+          "category": "quality",
+          "severity": "info",
+          "body": "The timeout value is hard‑coded, making it difficult to adjust without code changes. Consider making it configurable via environment variable or a settings file."
+        }
+      ]
+    },
+    {
+      "id": "clean-docstring",
+      "clean": true,
+      "error": null,
+      "expected": 0,
+      "findings": 2,
+      "matched": 0,
+      "near": 0,
+      "partial": 0,
+      "missed": 0,
+      "extra": 2,
+      "valid_lines": 2,
+      "parse_failures": 0,
+      "latency_ms": 1723,
+      "model_calls": 3,
+      "raw_findings": [
+        {
+          "file_path": "geo/distance.py",
+          "line_number": 9,
+          "category": "quality",
+          "severity": "warning",
+          "body": "Inconsistent indentation in the function body: the docstring line and the return statement have mismatched spaces, which can lead to style violations or indentation errors."
+        },
+        {
+          "file_path": "geo/distance.py",
+          "line_number": 8,
+          "category": "test coverage",
+          "severity": "warning",
+          "body": "The newly documented manhattan() function lacks dedicated unit tests. Adding tests will ensure correct behavior for typical, edge, and error cases (e.g., same point, negative coordinates, non‑tuple inputs)."
+        }
+      ],
+      "posted_findings": [
+        {
+          "file_path": "geo/distance.py",
+          "line_number": 9,
+          "category": "quality",
+          "severity": "warning",
+          "body": "Inconsistent indentation in the function body: the docstring line and the return statement have mismatched spaces, which can lead to style violations or indentation errors."
+        },
+        {
+          "file_path": "geo/distance.py",
+          "line_number": 8,
+          "category": "test coverage",
+          "severity": "warning",
+          "body": "The newly documented manhattan() function lacks dedicated unit tests. Adding tests will ensure correct behavior for typical, edge, and error cases (e.g., same point, negative coordinates, non‑tuple inputs)."
+        }
+      ]
+    },
+    {
+      "id": "clean-function-with-tests",
+      "clean": true,
+      "error": null,
+      "expected": 0,
+      "findings": 3,
+      "matched": 0,
+      "near": 0,
+      "partial": 0,
+      "missed": 0,
+      "extra": 3,
+      "valid_lines": 3,
+      "parse_failures": 0,
+      "latency_ms": 2969,
+      "model_calls": 3,
+      "raw_findings": [
+        {
+          "file_path": "tests/test_slug.py",
+          "line_number": 9,
+          "category": "test coverage",
+          "severity": "warning",
+          "body": "Missing test case for titles that contain only whitespace or are empty strings, which should also return \"untitled\" according to the implementation."
+        },
+        {
+          "file_path": "text/slug.py",
+          "line_number": 5,
+          "category": "quality",
+          "severity": "info",
+          "body": "The regular expression only matches ASCII letters and digits, so titles containing Unicode characters will be stripped to \"untitled\" even when they have meaningful content."
+        },
+        {
+          "file_path": "text/slug.py",
+          "line_number": 4,
+          "category": "quality",
+          "severity": "info",
+          "body": "The function lacks a docstring, making its purpose and edge‑case handling unclear to readers and tools."
+        }
+      ],
+      "posted_findings": [
+        {
+          "file_path": "tests/test_slug.py",
+          "line_number": 9,
+          "category": "test coverage",
+          "severity": "warning",
+          "body": "Missing test case for titles that contain only whitespace or are empty strings, which should also return \"untitled\" according to the implementation."
+        },
+        {
+          "file_path": "text/slug.py",
+          "line_number": 5,
+          "category": "quality",
+          "severity": "info",
+          "body": "The regular expression only matches ASCII letters and digits, so titles containing Unicode characters will be stripped to \"untitled\" even when they have meaningful content."
+        },
+        {
+          "file_path": "text/slug.py",
+          "line_number": 4,
+          "category": "quality",
+          "severity": "info",
+          "body": "The function lacks a docstring, making its purpose and edge‑case handling unclear to readers and tools."
+        }
+      ]
+    },
+    {
+      "id": "clean-js-const",
+      "clean": true,
+      "error": null,
+      "expected": 0,
+      "findings": 2,
+      "matched": 0,
+      "near": 0,
+      "partial": 0,
+      "missed": 0,
+      "extra": 2,
+      "valid_lines": 2,
+      "parse_failures": 0,
+      "latency_ms": 1702,
+      "model_calls": 3,
+      "raw_findings": [
+        {
+          "file_path": "web/src/format.js",
+          "line_number": 2,
+          "category": "test coverage",
+          "severity": "warning",
+          "body": "The function formatPrice lacks tests for edge cases such as negative values, non‑integer inputs, non‑numeric types, and extremely large numbers. Without these tests, regressions or unexpected behavior may go unnoticed."
+        },
+        {
+          "file_path": "web/src/format.js",
+          "line_number": 1,
+          "category": "quality",
+          "severity": "info",
+          "body": "The function does not validate its input; passing a non‑numeric or negative value for cents could produce unexpected results (e.g., NaN or malformed strings)."
+        }
+      ],
+      "posted_findings": [
+        {
+          "file_path": "web/src/format.js",
+          "line_number": 2,
+          "category": "test coverage",
+          "severity": "warning",
+          "body": "The function formatPrice lacks tests for edge cases such as negative values, non‑integer inputs, non‑numeric types, and extremely large numbers. Without these tests, regressions or unexpected behavior may go unnoticed."
+        },
+        {
+          "file_path": "web/src/format.js",
+          "line_number": 1,
+          "category": "quality",
+          "severity": "info",
+          "body": "The function does not validate its input; passing a non‑numeric or negative value for cents could produce unexpected results (e.g., NaN or malformed strings)."
+        }
+      ]
+    },
+    {
+      "id": "clean-log-message",
+      "clean": true,
+      "error": null,
+      "expected": 0,
+      "findings": 1,
+      "matched": 0,
+      "near": 0,
+      "partial": 0,
+      "missed": 0,
+      "extra": 1,
+      "valid_lines": 1,
+      "parse_failures": 0,
+      "latency_ms": 1713,
+      "model_calls": 3,
+      "raw_findings": [
+        {
+          "file_path": "jobs/cleanup.py",
+          "line_number": 16,
+          "category": "test coverage",
+          "severity": "warning",
+          "body": "The updated logger call now includes a formatted message with the number of removed sessions, but there is no test verifying that the logger receives the correct arguments or that the function returns the expected value. Adding a unit test will ensure the new behavior is covered and prevent regressions."
+        }
+      ],
+      "posted_findings": [
+        {
+          "file_path": "jobs/cleanup.py",
+          "line_number": 16,
+          "category": "test coverage",
+          "severity": "warning",
+          "body": "The updated logger call now includes a formatted message with the number of removed sessions, but there is no test verifying that the logger receives the correct arguments or that the function returns the expected value. Adding a unit test will ensure the new behavior is covered and prevent regressions."
+        }
+      ]
+    },
+    {
+      "id": "clean-parameterized-query",
+      "clean": true,
+      "error": null,
+      "expected": 0,
+      "findings": 1,
+      "matched": 0,
+      "near": 0,
+      "partial": 0,
+      "missed": 0,
+      "extra": 1,
+      "valid_lines": 1,
+      "parse_failures": 0,
+      "latency_ms": 1867,
+      "model_calls": 3,
+      "raw_findings": [
+        {
+          "file_path": "shop/repository.py",
+          "line_number": 22,
+          "category": "security",
+          "severity": "info",
+          "body": "The query now uses parameter binding, which mitigates SQL injection, but there are no tests confirming this behavior. Add tests that pass a malicious order_id (e.g., \"1; DROP TABLE orders;\") and verify that the function does not execute unintended SQL and returns the expected result or raises an error."
+        }
+      ],
+      "posted_findings": [
+        {
+          "file_path": "shop/repository.py",
+          "line_number": 22,
+          "category": "security",
+          "severity": "info",
+          "body": "The query now uses parameter binding, which mitigates SQL injection, but there are no tests confirming this behavior. Add tests that pass a malicious order_id (e.g., \"1; DROP TABLE orders;\") and verify that the function does not execute unintended SQL and returns the expected result or raises an error."
+        }
+      ]
+    },
+    {
+      "id": "clean-rename-variable",
+      "clean": true,
+      "error": null,
+      "expected": 0,
+      "findings": 0,
+      "matched": 0,
+      "near": 0,
+      "partial": 0,
+      "missed": 0,
+      "extra": 0,
+      "valid_lines": 0,
+      "parse_failures": 0,
+      "latency_ms": 1290,
+      "model_calls": 3,
+      "raw_findings": [],
+      "posted_findings": []
+    },
+    {
+      "id": "clean-test-only",
+      "clean": true,
+      "error": null,
+      "expected": 0,
+      "findings": 3,
+      "matched": 0,
+      "near": 0,
+      "partial": 0,
+      "missed": 0,
+      "extra": 3,
+      "valid_lines": 3,
+      "parse_failures": 0,
+      "latency_ms": 2561,
+      "model_calls": 3,
+      "raw_findings": [
+        {
+          "file_path": "tests/test_window.py",
+          "line_number": 10,
+          "category": "coverage",
+          "severity": "warning",
+          "body": "The new test suite does not cover edge cases such as a window width of 0, a width larger than the input list, or an empty input list, which may expose bugs or unexpected behavior in moving_sum."
+        },
+        {
+          "file_path": "tests/test_window.py",
+          "line_number": 10,
+          "category": "quality",
+          "severity": "info",
+          "body": "The added blank lines (L8‑L9) are unnecessary and reduce readability of the test file."
+        },
+        {
+          "file_path": "tests/test_window.py",
+          "line_number": 10,
+          "category": "naming",
+          "severity": "info",
+          "body": "The test function name test_moving_sum_width_equals_length is descriptive, but consider adding a prefix to group related tests, e.g., test_moving_sum_basic and test_moving_sum_edge_cases for consistency."
+        }
+      ],
+      "posted_findings": [
+        {
+          "file_path": "tests/test_window.py",
+          "line_number": 10,
+          "category": "coverage",
+          "severity": "warning",
+          "body": "The new test suite does not cover edge cases such as a window width of 0, a width larger than the input list, or an empty input list, which may expose bugs or unexpected behavior in moving_sum."
+        },
+        {
+          "file_path": "tests/test_window.py",
+          "line_number": 10,
+          "category": "quality",
+          "severity": "info",
+          "body": "The added blank lines (L8‑L9) are unnecessary and reduce readability of the test file."
+        },
+        {
+          "file_path": "tests/test_window.py",
+          "line_number": 10,
+          "category": "naming",
+          "severity": "info",
+          "body": "The test function name test_moving_sum_width_equals_length is descriptive, but consider adding a prefix to group related tests, e.g., test_moving_sum_basic and test_moving_sum_edge_cases for consistency."
+        }
+      ]
+    },
+    {
+      "id": "clean-type-hints",
+      "clean": true,
+      "error": null,
+      "expected": 0,
+      "findings": 3,
+      "matched": 0,
+      "near": 0,
+      "partial": 0,
+      "missed": 0,
+      "extra": 3,
+      "valid_lines": 3,
+      "parse_failures": 0,
+      "latency_ms": 2553,
+      "model_calls": 3,
+      "raw_findings": [
+        {
+          "file_path": "inventory/stock.py",
+          "line_number": 13,
+          "category": "correctness",
+          "severity": "error",
+          "body": "If qty is zero and the sku is not present in the stock dictionary, stock[sku] will raise a KeyError because the key does not exist. This also applies when qty is negative, which would unintentionally increase stock."
+        },
+        {
+          "file_path": "inventory/stock.py",
+          "line_number": 10,
+          "category": "quality",
+          "severity": "warning",
+          "body": "The function now accepts a mutable dict but does not document that it mutates the input. Adding a docstring clarifies side‑effects and improves readability."
+        },
+        {
+          "file_path": "inventory/stock.py",
+          "line_number": 10,
+          "category": "test coverage",
+          "severity": "warning",
+          "body": "The `reserve` function lacks tests for edge cases such as zero or negative `qty`, non‑existent SKU, and large quantity requests. Without these tests, bugs like allowing negative reservations (which would increase stock) could go unnoticed."
+        }
+      ],
+      "posted_findings": [
+        {
+          "file_path": "inventory/stock.py",
+          "line_number": 13,
+          "category": "correctness",
+          "severity": "error",
+          "body": "If qty is zero and the sku is not present in the stock dictionary, stock[sku] will raise a KeyError because the key does not exist. This also applies when qty is negative, which would unintentionally increase stock."
+        },
+        {
+          "file_path": "inventory/stock.py",
+          "line_number": 10,
+          "category": "quality",
+          "severity": "warning",
+          "body": "The function now accepts a mutable dict but does not document that it mutates the input. Adding a docstring clarifies side‑effects and improves readability."
+        },
+        {
+          "file_path": "inventory/stock.py",
+          "line_number": 10,
+          "category": "test coverage",
+          "severity": "warning",
+          "body": "The `reserve` function lacks tests for edge cases such as zero or negative `qty`, non‑existent SKU, and large quantity requests. Without these tests, bugs like allowing negative reservations (which would increase stock) could go unnoticed."
+        }
+      ]
+    },
+    {
+      "id": "command-injection",
+      "clean": false,
+      "error": null,
+      "expected": 1,
+      "findings": 2,
+      "matched": 1,
+      "near": 0,
+      "partial": 0,
+      "missed": 0,
+      "extra": 1,
+      "valid_lines": 2,
+      "parse_failures": 0,
+      "latency_ms": 1795,
+      "model_calls": 3,
+      "raw_findings": [
+        {
+          "file_path": "ci/runner.py",
+          "line_number": 23,
+          "category": "security",
+          "severity": "critical",
+          "body": "Using shell=True with an f-string inserts the branch directly into the command line, allowing command injection if the branch name is untrusted."
+        },
+        {
+          "file_path": "ci/runner.py",
+          "line_number": 22,
+          "category": "test",
+          "severity": "warning",
+          "body": "The checkout function lacks unit tests, especially for handling unsafe branch names that could exploit the command injection vulnerability."
+        }
+      ],
+      "posted_findings": [
+        {
+          "file_path": "ci/runner.py",
+          "line_number": 23,
+          "category": "security",
+          "severity": "critical",
+          "body": "Using shell=True with an f-string inserts the branch directly into the command line, allowing command injection if the branch name is untrusted."
+        },
+        {
+          "file_path": "ci/runner.py",
+          "line_number": 22,
+          "category": "test",
+          "severity": "warning",
+          "body": "The checkout function lacks unit tests, especially for handling unsafe branch names that could exploit the command injection vulnerability."
+        }
+      ]
+    },
+    {
+      "id": "go-ignored-error",
+      "clean": false,
+      "error": null,
+      "expected": 1,
+      "findings": 4,
+      "matched": 1,
+      "near": 0,
+      "partial": 0,
+      "missed": 0,
+      "extra": 3,
+      "valid_lines": 4,
+      "parse_failures": 0,
+      "latency_ms": 3224,
+      "model_calls": 3,
+      "raw_findings": [
+        {
+          "file_path": "export/csv.go",
+          "line_number": 31,
+          "category": "error handling",
+          "severity": "error",
+          "body": "The result of w.WriteAll(rows) is ignored, so any write error is lost."
+        },
+        {
+          "file_path": "export/csv.go",
+          "line_number": 32,
+          "category": "error handling",
+          "severity": "error",
+          "body": "The error returned by f.Close() is ignored, which can hide file‑close failures."
+        },
+        {
+          "file_path": "export/csv.go",
+          "line_number": 32,
+          "category": "correctness",
+          "severity": "error",
+          "body": "The file close operation's error is ignored, which can mask I/O failures during CSV export. Previously the code returned the close error; now it always returns nil, potentially leading to silent data loss."
+        },
+        {
+          "file_path": "export/csv.go",
+          "line_number": 30,
+          "category": "correctness",
+          "severity": "warning",
+          "body": "The CSV writer's error is no longer checked (w.Error()), so write failures are ignored. This reduces reliability and may cause corrupted output."
+        }
+      ],
+      "posted_findings": [
+        {
+          "file_path": "export/csv.go",
+          "line_number": 31,
+          "category": "error handling",
+          "severity": "error",
+          "body": "The result of w.WriteAll(rows) is ignored, so any write error is lost."
+        },
+        {
+          "file_path": "export/csv.go",
+          "line_number": 32,
+          "category": "error handling",
+          "severity": "error",
+          "body": "The error returned by f.Close() is ignored, which can hide file‑close failures."
+        },
+        {
+          "file_path": "export/csv.go",
+          "line_number": 32,
+          "category": "correctness",
+          "severity": "error",
+          "body": "The file close operation's error is ignored, which can mask I/O failures during CSV export. Previously the code returned the close error; now it always returns nil, potentially leading to silent data loss."
+        },
+        {
+          "file_path": "export/csv.go",
+          "line_number": 30,
+          "category": "correctness",
+          "severity": "warning",
+          "body": "The CSV writer's error is no longer checked (w.Error()), so write failures are ignored. This reduces reliability and may cause corrupted output."
+        }
+      ]
+    },
+    {
+      "id": "hardcoded-secret",
+      "clean": false,
+      "error": null,
+      "expected": 1,
+      "findings": 3,
+      "matched": 1,
+      "near": 0,
+      "partial": 0,
+      "missed": 0,
+      "extra": 2,
+      "valid_lines": 3,
+      "parse_failures": 0,
+      "latency_ms": 1914,
+      "model_calls": 3,
+      "raw_findings": [
+        {
+          "file_path": "billing/client.py",
+          "line_number": 3,
+          "category": "security",
+          "severity": "error",
+          "body": "Hardcoded payment secret is stored directly in source code, which can be exposed in version control and lead to credential leakage."
+        },
+        {
+          "file_path": "billing/client.py",
+          "line_number": 5,
+          "category": "quality",
+          "severity": "warning",
+          "body": "The function does not handle HTTP errors; a failed request will raise an exception that may not be caught."
+        },
+        {
+          "file_path": "billing/client.py",
+          "line_number": 5,
+          "category": "test coverage",
+          "severity": "warning",
+          "body": "The change replaces a configurable secret (settings.payments_secret) with a hard‑coded value, but no tests are added to verify that the correct Authorization header is sent. Existing tests may now pass incorrectly or miss this regression."
+        }
+      ],
+      "posted_findings": [
+        {
+          "file_path": "billing/client.py",
+          "line_number": 3,
+          "category": "security",
+          "severity": "error",
+          "body": "Hardcoded payment secret is stored directly in source code, which can be exposed in version control and lead to credential leakage."
+        },
+        {
+          "file_path": "billing/client.py",
+          "line_number": 5,
+          "category": "quality",
+          "severity": "warning",
+          "body": "The function does not handle HTTP errors; a failed request will raise an exception that may not be caught."
+        },
+        {
+          "file_path": "billing/client.py",
+          "line_number": 5,
+          "category": "test coverage",
+          "severity": "warning",
+          "body": "The change replaces a configurable secret (settings.payments_secret) with a hard‑coded value, but no tests are added to verify that the correct Authorization header is sent. Existing tests may now pass incorrectly or miss this regression."
+        }
+      ]
+    },
+    {
+      "id": "insecure-deserialization",
+      "clean": false,
+      "error": null,
+      "expected": 1,
+      "findings": 2,
+      "matched": 1,
+      "near": 0,
+      "partial": 0,
+      "missed": 0,
+      "extra": 1,
+      "valid_lines": 2,
+      "parse_failures": 0,
+      "latency_ms": 2644,
+      "model_calls": 3,
+      "raw_findings": [
+        {
+          "file_path": "sync/handlers.py",
+          "line_number": 10,
+          "category": "security",
+          "severity": "critical",
+          "body": "Deserializing request.body with pickle.loads introduces remote code execution risk, as pickle can execute arbitrary code from untrusted input."
+        },
+        {
+          "file_path": "sync/handlers.py",
+          "line_number": 9,
+          "category": "test coverage",
+          "severity": "warning",
+          "body": "No unit tests exist for import_state; after changing deserialization method, tests should verify handling of valid and malicious payloads and proper error responses."
+        }
+      ],
+      "posted_findings": [
+        {
+          "file_path": "sync/handlers.py",
+          "line_number": 10,
+          "category": "security",
+          "severity": "critical",
+          "body": "Deserializing request.body with pickle.loads introduces remote code execution risk, as pickle can execute arbitrary code from untrusted input."
+        },
+        {
+          "file_path": "sync/handlers.py",
+          "line_number": 9,
+          "category": "test coverage",
+          "severity": "warning",
+          "body": "No unit tests exist for import_state; after changing deserialization method, tests should verify handling of valid and malicious payloads and proper error responses."
+        }
+      ]
+    },
+    {
+      "id": "jwt-signature-disabled",
+      "clean": false,
+      "error": null,
+      "expected": 1,
+      "findings": 1,
+      "matched": 1,
+      "near": 0,
+      "partial": 0,
+      "missed": 0,
+      "extra": 0,
+      "valid_lines": 1,
+      "parse_failures": 0,
+      "latency_ms": 1998,
+      "model_calls": 3,
+      "raw_findings": [
+        {
+          "file_path": "auth/tokens.py",
+          "line_number": 12,
+          "category": "security",
+          "severity": "critical",
+          "body": "Signature verification is disabled by passing options={\"verify_signature\": False} to jwt.decode, allowing attackers to forge tokens and bypass authentication."
+        }
+      ],
+      "posted_findings": [
+        {
+          "file_path": "auth/tokens.py",
+          "line_number": 12,
+          "category": "security",
+          "severity": "critical",
+          "body": "Signature verification is disabled by passing options={\"verify_signature\": False} to jwt.decode, allowing attackers to forge tokens and bypass authentication."
+        }
+      ]
+    },
+    {
+      "id": "missing-auth-check",
+      "clean": false,
+      "error": null,
+      "expected": 1,
+      "findings": 7,
+      "matched": 1,
+      "near": 0,
+      "partial": 0,
+      "missed": 0,
+      "extra": 6,
+      "valid_lines": 7,
+      "parse_failures": 0,
+      "latency_ms": 2477,
+      "model_calls": 3,
+      "raw_findings": [
+        {
+          "file_path": "api/projects.py",
+          "line_number": 46,
+          "category": "security",
+          "severity": "critical",
+          "body": "The delete endpoint does not verify that the requesting user is the owner of the project. This allows any authenticated user to delete any project, leading to unauthorized data loss."
+        },
+        {
+          "file_path": "api/projects.py",
+          "line_number": 48,
+          "category": "security",
+          "severity": "error",
+          "body": "The delete endpoint does not verify that the requesting user is the owner of the project before performing the deletion, allowing any authenticated user to delete any project."
+        },
+        {
+          "file_path": "api/projects.py",
+          "line_number": 48,
+          "category": "quality",
+          "severity": "error",
+          "body": "If the project does not exist, store.get will likely raise an exception or return None, causing a later failure. The endpoint should handle missing resources and return a 404 response."
+        },
+        {
+          "file_path": "api/projects.py",
+          "line_number": 49,
+          "category": "quality",
+          "severity": "warning",
+          "body": "store.delete is called with the full project object; if the delete method expects an ID this will raise an error. Ensure the correct argument type is passed."
+        },
+        {
+          "file_path": "api/projects.py",
+          "line_number": 48,
+          "category": "correctness",
+          "severity": "warning",
+          "body": "If store.get(project_id) returns None or raises an exception for a missing project, the endpoint will error ungracefully. Add handling to return a 404 response when the project does not exist."
+        },
+        {
+          "file_path": "api/projects.py",
+          "line_number": 46,
+          "category": "testing",
+          "severity": "warning",
+          "body": "No tests are provided for the new delete_project endpoint, so its behavior (including permission checks and error handling) is unverified."
+        },
+        {
+          "file_path": "api/projects.py",
+          "line_number": 50,
+          "category": "quality",
+          "severity": "info",
+          "body": "The endpoint returns a JSON body with the deleted ID and defaults to status 200. REST conventions recommend returning 204 No Content for successful deletions."
+        }
+      ],
+      "posted_findings": [
+        {
+          "file_path": "api/projects.py",
+          "line_number": 46,
+          "category": "security",
+          "severity": "critical",
+          "body": "The delete endpoint does not verify that the requesting user is the owner of the project. This allows any authenticated user to delete any project, leading to unauthorized data loss."
+        },
+        {
+          "file_path": "api/projects.py",
+          "line_number": 48,
+          "category": "security",
+          "severity": "error",
+          "body": "The delete endpoint does not verify that the requesting user is the owner of the project before performing the deletion, allowing any authenticated user to delete any project."
+        },
+        {
+          "file_path": "api/projects.py",
+          "line_number": 48,
+          "category": "quality",
+          "severity": "error",
+          "body": "If the project does not exist, store.get will likely raise an exception or return None, causing a later failure. The endpoint should handle missing resources and return a 404 response."
+        },
+        {
+          "file_path": "api/projects.py",
+          "line_number": 49,
+          "category": "quality",
+          "severity": "warning",
+          "body": "store.delete is called with the full project object; if the delete method expects an ID this will raise an error. Ensure the correct argument type is passed."
+        },
+        {
+          "file_path": "api/projects.py",
+          "line_number": 48,
+          "category": "correctness",
+          "severity": "warning",
+          "body": "If store.get(project_id) returns None or raises an exception for a missing project, the endpoint will error ungracefully. Add handling to return a 404 response when the project does not exist."
+        },
+        {
+          "file_path": "api/projects.py",
+          "line_number": 46,
+          "category": "testing",
+          "severity": "warning",
+          "body": "No tests are provided for the new delete_project endpoint, so its behavior (including permission checks and error handling) is unverified."
+        },
+        {
+          "file_path": "api/projects.py",
+          "line_number": 50,
+          "category": "quality",
+          "severity": "info",
+          "body": "The endpoint returns a JSON body with the deleted ID and defaults to status 200. REST conventions recommend returning 204 No Content for successful deletions."
+        }
+      ]
+    },
+    {
+      "id": "missing-await",
+      "clean": false,
+      "error": null,
+      "expected": 1,
+      "findings": 2,
+      "matched": 1,
+      "near": 0,
+      "partial": 0,
+      "missed": 0,
+      "extra": 1,
+      "valid_lines": 2,
+      "parse_failures": 0,
+      "latency_ms": 2309,
+      "model_calls": 3,
+      "raw_findings": [
+        {
+          "file_path": "web/src/settings.ts",
+          "line_number": 22,
+          "category": "correctness",
+          "severity": "error",
+          "body": "The async function onSubmit no longer awaits the api.saveSettings call, causing the toast to be shown before the settings are actually saved and potentially swallowing errors. This can lead to race conditions and unhandled promise rejections."
+        },
+        {
+          "file_path": "web/src/settings.ts",
+          "line_number": 22,
+          "category": "quality",
+          "severity": "warning",
+          "body": "The async function no longer awaits the promise returned by api.saveSettings, which can lead to unhandled promise rejections and the toast being shown before the settings are actually saved."
+        }
+      ],
+      "posted_findings": [
+        {
+          "file_path": "web/src/settings.ts",
+          "line_number": 22,
+          "category": "correctness",
+          "severity": "error",
+          "body": "The async function onSubmit no longer awaits the api.saveSettings call, causing the toast to be shown before the settings are actually saved and potentially swallowing errors. This can lead to race conditions and unhandled promise rejections."
+        },
+        {
+          "file_path": "web/src/settings.ts",
+          "line_number": 22,
+          "category": "quality",
+          "severity": "warning",
+          "body": "The async function no longer awaits the promise returned by api.saveSettings, which can lead to unhandled promise rejections and the toast being shown before the settings are actually saved."
+        }
+      ]
+    },
+    {
+      "id": "missing-test-for-new-branch",
+      "clean": false,
+      "error": null,
+      "expected": 1,
+      "findings": 4,
+      "matched": 1,
+      "near": 0,
+      "partial": 0,
+      "missed": 0,
+      "extra": 3,
+      "valid_lines": 4,
+      "parse_failures": 0,
+      "latency_ms": 2883,
+      "model_calls": 3,
+      "raw_findings": [
+        {
+          "file_path": "cart/pricing.py",
+          "line_number": 11,
+          "category": "correctness",
+          "severity": "warning",
+          "body": "The function does not validate that 'discount' is non-negative, allowing negative discounts which could increase the total price unexpectedly."
+        },
+        {
+          "file_path": "cart/pricing.py",
+          "line_number": 9,
+          "category": "validation",
+          "severity": "warning",
+          "body": "The function validates that quantity is positive but does not validate that 'discount' is non‑negative, allowing negative discounts to increase the total unexpectedly."
+        },
+        {
+          "file_path": "tests/test_pricing.py",
+          "line_number": 3,
+          "category": "test coverage",
+          "severity": "warning",
+          "body": "The new validation in line_total raises ValueError for quantity <= 0, but there is no test asserting this behavior, leaving the branch untested."
+        },
+        {
+          "file_path": "cart/pricing.py",
+          "line_number": 9,
+          "category": "style",
+          "severity": "info",
+          "body": "Indentation uses 5 spaces before the 'if' statement, which is inconsistent with PEP8 (should be 4 spaces)."
+        }
+      ],
+      "posted_findings": [
+        {
+          "file_path": "cart/pricing.py",
+          "line_number": 11,
+          "category": "correctness",
+          "severity": "warning",
+          "body": "The function does not validate that 'discount' is non-negative, allowing negative discounts which could increase the total price unexpectedly."
+        },
+        {
+          "file_path": "cart/pricing.py",
+          "line_number": 9,
+          "category": "validation",
+          "severity": "warning",
+          "body": "The function validates that quantity is positive but does not validate that 'discount' is non‑negative, allowing negative discounts to increase the total unexpectedly."
+        },
+        {
+          "file_path": "tests/test_pricing.py",
+          "line_number": 3,
+          "category": "test coverage",
+          "severity": "warning",
+          "body": "The new validation in line_total raises ValueError for quantity <= 0, but there is no test asserting this behavior, leaving the branch untested."
+        },
+        {
+          "file_path": "cart/pricing.py",
+          "line_number": 9,
+          "category": "style",
+          "severity": "info",
+          "body": "Indentation uses 5 spaces before the 'if' statement, which is inconsistent with PEP8 (should be 4 spaces)."
+        }
+      ]
+    },
+    {
+      "id": "mutable-default-argument",
+      "clean": false,
+      "error": null,
+      "expected": 1,
+      "findings": 1,
+      "matched": 1,
+      "near": 0,
+      "partial": 0,
+      "missed": 0,
+      "extra": 0,
+      "valid_lines": 1,
+      "parse_failures": 0,
+      "latency_ms": 1390,
+      "model_calls": 3,
+      "raw_findings": [
+        {
+          "file_path": "tags/util.py",
+          "line_number": 1,
+          "category": "quality",
+          "severity": "warning",
+          "body": "Using a mutable default argument (tags=[]) can cause state to be shared across function calls, leading to unexpected behavior."
+        }
+      ],
+      "posted_findings": [
+        {
+          "file_path": "tags/util.py",
+          "line_number": 1,
+          "category": "quality",
+          "severity": "warning",
+          "body": "Using a mutable default argument (tags=[]) can cause state to be shared across function calls, leading to unexpected behavior."
+        }
+      ]
+    },
+    {
+      "id": "n-plus-one-query",
+      "clean": false,
+      "error": null,
+      "expected": 1,
+      "findings": 4,
+      "matched": 1,
+      "near": 0,
+      "partial": 0,
+      "missed": 0,
+      "extra": 3,
+      "valid_lines": 4,
+      "parse_failures": 0,
+      "latency_ms": 2302,
+      "model_calls": 3,
+      "raw_findings": [
+        {
+          "file_path": "library/views.py",
+          "line_number": 31,
+          "category": "performance",
+          "severity": "warning",
+          "body": "Replacing prefetch_related with a per‑author count query introduces an N+1 query problem, degrading performance especially with many authors."
+        },
+        {
+          "file_path": "library/views.py",
+          "line_number": 31,
+          "category": "test coverage",
+          "severity": "warning",
+          "body": "The change replaces prefetch_related with a per‑author count query, introducing an N+1 query pattern. No tests verify the number of database queries, so performance regressions could go unnoticed."
+        },
+        {
+          "file_path": "library/views.py",
+          "line_number": 30,
+          "category": "test coverage",
+          "severity": "warning",
+          "body": "There is no test for the case where no Author records exist. The function should return an empty list without error."
+        },
+        {
+          "file_path": "library/views.py",
+          "line_number": 34,
+          "category": "test coverage",
+          "severity": "warning",
+          "body": "Authors without any related Book records are not explicitly tested. The function should correctly report a count of 0 for such authors."
+        }
+      ],
+      "posted_findings": [
+        {
+          "file_path": "library/views.py",
+          "line_number": 31,
+          "category": "performance",
+          "severity": "warning",
+          "body": "Replacing prefetch_related with a per‑author count query introduces an N+1 query problem, degrading performance especially with many authors."
+        },
+        {
+          "file_path": "library/views.py",
+          "line_number": 31,
+          "category": "test coverage",
+          "severity": "warning",
+          "body": "The change replaces prefetch_related with a per‑author count query, introducing an N+1 query pattern. No tests verify the number of database queries, so performance regressions could go unnoticed."
+        },
+        {
+          "file_path": "library/views.py",
+          "line_number": 30,
+          "category": "test coverage",
+          "severity": "warning",
+          "body": "There is no test for the case where no Author records exist. The function should return an empty list without error."
+        },
+        {
+          "file_path": "library/views.py",
+          "line_number": 34,
+          "category": "test coverage",
+          "severity": "warning",
+          "body": "Authors without any related Book records are not explicitly tested. The function should correctly report a count of 0 for such authors."
+        }
+      ]
+    },
+    {
+      "id": "off-by-one-range",
+      "clean": false,
+      "error": null,
+      "expected": 1,
+      "findings": 1,
+      "matched": 1,
+      "near": 0,
+      "partial": 0,
+      "missed": 0,
+      "extra": 0,
+      "valid_lines": 1,
+      "parse_failures": 0,
+      "latency_ms": 2081,
+      "model_calls": 3,
+      "raw_findings": [
+        {
+          "file_path": "stats/window.py",
+          "line_number": 7,
+          "category": "correctness",
+          "severity": "error",
+          "body": "The loop range was changed from len(values) - width + 1 to len(values) - width + 2, which introduces an off‑by‑one error. This can cause the slice values[i : i + width] to exceed the list bounds, leading to IndexError or incorrect sums."
+        }
+      ],
+      "posted_findings": [
+        {
+          "file_path": "stats/window.py",
+          "line_number": 7,
+          "category": "correctness",
+          "severity": "error",
+          "body": "The loop range was changed from len(values) - width + 1 to len(values) - width + 2, which introduces an off‑by‑one error. This can cause the slice values[i : i + width] to exceed the list bounds, leading to IndexError or incorrect sums."
+        }
+      ]
+    },
+    {
+      "id": "path-traversal",
+      "clean": false,
+      "error": null,
+      "expected": 1,
+      "findings": 5,
+      "matched": 1,
+      "near": 0,
+      "partial": 0,
+      "missed": 0,
+      "extra": 4,
+      "valid_lines": 5,
+      "parse_failures": 0,
+      "latency_ms": 4409,
+      "model_calls": 3,
+      "raw_findings": [
+        {
+          "file_path": "files/download.py",
+          "line_number": 7,
+          "category": "security",
+          "severity": "error",
+          "body": "The function concatenates a user‑supplied filename with UPLOAD_DIR using os.path.join without validating the filename. An attacker can supply path traversal sequences (e.g., \"../secret.txt\") to read files outside the intended upload directory."
+        },
+        {
+          "file_path": "files/download.py",
+          "line_number": 8,
+          "category": "quality",
+          "severity": "warning",
+          "body": "File I/O errors (e.g., FileNotFoundError, PermissionError) are not caught, which may cause unhandled exceptions."
+        },
+        {
+          "file_path": "files/download.py",
+          "line_number": 3,
+          "category": "quality",
+          "severity": "info",
+          "body": "UPLOAD_DIR is hard‑coded, making it difficult to change per environment."
+        },
+        {
+          "file_path": "files/download.py",
+          "line_number": 1,
+          "category": "style",
+          "severity": "info",
+          "body": "The module lacks a top‑level docstring and the function lacks a docstring, reducing readability and maintainability."
+        },
+        {
+          "file_path": "files/download.py",
+          "line_number": 6,
+          "category": "test coverage",
+          "severity": "info",
+          "body": "The new read_upload function lacks unit tests for normal operation, error handling, and security checks (e.g., path traversal)."
+        }
+      ],
+      "posted_findings": [
+        {
+          "file_path": "files/download.py",
+          "line_number": 7,
+          "category": "security",
+          "severity": "error",
+          "body": "The function concatenates a user‑supplied filename with UPLOAD_DIR using os.path.join without validating the filename. An attacker can supply path traversal sequences (e.g., \"../secret.txt\") to read files outside the intended upload directory."
+        },
+        {
+          "file_path": "files/download.py",
+          "line_number": 8,
+          "category": "quality",
+          "severity": "warning",
+          "body": "File I/O errors (e.g., FileNotFoundError, PermissionError) are not caught, which may cause unhandled exceptions."
+        },
+        {
+          "file_path": "files/download.py",
+          "line_number": 3,
+          "category": "quality",
+          "severity": "info",
+          "body": "UPLOAD_DIR is hard‑coded, making it difficult to change per environment."
+        },
+        {
+          "file_path": "files/download.py",
+          "line_number": 1,
+          "category": "style",
+          "severity": "info",
+          "body": "The module lacks a top‑level docstring and the function lacks a docstring, reducing readability and maintainability."
+        },
+        {
+          "file_path": "files/download.py",
+          "line_number": 6,
+          "category": "test coverage",
+          "severity": "info",
+          "body": "The new read_upload function lacks unit tests for normal operation, error handling, and security checks (e.g., path traversal)."
+        }
+      ]
+    },
+    {
+      "id": "sql-injection-fstring",
+      "clean": false,
+      "error": null,
+      "expected": 1,
+      "findings": 2,
+      "matched": 1,
+      "near": 0,
+      "partial": 0,
+      "missed": 0,
+      "extra": 1,
+      "valid_lines": 2,
+      "parse_failures": 0,
+      "latency_ms": 2263,
+      "model_calls": 3,
+      "raw_findings": [
+        {
+          "file_path": "shop/repository.py",
+          "line_number": 22,
+          "category": "security",
+          "severity": "critical",
+          "body": "The query is built using an f-string with direct interpolation of order_id, which enables SQL injection if order_id is derived from untrusted input. Use parameterized queries instead."
+        },
+        {
+          "file_path": "shop/repository.py",
+          "line_number": 20,
+          "category": "test",
+          "severity": "warning",
+          "body": "There are no unit tests verifying that find_order correctly handles malicious order_id values or that it uses parameterized queries, leaving a gap in test coverage for this security-critical function."
+        }
+      ],
+      "posted_findings": [
+        {
+          "file_path": "shop/repository.py",
+          "line_number": 22,
+          "category": "security",
+          "severity": "critical",
+          "body": "The query is built using an f-string with direct interpolation of order_id, which enables SQL injection if order_id is derived from untrusted input. Use parameterized queries instead."
+        },
+        {
+          "file_path": "shop/repository.py",
+          "line_number": 20,
+          "category": "test",
+          "severity": "warning",
+          "body": "There are no unit tests verifying that find_order correctly handles malicious order_id values or that it uses parameterized queries, leaving a gap in test coverage for this security-critical function."
+        }
+      ]
+    },
+    {
+      "id": "ssrf-user-url",
+      "clean": false,
+      "error": "AllProvidersDownError: All LLM providers unavailable",
+      "expected": 1,
+      "findings": 0,
+      "matched": 0,
+      "near": 0,
+      "partial": 0,
+      "missed": 1,
+      "extra": 0,
+      "valid_lines": 0,
+      "parse_failures": null,
+      "latency_ms": 0,
+      "model_calls": 0,
+      "raw_findings": [],
+      "posted_findings": []
+    },
+    {
+      "id": "unhandled-none",
+      "clean": false,
+      "error": "AllProvidersDownError: All LLM providers unavailable",
+      "expected": 1,
+      "findings": 0,
+      "matched": 0,
+      "near": 0,
+      "partial": 0,
+      "missed": 1,
+      "extra": 0,
+      "valid_lines": 0,
+      "parse_failures": null,
+      "latency_ms": 0,
+      "model_calls": 0,
+      "raw_findings": [],
+      "posted_findings": []
+    },
+    {
+      "id": "weak-password-hash",
+      "clean": false,
+      "error": "AllProvidersDownError: All LLM providers unavailable",
+      "expected": 1,
+      "findings": 0,
+      "matched": 0,
+      "near": 0,
+      "partial": 0,
+      "missed": 1,
+      "extra": 0,
+      "valid_lines": 0,
+      "parse_failures": null,
+      "latency_ms": 0,
+      "model_calls": 0,
+      "raw_findings": [],
+      "posted_findings": []
+    },
+    {
+      "id": "xss-innerhtml",
+      "clean": false,
+      "error": "AllProvidersDownError: All LLM providers unavailable",
+      "expected": 1,
+      "findings": 0,
+      "matched": 0,
+      "near": 0,
+      "partial": 0,
+      "missed": 1,
+      "extra": 0,
+      "valid_lines": 0,
+      "parse_failures": null,
+      "latency_ms": 0,
+      "model_calls": 0,
+      "raw_findings": [],
+      "posted_findings": []
+    }
+  ]
+}

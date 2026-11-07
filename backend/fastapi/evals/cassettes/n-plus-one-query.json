@@ -2,28 +2,32 @@
   "version": 1,
   "case_id": "n-plus-one-query",
   "case_sha256": "13919f5d1f8fbcec6c7583f111cc0867499672aa832b9b5493fc25b21002cd88",
-  "latency_ms": 2727,
+  "latency_ms": 2477,
   "calls": [
     {
-      "prompt_sha256": "a8a211a053dff745a4fa2206279219cb2224b0f7c0d4d6049c2e97185d949a17",
+      "prompt_sha256": "d0fffcf5c5c949ba4fb728b50e71557c7c647794344bad1c6f29ddb544b24fe2",
       "response": "{\"findings\": []}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 724,
-      "completion_tokens": 126
+      "prompt_tokens": 762,
+      "completion_tokens": 126,
+      "provider": "groq"
     },
     {
-      "prompt_sha256": "056f1fa938ecfe1a905b04d5e6599eb662e11c111c2b90247c666639976da4c8",
-      "response": "{\"findings\": [{\"file_path\": \"library/views.py\", \"line_number\": 30, \"category\": \"test coverage\", \"severity\": \"warning\", \"body\": \"The author_summaries function lacks unit tests verifying that it returns the correct list of (author name, book count) tuples, especially after the query logic change.\", \"suggested_fix\": \"Add a test case in tests/test_views.py that creates several Author and Book instances, calls author_summaries(), and asserts the returned list matches expected counts.\"}, {\"file_path\": \"library/views.py\", \"line_number\": 31, \"category\": \"test coverage\", \"severity\": \"info\", \"body\": \"There is no test ensuring the new implementation does not introduce N+1 query problems; each author now triggers a separate count query.\", \"suggested_fix\": \"Add a test using Django's assertNumQueries context manager to verify the total number of queries stays within acceptable limits (e.g., 2 queries: one for authors, one for aggregated counts).\"}]}",
+      "prompt_sha256": "3bcf6f9cb79890ff63f72b747e0b09354f9ca95b1070d1a28a6d1544de1b3264",
+      "response": "{\"findings\": [{\"file_path\": \"library/views.py\", \"line_number\": 31, \"category\": \"performance\", \"severity\": \"warning\", \"body\": \"Replacing prefetch_related with Author.objects.all() removes the eager loading of related books, causing additional queries per author.\", \"suggested_fix\": \"authors = Author.objects.prefetch_related('books')  # retain prefetch to avoid N+1 queries\"}, {\"file_path\": \"library/views.py\", \"line_number\": 34, \"category\": \"performance\", \"severity\": \"warning\", \"body\": \"Counting books per author with a separate query inside the loop results in an N+1 query pattern, degrading performance.\", \"suggested_fix\": \"from django.db.models import Count\\nauthors = Author.objects.annotate(book_count=Count('books')).values('name', 'book_count')\\nrows = [(a['name'], a['book_count']) for a in authors]\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 714,
-      "completion_tokens": 475
+      "prompt_tokens": 756,
+      "completion_tokens": 627,
+      "provider": "groq"
     },
     {
-      "prompt_sha256": "1545fc00be87a552ce53e3305556b7f6331bc75758e9bb4782ed404dfda82e9d",
-      "response": "{\"findings\": [{\"file_path\": \"library/views.py\", \"line_number\": 31, \"category\": \"performance\", \"severity\": \"warning\", \"body\": \"Replacing prefetch_related with Author.objects.all() removes the eager loading of related books, causing an N+1 query pattern when counting books per author.\", \"suggested_fix\": \"authors = Author.objects.annotate(book_count=Count('books')).values('name', 'book_count')  # requires from django.db.models import Count\"}, {\"file_path\": \"library/views.py\", \"line_number\": 34, \"category\": \"performance\", \"severity\": \"warning\", \"body\": \"Counting books with a separate query per author (Book.objects.filter(author=author).count()) introduces a query for each iteration, degrading performance.\", \"suggested_fix\": \"# After annotating authors, you can directly use the annotated count:\\n# rows = [(author['name'], author['book_count']) for author in authors]\"}]}",
+      "prompt_sha256": "c669b3c8a2e299a360df4824b48b5ade2d02ea5cda785cfc55e3d5fc42b5d49d",
+      "response": "{\"findings\": [{\"file_path\": \"library/views.py\", \"line_number\": 30, \"category\": \"test coverage\", \"severity\": \"warning\", \"body\": \"No tests verify that author_summaries returns the correct book counts after the query change. A regression could go unnoticed.\", \"suggested_fix\": \"Add a unit test that creates authors with known numbers of books, calls author_summaries(), and asserts the returned tuples contain the expected counts.\"}, {\"file_path\": \"library/views.py\", \"line_number\": 30, \"category\": \"test coverage\", \"severity\": \"warning\", \"body\": \"The change replaces prefetch_related with a per‑author count query, introducing a potential N+1 query problem. There are no tests detecting this performance regression.\", \"suggested_fix\": \"Add a test using Django's assertNumQueries context manager to ensure the total number of queries stays constant (e.g., 2 queries: one for authors, one for aggregated counts).\"} , {\"file_path\": \"library/views.py\", \"line_number\": 30, \"category\": \"test coverage\", \"severity\": \"info\", \"body\": \"Edge cases such as an author with zero books or an empty author table are not exercised by existing tests.\", \"suggested_fix\": \"Add tests for an author with no related books and for the scenario where no authors exist, asserting that author_summaries returns an empty list or correct zero counts.\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 718,
-      "completion_tokens": 719
+      "prompt_tokens": 752,
+      "completion_tokens": 655,
+      "provider": "groq"
     }
-  ]
+  ],
+  "recorded_utc": "2026-11-06T19:06:26Z"
 }

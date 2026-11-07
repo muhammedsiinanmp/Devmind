@@ -255,7 +255,7 @@ class TestProviderFilter:
 
         before = list(llm_module.MODEL_CHAIN)
 
-        async def boom(case, cassettes_dir):
+        async def boom(case, cassettes_dir, run_index=None):
             assert [c.provider.value for c in llm_module.MODEL_CHAIN] == ["groq"]
             raise RuntimeError("quota exhausted")
 
@@ -487,3 +487,108 @@ class TestProvenance:
         assert eval_run.git_state()[1] is False
         (tmp_path / "new.txt").write_text("untracked")
         assert eval_run.git_state()[1] is True
+
+
+class TestRepeat:
+    """--repeat N: N recorded runs per case, a variance report, replay of all."""
+
+    async def _record_two_runs(self, cassettes, fixture_cases):
+        # Run 1 answers with the fixture responses, run 2 finds nothing.
+        for case in fixture_cases:
+            with patch.object(llm_client, "generate", _fake_generate(case.id)):
+                await eval_run.live_case(case, cassettes, 1)
+            with patch.object(
+                llm_client, "generate", _constant_generate('{"findings": []}')
+            ):
+                await eval_run.live_case(case, cassettes, 2)
+
+    async def _two_run_report(self, tmp_path, fixture_cases):
+        await self._record_two_runs(tmp_path, fixture_cases)
+        runs = await eval_run.run_repeated("replay", fixture_cases, tmp_path, [1, 2])
+        return eval_run.build_repeat_report(
+            [eval_run.build_report(o, "replay", "x", False, None) for o in runs]
+        )
+
+    async def test_numbered_cassettes_are_found_and_replayed(
+        self, tmp_path, fixture_cases
+    ):
+        await self._record_two_runs(tmp_path, fixture_cases)
+        names = sorted(p.name for p in tmp_path.glob("*.json"))
+        assert names == sorted(
+            f"{c.id}.{i}.json" for c in fixture_cases for i in (1, 2)
+        )
+        assert eval_run.recorded_runs(tmp_path) == [1, 2]
+        runs = await eval_run.run_repeated("replay", fixture_cases, tmp_path, [1, 2])
+        assert [sum(len(o.findings) for o in r) for r in runs] == [3, 0]
+
+    def test_single_run_cassettes_have_no_run_numbers(self, tmp_path):
+        (tmp_path / "sql-injection-fstring.json").write_text("{}")
+        assert eval_run.recorded_runs(tmp_path) == []
+
+    async def test_variance_report_has_mean_min_max_and_stability(
+        self, tmp_path, fixture_cases
+    ):
+        report = await self._two_run_report(tmp_path, fixture_cases)
+        assert report["repeat"] == 2 and len(report["runs"]) == 2
+        # Top-level fields stay run 1's, so single-run tools can read the file.
+        assert report["metrics"] == report["runs"][0]["metrics"]
+        findings = report["variance"]["findings_total"]
+        assert findings == {"values": [3, 0], "mean": 1.5, "min": 0, "max": 3}
+        recall = report["variance"]["recall"]
+        assert (recall["min"], recall["max"]) == (0.0, 0.5)
+        assert recall["mean"] == pytest.approx(0.25)
+
+        by_id = {c["id"]: c for c in report["case_stability"]}
+        clean = next(c for c in fixture_cases if not c.expected)
+        # The clean case got no finding in either run: both runs agree.
+        assert by_id[clean.id]["agree_findings"] == 2
+        assert by_id[clean.id]["agree_scores"] == 2
+        noisy = next(c.id for c in fixture_cases if c.expected)
+        assert by_id[noisy]["agree_findings"] == 1
+        assert by_id[noisy]["findings"][1] == 0
+
+        md = eval_run.render_markdown(report)
+        assert "# Review eval results (replay, 2 runs)" in md
+        assert "| Findings posted | 1.5 | 0–3 | 3, 0 |" in md
+        assert "| Recall, exact line | 0.250 | 0.000–0.500 | 0.500, 0.000 |" in md
+        assert f"| {clean.id} | 2/2 | 2/2 | 2/2 | 0, 0 | 0, 0 |" in md
+
+    def test_one_run_report_is_unchanged(self):
+        report = eval_run.build_report([], "replay", "x", False, None)
+        assert eval_run.build_repeat_report([report]) is report
+
+    def test_errored_runs_are_left_out_of_agreement(self):
+        case = {"id": "c", "error": None, "posted_findings": []}
+        case.update(dict.fromkeys(eval_run.SCORE_KEYS, 0))
+        errored = {**case, "error": "AllProvidersDownError: quota"}
+        (row,) = eval_run.case_stability(
+            [{"cases": [case]}, {"cases": [errored]}, {"cases": [dict(case)]}]
+        )
+        assert (row["runs"], row["runs_scored"], row["agree_scores"]) == (3, 2, 2)
+        assert row["findings"] == [0, None, 0]
+
+    def test_live_repeat_records_numbered_cassettes(self, tmp_path):
+        results = tmp_path / "results"
+        only = ",".join(sorted(FIXTURE_IDS))
+        common = ["--cassettes-dir", str(tmp_path), "--only", only]
+        common += ["--results-dir", str(results), "--results-name"]
+        empty = _constant_generate('{"findings": []}')
+        with patch.object(llm_client, "generate", empty):
+            code = eval_run.main(["--live", "--record", "--repeat", "2", *common, "r"])
+        assert code == 0
+        assert len(list(tmp_path.glob("*.1.json"))) == 3
+        assert len(list(tmp_path.glob("*.2.json"))) == 3
+        report = json.loads((results / "r.json").read_text())
+        assert report["repeat"] == 2 and report["run_flags"]["repeat"] == 2
+        assert "2 runs" in (results / "r.md").read_text()
+
+        # Replay finds both runs without being told how many there are.
+        assert eval_run.main(["--replay", *common, "replayed"]) == 0
+        replayed = json.loads((results / "replayed.json").read_text())
+        assert replayed["repeat"] == 2
+
+    def test_repeat_needs_live_and_a_positive_count(self):
+        with pytest.raises(SystemExit):
+            eval_run.main(["--replay", "--repeat", "2"])
+        with pytest.raises(SystemExit):
+            eval_run.main(["--live", "--repeat", "0"])
