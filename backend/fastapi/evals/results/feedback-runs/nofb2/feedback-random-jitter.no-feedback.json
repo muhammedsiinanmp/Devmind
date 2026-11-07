@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "case_id": "feedback-random-jitter",
+  "case_sha256": "0142c26e93141498e526e516c947221b7ea8138e9ec48d2f000679be3b45875f",
+  "latency_ms": 1850,
+  "calls": [
+    {
+      "prompt_sha256": "fcc1801e31dafefcbcde3977685f41b3ce2e94aeadb319f0339c8fd2672116d8",
+      "response": "{\"findings\": []}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 722,
+      "completion_tokens": 74,
+      "provider": "groq"
+    },
+    {
+      "prompt_sha256": "d3f830595e4fbc1424cf147c16ae51b701ce8b09f6634ae3ea0953a5ac10a2ed",
+      "response": "{\"findings\": []}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 716,
+      "completion_tokens": 262,
+      "provider": "groq"
+    },
+    {
+      "prompt_sha256": "de0a19b5a4b02583c7923943d891fc4ed0b5fe35b859213a322c277d75ade39e",
+      "response": "{\"findings\": [{\"file_path\": \"clients/retry.py\", \"line_number\": 3, \"category\": \"test\", \"severity\": \"warning\", \"body\": \"The added use of random.uniform makes backoff_delay nondeterministic, which can cause flaky tests. Existing tests (if any) likely only verify the deterministic part. Add tests that mock or control random.uniform, or refactor the function to accept an optional random generator for deterministic testing.\", \"suggested_fix\": \"def backoff_delay(attempt, base=0.5, rng=None):\\n    if rng is None:\\n        rng = random\\n    return base * 2 ** attempt + rng.uniform(0, base)\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 712,
+      "completion_tokens": 325,
+      "provider": "groq"
+    }
+  ],
+  "recorded_utc": "2026-11-07T09:19:50Z"
+}
