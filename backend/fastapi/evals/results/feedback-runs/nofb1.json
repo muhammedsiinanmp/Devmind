@@ -1,0 +1,269 @@
+{
+  "mode": "live",
+  "commit": "3d590c699527d5ad10145e0468750677a0784720",
+  "dirty_worktree": false,
+  "date_utc": "2026-11-07T09:11:28Z",
+  "date_source": "run",
+  "run_flags": {
+    "pause": 60.0,
+    "provider": "groq",
+    "only": [
+      "feedback-control-md5-password",
+      "feedback-md5-cache-key",
+      "feedback-random-jitter"
+    ],
+    "record": true,
+    "allow_partial": true,
+    "feedback": false,
+    "temperatures": {
+      "review": 0.1,
+      "google": "omit",
+      "groq": null
+    }
+  },
+  "harness_sha256": "8d1f184b568fce2decc12a20bee0647bca457e64f4b64504fa7a6c85e770f09d",
+  "case_set_sha256": "4697f58e92e5ab91c2e3fd0847089a765e8a286ffaac6062868e3a90c4e77c97",
+  "models_used": [
+    "groq/openai/gpt-oss-120b"
+  ],
+  "providers_used": [
+    "groq"
+  ],
+  "case_count": 3,
+  "cases_scored": 3,
+  "scored_case_ids": [
+    "feedback-control-md5-password",
+    "feedback-md5-cache-key",
+    "feedback-random-jitter"
+  ],
+  "errors": {},
+  "post_processing": [
+    "anchor_comments",
+    "drop_empty_body",
+    "review_comment_validation"
+  ],
+  "anchoring": {
+    "anchored": 8,
+    "snapped": 0,
+    "unanchored": 0
+  },
+  "parse_failures": {
+    "analyzer_runs_failed": 0,
+    "cases_unknown": 0,
+    "note": null
+  },
+  "metrics": {
+    "cases": 3,
+    "cases_scored": 3,
+    "cases_errored": 0,
+    "clean_cases": 2,
+    "clean_cases_with_findings": 2,
+    "clean_cases_errored": 0,
+    "clean_findings_total": 7,
+    "expected_total": 1,
+    "findings_total": 8,
+    "unique_findings_total": 8,
+    "matched": 1,
+    "matched_dedup": 1,
+    "near": 0,
+    "partial": 0,
+    "missed": 0,
+    "extra": 7,
+    "raw_findings_total": 8,
+    "valid_line_findings": 8,
+    "precision": 0.125,
+    "precision_dedup": 0.125,
+    "precision_tolerant": 0.125,
+    "recall": 1.0,
+    "recall_tolerant": 1.0,
+    "clean_false_positive_rate": 1.0,
+    "valid_line_rate": 1.0
+  },
+  "latency_ms": {
+    "source": "measured",
+    "mean": 2362,
+    "p50": 2278,
+    "max": 2804,
+    "note": "Latency depends on the provider chain, quotas and network; compare it only between runs that used the same providers."
+  },
+  "tokens": {
+    "model_calls": 9,
+    "prompt": 6474,
+    "completion": 3978
+  },
+  "cost_usd": null,
+  "cases": [
+    {
+      "id": "feedback-control-md5-password",
+      "clean": false,
+      "error": null,
+      "expected": 1,
+      "findings": 1,
+      "matched": 1,
+      "near": 0,
+      "partial": 0,
+      "missed": 0,
+      "extra": 0,
+      "valid_lines": 1,
+      "parse_failures": 0,
+      "latency_ms": 2005,
+      "model_calls": 3,
+      "raw_findings": [
+        {
+          "file_path": "accounts/passwords.py",
+          "line_number": 3,
+          "category": "security",
+          "severity": "critical",
+          "body": "Replaced secure password hashing with raw MD5. MD5 is fast, unsalted, and vulnerable to brute‑force and rainbow‑table attacks, making stored passwords easily crackable."
+        }
+      ],
+      "posted_findings": [
+        {
+          "file_path": "accounts/passwords.py",
+          "line_number": 3,
+          "category": "security",
+          "severity": "critical",
+          "body": "Replaced secure password hashing with raw MD5. MD5 is fast, unsalted, and vulnerable to brute‑force and rainbow‑table attacks, making stored passwords easily crackable."
+        }
+      ]
+    },
+    {
+      "id": "feedback-md5-cache-key",
+      "clean": true,
+      "error": null,
+      "expected": 0,
+      "findings": 4,
+      "matched": 0,
+      "near": 0,
+      "partial": 0,
+      "missed": 0,
+      "extra": 4,
+      "valid_lines": 4,
+      "parse_failures": 0,
+      "latency_ms": 2804,
+      "model_calls": 3,
+      "raw_findings": [
+        {
+          "file_path": "web/cache.py",
+          "line_number": 2,
+          "category": "quality",
+          "severity": "warning",
+          "body": "The function signature was changed from cache_key(url) to cache_key(url, params), which will break existing callers expecting the original signature."
+        },
+        {
+          "file_path": "web/cache.py",
+          "line_number": 3,
+          "category": "correctness",
+          "severity": "warning",
+          "body": "The params handling uses sorted(params) which, for a dict, sorts only the keys and joins them without values, leading to incorrect query strings and potential errors with empty or None params."
+        },
+        {
+          "file_path": "web/cache.py",
+          "line_number": 2,
+          "category": "test",
+          "severity": "warning",
+          "body": "The new cache_key signature and implementation are not covered by any tests. Missing test cases for: empty params, params with special characters, non‑string values, ordering independence, and backward‑compatibility with the previous single‑argument API."
+        },
+        {
+          "file_path": "web/cache.py",
+          "line_number": 4,
+          "category": "security",
+          "severity": "info",
+          "body": "MD5 is used for hashing the cache key; while acceptable for non-cryptographic purposes, using a stronger hash like SHA-256 reduces collision risk."
+        }
+      ],
+      "posted_findings": [
+        {
+          "file_path": "web/cache.py",
+          "line_number": 2,
+          "category": "quality",
+          "severity": "warning",
+          "body": "The function signature was changed from cache_key(url) to cache_key(url, params), which will break existing callers expecting the original signature."
+        },
+        {
+          "file_path": "web/cache.py",
+          "line_number": 3,
+          "category": "correctness",
+          "severity": "warning",
+          "body": "The params handling uses sorted(params) which, for a dict, sorts only the keys and joins them without values, leading to incorrect query strings and potential errors with empty or None params."
+        },
+        {
+          "file_path": "web/cache.py",
+          "line_number": 2,
+          "category": "test",
+          "severity": "warning",
+          "body": "The new cache_key signature and implementation are not covered by any tests. Missing test cases for: empty params, params with special characters, non‑string values, ordering independence, and backward‑compatibility with the previous single‑argument API."
+        },
+        {
+          "file_path": "web/cache.py",
+          "line_number": 4,
+          "category": "security",
+          "severity": "info",
+          "body": "MD5 is used for hashing the cache key; while acceptable for non-cryptographic purposes, using a stronger hash like SHA-256 reduces collision risk."
+        }
+      ]
+    },
+    {
+      "id": "feedback-random-jitter",
+      "clean": true,
+      "error": null,
+      "expected": 0,
+      "findings": 3,
+      "matched": 0,
+      "near": 0,
+      "partial": 0,
+      "missed": 0,
+      "extra": 3,
+      "valid_lines": 3,
+      "parse_failures": 0,
+      "latency_ms": 2278,
+      "model_calls": 3,
+      "raw_findings": [
+        {
+          "file_path": "clients/retry.py",
+          "line_number": 3,
+          "category": "quality",
+          "severity": "warning",
+          "body": "The function does not validate the 'attempt' argument; negative or non‑integer values could produce unexpected backoff values or raise errors."
+        },
+        {
+          "file_path": "clients/retry.py",
+          "line_number": 3,
+          "category": "test coverage",
+          "severity": "warning",
+          "body": "The new random.uniform call makes backoff_delay nondeterministic, but existing tests likely assume a deterministic output. No tests are provided to verify the random component or to mock it, risking flaky tests."
+        },
+        {
+          "file_path": "clients/retry.py",
+          "line_number": 1,
+          "category": "quality",
+          "severity": "info",
+          "body": "The module lacks a docstring and type hints, reducing readability and maintainability."
+        }
+      ],
+      "posted_findings": [
+        {
+          "file_path": "clients/retry.py",
+          "line_number": 3,
+          "category": "quality",
+          "severity": "warning",
+          "body": "The function does not validate the 'attempt' argument; negative or non‑integer values could produce unexpected backoff values or raise errors."
+        },
+        {
+          "file_path": "clients/retry.py",
+          "line_number": 3,
+          "category": "test coverage",
+          "severity": "warning",
+          "body": "The new random.uniform call makes backoff_delay nondeterministic, but existing tests likely assume a deterministic output. No tests are provided to verify the random component or to mock it, risking flaky tests."
+        },
+        {
+          "file_path": "clients/retry.py",
+          "line_number": 1,
+          "category": "quality",
+          "severity": "info",
+          "body": "The module lacks a docstring and type hints, reducing readability and maintainability."
+        }
+      ]
+    }
+  ]
+}

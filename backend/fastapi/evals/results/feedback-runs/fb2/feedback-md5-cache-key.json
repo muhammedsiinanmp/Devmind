@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "case_id": "feedback-md5-cache-key",
+  "case_sha256": "bc4bc1e5c60a05d8712efea9e7a9d2ae1f1b64141f5dd04e17f2ccc889e0851d",
+  "latency_ms": 2941,
+  "calls": [
+    {
+      "prompt_sha256": "5f3e0208ed785eea5a170b31d099e8e174c88acb8332c61201974178ce5deaff",
+      "response": "{\"findings\": [{\"file_path\": \"web/cache.py\", \"line_number\": 2, \"category\": \"quality\", \"severity\": \"error\", \"body\": \"The function signature changed from cache_key(url) to cache_key(url, params), breaking backward compatibility and causing TypeError for existing callers.\", \"suggested_fix\": \"def cache_key(url, params=None):\\n    if not params:\\n        return \\\"page:\\\" + url\\n    canonical = url + \\\"?\\\" + \\\"&\\\".join(sorted(params))\\n    return \\\"page:\\\" + hashlib.md5(canonical.encode()).hexdigest()\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 886,
+      "completion_tokens": 551,
+      "provider": "groq"
+    },
+    {
+      "prompt_sha256": "ad90f90f5be5f0a28d5b5a8ea359d472b733a23fcb694979634b6b9cac9c26ee",
+      "response": "{\"findings\": [{\"file_path\": \"web/cache.py\", \"line_number\": 2, \"category\": \"quality\", \"severity\": \"warning\", \"body\": \"The function signature changed from cache_key(url) to cache_key(url, params), breaking backward compatibility and causing runtime errors for existing callers.\", \"suggested_fix\": \"def cache_key(url, params=None):\\n    if not params:\\n        return \\\"page:\\\" + url\\n    canonical = url + \\\"?\\\" + \\\"&\\\".join(sorted(params))\\n    return \\\"page:\\\" + hashlib.md5(canonical.encode()).hexdigest()\"}, {\"file_path\": \"web/cache.py\", \"line_number\": 3, \"category\": \"correctness\", \"severity\": \"warning\", \"body\": \"The code assumes 'params' is an iterable of strings; if a dict is passed, only keys are used, ignoring values, leading to incorrect cache keys.\", \"suggested_fix\": \"if isinstance(params, dict):\\n    items = [f\\\"{k}={v}\\\" for k, v in params.items()]\\nelse:\\n    items = list(params)\\ncanonical = url + \\\"?\\\" + \\\"&\\\".join(sorted(items))\"}, {\"file_path\": \"web/cache.py\", \"line_number\": 4, \"category\": \"quality\", \"severity\": \"info\", \"body\": \"MD5 is used for generating the cache key; while not a security issue here, using a stronger hash like SHA-256 improves consistency across the codebase.\", \"suggested_fix\": \"return \\\"page:\\\" + hashlib.sha256(canonical.encode()).hexdigest()\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 876,
+      "completion_tokens": 828,
+      "provider": "groq"
+    },
+    {
+      "prompt_sha256": "1ff2fda33da43155f094b8bf352b2062ced5eb4057300ddaf59c5c268014424f",
+      "response": "{\"findings\": [{\"file_path\": \"web/cache.py\", \"line_number\": 2, \"category\": \"quality\", \"severity\": \"warning\", \"body\": \"The function signature was changed from cache_key(url) to cache_key(url, params) without providing a default value, which may break existing callers that still use the old one-argument form.\", \"suggested_fix\": \"def cache_key(url, params=None):\\n    if params is None:\\n        canonical = url\\n    else:\\n        # build canonical representation\\n        canonical = url + \\\"?\\\" + \\\"&\\\".join(f\\\"{k}={v}\\\" for k, v in sorted(params.items()))\\n    return \\\"page:\\\" + hashlib.md5(canonical.encode()).hexdigest()\"}, {\"file_path\": \"web/cache.py\", \"line_number\": 3, \"category\": \"correctness\", \"severity\": \"error\", \"body\": \"The code assumes 'params' is an iterable of strings; if a dict is passed (common for query parameters), '&'.join(sorted(params)) will join only the keys, losing values and producing an incorrect cache key.\", \"suggested_fix\": \"canonical = url + \\\"?\\\" + \\\"&\\\".join(f\\\"{k}={v}\\\" for k, v in sorted(params.items()))\"}, {\"file_path\": \"web/cache.py\", \"line_number\": 3, \"category\": \"quality\", \"severity\": \"info\", \"body\": \"When 'params' is empty, the code produces a URL ending with a trailing '?', which may be undesirable for cache key consistency.\", \"suggested_fix\": \"if params:\\n    canonical = url + \\\"?\\\" + \\\"&\\\".join(...)\\nelse:\\n    canonical = url\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 880,
+      "completion_tokens": 888,
+      "provider": "groq"
+    }
+  ],
+  "recorded_utc": "2026-11-07T09:15:38Z"
+}

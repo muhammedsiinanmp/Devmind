@@ -19,6 +19,11 @@ PROTECTED_REQUESTS = [
     ("POST", "/embeddings/store", EMBED_BODY),
     ("POST", "/embeddings/search", {"q": "auth", "repo": "owner/repo"}),
     ("GET", "/embeddings/search?q=auth&repo=owner/repo", None),
+    (
+        "POST",
+        "/feedback/upsert",
+        {"comment_id": 1, "repo_full_name": "owner/repo", "signal": None},
+    ),
 ]
 
 

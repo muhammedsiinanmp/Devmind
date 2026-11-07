@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "case_id": "feedback-md5-cache-key",
+  "case_sha256": "bc4bc1e5c60a05d8712efea9e7a9d2ae1f1b64141f5dd04e17f2ccc889e0851d",
+  "latency_ms": 3257,
+  "calls": [
+    {
+      "prompt_sha256": "5f3e0208ed785eea5a170b31d099e8e174c88acb8332c61201974178ce5deaff",
+      "response": "{\"findings\": [{\"file_path\": \"web/cache.py\", \"line_number\": 3, \"category\": \"security\", \"severity\": \"warning\", \"body\": \"The cache key is built by concatenating raw URL and parameters without proper URL encoding. If attacker-controlled parameters contain characters like '&' or '=', it could lead to ambiguous cache keys or cache poisoning.\", \"suggested_fix\": \"import urllib.parse\\ncanonical = url + '?' + urllib.parse.urlencode(sorted(params.items()))\\nreturn 'page:' + hashlib.sha256(canonical.encode()).hexdigest()\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 886,
+      "completion_tokens": 690,
+      "provider": "groq"
+    },
+    {
+      "prompt_sha256": "ad90f90f5be5f0a28d5b5a8ea359d472b733a23fcb694979634b6b9cac9c26ee",
+      "response": "{\"findings\": [{\"file_path\": \"web/cache.py\", \"line_number\": 3, \"category\": \"correctness\", \"severity\": \"error\", \"body\": \"The canonical string is built by joining only the sorted parameter keys, discarding their values. This can cause cache key collisions (e.g., {'a':1,'b':2} and {'a':2,'b':1} produce the same key) and produces an unnecessary trailing '?' when params is empty.\", \"suggested_fix\": \"def cache_key(url, params):\\n    if params:\\n        query = \\\"&\\\".join(f\\\"{k}={v}\\\" for k, v in sorted(params.items()))\\n        canonical = f\\\"{url}?{query}\\\"\\n    else:\\n        canonical = url\\n    return \\\"page:\\\" + hashlib.md5(canonical.encode()).hexdigest()\"}, {\"file_path\": \"web/cache.py\", \"line_number\": 2, \"category\": \"test coverage\", \"severity\": \"warning\", \"body\": \"The new cache_key function lacks unit tests. Add tests to verify deterministic output, handling of empty params, proper ordering, and correct inclusion of parameter values.\", \"suggested_fix\": null}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 876,
+      "completion_tokens": 759,
+      "provider": "groq"
+    },
+    {
+      "prompt_sha256": "1ff2fda33da43155f094b8bf352b2062ced5eb4057300ddaf59c5c268014424f",
+      "response": "{\"findings\": [{\"file_path\": \"web/cache.py\", \"line_number\": 2, \"category\": \"quality\", \"severity\": \"info\", \"body\": \"Function signature changed; ensure all callers are updated to pass the new 'params' argument.\", \"suggested_fix\": null}, {\"file_path\": \"web/cache.py\", \"line_number\": 3, \"category\": \"correctness\", \"severity\": \"error\", \"body\": \"Building the query string assumes 'params' is an iterable of pre‑formatted strings. If a dict is passed, keys are sorted but values are omitted, leading to incorrect cache keys. Also, an empty 'params' results in a trailing '?'.\", \"suggested_fix\": \"if params:\\n    if isinstance(params, dict):\\n        query = \\\"&\\\".join(f\\\"{k}={v}\\\" for k, v in sorted(params.items()))\\n    else:\\n        query = \\\"&\\\".join(sorted(params))\\n    canonical = f\\\"{url}?{query}\\\"\\nelse:\\n    canonical = url\"}, {\"file_path\": \"web/cache.py\", \"line_number\": 4, \"category\": \"security\", \"severity\": \"warning\", \"body\": \"MD5 is a weak hash function; while not used for security here, using SHA‑256 avoids potential collision concerns.\", \"suggested_fix\": \"return \\\"page:\\\" + hashlib.sha256(canonical.encode()).hexdigest()\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 880,
+      "completion_tokens": 1044,
+      "provider": "groq"
+    }
+  ],
+  "recorded_utc": "2026-11-07T09:09:21Z"
+}

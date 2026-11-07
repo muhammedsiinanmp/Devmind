@@ -411,7 +411,10 @@ if not hmac.compare_digest(expected, signature_header):
 | Event | Action | Behavior |
 |---|---|---|
 | `pull_request` | `opened`, `synchronize`, `reopened` | Repo must be known, active and `review_enabled`; enqueue `repositories.trigger_review` |
+| `pull_request` | `closed` | Repo must be known and active; enqueue `fetch_comment_reactions_task` (trusted users' 👍/👎 on DevMind's comments; the PR author's never count) |
 | `pull_request` | anything else | Ignored |
+| `pull_request_review_thread` | `resolved`, `unresolved` | Queues `record_feedback_event_task`: records or removes a `resolved` verdict on the DevMind comment in the thread if the sender is trusted (write access, not the PR author; [feedback-learning.md](feedback-learning.md)) |
+| `pull_request_review_comment` | `created`, `edited`, `deleted` | Queues `record_feedback_event_task`: a trusted user's reply that starts with a verdict phrase records a `reply` verdict; deleting or editing that reply removes or re-evaluates it |
 | `ping` | - | Logged |
 | any other event | - | Ignored |
 
@@ -422,7 +425,7 @@ flowchart LR
     A[POST /repositories/connect/] --> B[repositories.initial_sync]
     B --> C[Upsert Repository rows from GitHub]
     C --> D[repositories.install_webhook per repo without webhook_id]
-    D --> E[POST /repos/owner/repo/hooks<br/>events: pull_request, push<br/>url: DEVMIND_PUBLIC_URL/api/v1/webhooks/github/]
+    D --> E[POST /repos/owner/repo/hooks<br/>events: pull_request, push,<br/>pull_request_review_comment, pull_request_review_thread<br/>url: DEVMIND_PUBLIC_URL/api/v1/webhooks/github/]
     E --> F[Store webhook_id]
 ```
 
@@ -436,6 +439,7 @@ flowchart LR
 - Comments without a usable line number are folded into the review body. FastAPI sets `line_number` to 0 for any comment it could not anchor to a diff line.
 - If GitHub returns 422 for an inline batch, the poster retries the batch as a body-only review so the findings still appear.
 - Every review is posted with `event: COMMENT`, so DevMind never approves a PR or requests changes.
+- After an inline batch is posted, the poster lists that review's comments and stores each one's GitHub id in `ReviewComment.github_comment_id` (matched by path and body), so reactions, replies and resolved threads can be traced back to it. Feedback is stored as `CommentFeedback` and sent to FastAPI's `POST /feedback/upsert`; see [feedback-learning.md](feedback-learning.md).
 
 ---
 
@@ -546,12 +550,13 @@ Constraints the diagram can't show:
 | Table | Index |
 |---|---|
 | `reviews_review` | `(repository, pr_number)`, `(completed_at)`, `status` |
-| `reviews_reviewcomment` | `(review, severity)`, `(review, file_path, line_number)` |
+| `reviews_reviewcomment` | `(review, severity)`, `(review, file_path, line_number)`, unique `github_comment_id` |
+| `reviews_commentfeedback` | unique `(comment, source)` |
 | `repositories_repository` | `(owner, is_active)`, `(github_id)`, `full_name`, `is_active` |
 
 ### FastAPI tables (SQLAlchemy, `models/embeddings.py`)
 
-FastAPI owns two pgvector tables in the same Postgres database. They are defined only in SQLAlchemy, have no Django model and no migration that creates them, and aren't joined to Django tables by any foreign key.
+FastAPI also owns `feedback_embeddings` (accepted/rejected DevMind comments with their code hunk, one row per comment and embedding model), created by `migrations/sql/0004_feedback_embeddings.sql`; reviews read the closest rows of their repository into "previously accepted/rejected findings" prompt sections ([feedback-learning.md](feedback-learning.md)). Besides it, FastAPI owns two pgvector tables in the same Postgres database. They are defined only in SQLAlchemy, have no Django model and no migration that creates them, and aren't joined to Django tables by any foreign key.
 
 ```mermaid
 erDiagram
