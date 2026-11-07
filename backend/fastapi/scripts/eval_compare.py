@@ -15,6 +15,13 @@ so and shows no metrics, because the missed cases would count as misses.
 Latency is not compared: replay reports the latency stored in the cassettes,
 and recorded latency depends on the provider chain and quotas.
 
+Run-to-run noise: when either file holds several runs (``evals.run --live
+--repeat N``), each metric is shown as its mean and min-max across runs.
+When both sides have at least 2 runs, a changed metric is marked "within
+noise" if either side's mean falls inside the other side's min-max. With a
+single run on either side there is no spread to compare against, so a
+changed report says that differences of a few findings may be noise.
+
 This lives outside ``evals/`` on purpose: ``evals/*.py`` is hashed into the
 results' ``harness_sha256``, and this report doesn't change scoring.
 Exits 0 when a report was printed, 2 when an input can't be read.
@@ -30,6 +37,11 @@ MARKER = "<!-- devmind-eval-report -->"
 RECORD_COMMAND = 'make eval-record EVAL_ARGS="--provider groq --pause 75"'
 MISS_PREFIX = "CassetteMiss:"
 BLOCKING_SEVERITIES = ("critical", "error")
+SINGLE_RUN_NOTE = (
+    "Single run: differences of a few findings may be noise. Two live runs "
+    "of identical code differ from each other (see the README, Review "
+    "quality); record several runs with `--repeat 3` to measure the spread."
+)
 
 
 def _ratio(m: dict, value: str, num: tuple[str, ...], den: str) -> dict:
@@ -131,6 +143,65 @@ def rows(report: dict) -> list[tuple[str, dict]]:
     ]
 
 
+def runs_of(report: dict) -> list[dict]:
+    """Each run's fields: the ``runs`` of a multi-run file, else the file."""
+    return report.get("runs") or [report]
+
+
+def _is_number(value: Any) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def run_rows(report: dict) -> list[tuple[str, list[dict]]]:
+    """(label, [{value, text} per run]) for each compared metric."""
+    per_run = [rows(r) for r in runs_of(report)]
+    return [
+        (label, [r[i][1] for r in per_run]) for i, (label, _) in enumerate(per_run[0])
+    ]
+
+
+def _numbers(cells: list[dict]) -> list[float] | None:
+    values = [c["value"] for c in cells]
+    return values if all(_is_number(v) for v in values) else None
+
+
+def _mean(values: list[float]) -> float:
+    return sum(values) / len(values)
+
+
+def within_noise(base: list[float], current: list[float]) -> bool:
+    """Either side's mean lies inside the other side's min-max."""
+    mb, mc = _mean(base), _mean(current)
+    return min(current) <= mb <= max(current) or min(base) <= mc <= max(base)
+
+
+def _num_text(value: float, ratio: bool) -> str:
+    if ratio:
+        return f"{value:.3f}"
+    return str(int(value)) if float(value).is_integer() else f"{value:.1f}"
+
+
+def _spread_text(cells: list[dict]) -> str:
+    if len(cells) == 1:
+        return cells[0]["text"]
+    values = _numbers(cells)
+    if values is None:
+        return "; ".join(dict.fromkeys(c["text"] for c in cells))
+    ratio = any(isinstance(v, float) for v in values)
+    return (
+        f"{_num_text(_mean(values), ratio)} "
+        f"({_num_text(min(values), ratio)}–{_num_text(max(values), ratio)})"
+    )
+
+
+def _summary(cells: list[dict]) -> Any:
+    """What two sides are compared on: the mean, or the per-run values."""
+    values = _numbers(cells)
+    if values is None:
+        return [c["value"] for c in cells]
+    return _mean(values)
+
+
 def _change(before: Any, after: Any) -> str:
     if before == after:
         return "no change"
@@ -156,25 +227,90 @@ def delta_table(
     return "\n".join(lines) + "\n"
 
 
+def spread_table(
+    base: dict, current: dict, base_label: str = "Before", cur_label: str = "After"
+) -> str:
+    """Mean (min–max) per metric, for files with several runs."""
+    both = len(runs_of(base)) > 1 and len(runs_of(current)) > 1
+    lines = [
+        f"| Metric | {base_label}, mean (min–max) | {cur_label}, mean (min–max) "
+        "| Change in mean | Noise check |",
+        "|---|---|---|---|---|",
+    ]
+    for (label, b), (_, c) in zip(run_rows(base), run_rows(current)):
+        bn, cn = _numbers(b), _numbers(c)
+        change = "no change" if _summary(b) == _summary(c) else "n/a"
+        if bn is not None and cn is not None and change != "no change":
+            delta = _mean(cn) - _mean(bn)
+            ratio = any(isinstance(v, float) for v in bn + cn)
+            change = f"{'+' if delta > 0 else '-'}{_num_text(abs(delta), ratio)}"
+        if change == "no change":
+            noise = ""
+        elif bn is None or cn is None:
+            noise = "n/a"
+        elif not both:
+            noise = "single run"
+        else:
+            noise = "within noise" if within_noise(bn, cn) else "outside noise"
+        lines.append(
+            f"| {label} | {_spread_text(b)} | {_spread_text(c)} | {change} "
+            f"| {noise} |"
+        )
+    return "\n".join(lines) + "\n"
+
+
 def changed_metrics(base: dict, current: dict) -> list[str]:
     return [
         label
-        for (label, b), (_, c) in zip(rows(base), rows(current))
-        if b["value"] != c["value"]
+        for (label, b), (_, c) in zip(run_rows(base), run_rows(current))
+        if _summary(b) != _summary(c)
     ]
 
 
+def noise_metrics(base: dict, current: dict) -> list[str] | None:
+    """Changed metrics within noise, or None unless both sides have 2+ runs."""
+    if len(runs_of(base)) < 2 or len(runs_of(current)) < 2:
+        return None
+    changed = set(changed_metrics(base, current))
+    out = []
+    for (label, b), (_, c) in zip(run_rows(base), run_rows(current)):
+        bn, cn = _numbers(b), _numbers(c)
+        if label in changed and bn and cn and within_noise(bn, cn):
+            out.append(label)
+    return out
+
+
+def _errors(report: dict) -> dict[str, str]:
+    """Errors of every run: ``case`` for one run, ``case (run i)`` for several."""
+    runs = runs_of(report)
+    if len(runs) == 1:
+        return dict(report.get("errors") or {})
+    return {
+        f"{cid} (run {i})": err
+        for i, r in enumerate(runs, 1)
+        for cid, err in (r.get("errors") or {}).items()
+    }
+
+
 def cassette_misses(report: dict) -> list[str]:
-    errors = report.get("errors") or {}
-    return sorted(cid for cid, err in errors.items() if err.startswith(MISS_PREFIX))
+    return sorted(
+        {
+            cid
+            for r in runs_of(report)
+            for cid, err in (r.get("errors") or {}).items()
+            if err.startswith(MISS_PREFIX)
+        }
+    )
 
 
 def _provenance(report: dict, name: str) -> str:
     commit = (report.get("commit") or "unknown")[:12]
     dirty = " (uncommitted files)" if report.get("dirty_worktree") else ""
     models = ", ".join(report.get("models_used") or []) or "none"
+    runs = len(runs_of(report))
+    run_text = f", {runs} runs" if runs > 1 else ", 1 run"
     return (
-        f"- {name}: commit `{commit}`{dirty}, {report.get('mode')}, "
+        f"- {name}: commit `{commit}`{dirty}, {report.get('mode')}{run_text}, "
         f"models {models}, {report.get('case_count')} cases, "
         f"harness `{(report.get('harness_sha256') or '')[:8]}`, "
         f"case set `{(report.get('case_set_sha256') or '')[:8]}`"
@@ -191,9 +327,9 @@ def render(
     out = [MARKER, "## Review eval (replay)", ""]
     misses = cassette_misses(current)
     other = {
-        cid: err
-        for cid, err in (current.get("errors") or {}).items()
-        if cid not in misses
+        key: err
+        for key, err in _errors(current).items()
+        if not err.startswith(MISS_PREFIX)
     }
     if misses:
         out += [
@@ -213,6 +349,7 @@ def render(
         return "\n".join(out) + "\n"
 
     changed = changed_metrics(base, current)
+    multi = len(runs_of(base)) > 1 or len(runs_of(current)) > 1
     if other:
         out.append(
             f"**{len(other)} case(s) errored** in replay; errored cases count "
@@ -226,17 +363,34 @@ def render(
             + "; ".join(changed)
             + "."
         )
+        noise = noise_metrics(base, current)
+        if noise is None:
+            out.append(SINGLE_RUN_NOTE)
+        elif noise:
+            out.append(
+                f"{len(noise)} of them within noise (either side's mean is "
+                "inside the other side's min–max): " + "; ".join(noise) + "."
+            )
+        else:
+            out.append(
+                "None of them is within noise (neither side's mean is inside "
+                "the other side's min–max)."
+            )
     else:
         out.append(f"**No metric changed** against {base_name}.")
     for key, what in (
-        ("harness_sha256", "The scoring code"),
+        ("harness_sha256", "The harness code (`evals/*.py`)"),
         ("case_set_sha256", "The case set (diffs or labels)"),
     ):
         if base.get(key) != current.get(key):
             out.append(f"{what} differs between the two runs.")
     out += [
         "",
-        delta_table(base, current, base_name, cur_name),
+        (
+            spread_table(base, current, base_name, cur_name)
+            if multi
+            else delta_table(base, current, base_name, cur_name)
+        ),
         "Latency is not compared: replay reports the latency stored in the "
         "cassettes.",
         "",

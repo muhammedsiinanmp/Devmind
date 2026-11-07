@@ -90,6 +90,8 @@ def test_identical_runs_report_no_change(after):
     assert "| Recall, exact line | 1.000 (18/18) | 1.000 (18/18) | no change |" in (
         report
     )
+    # Nothing changed, so there is no difference to call noise.
+    assert eval_compare.SINGLE_RUN_NOTE not in report
 
 
 def test_changed_metrics_are_listed_with_deltas(after):
@@ -102,7 +104,8 @@ def test_changed_metrics_are_listed_with_deltas(after):
     assert "**2 metric(s) changed**" in report
     assert "Recall, exact line; Precision, exact location." in report
     assert "| Recall, exact line | 1.000 (18/18) | 0.944 (17/18) | -0.056 |" in report
-    assert "The scoring code differs between the two runs." in report
+    assert "The harness code (`evals/*.py`) differs between the two runs." in report
+    assert eval_compare.SINGLE_RUN_NOTE in report
 
 
 def test_errors_that_are_not_cassette_misses_are_reported(after):
@@ -112,6 +115,65 @@ def test_errors_that_are_not_cassette_misses_are_reported(after):
     assert "**1 case(s) errored**" in report
     assert "- missing-await: ParseFailure" in report
     assert "| Metric |" in report  # still scored and compared
+
+
+def _multi(after: dict, matched_per_run: list[int]) -> dict:
+    """A multi-run results file: after-fixes with ``matched`` set per run."""
+    reports = []
+    for matched in matched_per_run:
+        r = copy.deepcopy(after)
+        m = r["metrics"]
+        m["matched"], m["recall"] = matched, matched / m["expected_total"]
+        m["precision"] = matched / m["findings_total"]
+        reports.append(r)
+    return eval_run.build_repeat_report(reports)
+
+
+def test_within_noise_rule():
+    # Either side's mean inside the other side's min-max.
+    assert eval_compare.within_noise([16, 18, 17], [17, 18, 18])  # 17 in 17-18
+    assert eval_compare.within_noise([17, 17, 17], [16, 17, 19])  # 17 in 16-19
+    assert not eval_compare.within_noise([18, 18, 18], [16, 16, 17])
+
+
+def test_multi_run_change_inside_the_spread_is_within_noise(after):
+    base, current = _multi(after, [16, 18, 17]), _multi(after, [17, 18, 18])
+    report = eval_compare.render(base, current, "ref")
+    assert "**2 metric(s) changed** against ref" in report
+    assert "2 of them within noise" in report
+    assert eval_compare.SINGLE_RUN_NOTE not in report
+    assert (
+        "| Recall, exact line | 0.944 (0.889–1.000) | 0.981 (0.944–1.000) "
+        "| +0.037 | within noise |"
+    ) in report
+    assert "| Findings posted | 64 (64–64) | 64 (64–64) | no change |  |" in report
+    assert "| 64 / 0 / 0 | 64 / 0 / 0 | no change |" in report  # same every run
+    assert "ref: commit `01095e380ba9`, replay, 3 runs" in report
+
+
+def test_multi_run_change_outside_the_spread_is_flagged(after):
+    base, current = _multi(after, [18, 18, 18]), _multi(after, [16, 16, 17])
+    report = eval_compare.render(base, current)
+    assert "**2 metric(s) changed**" in report
+    assert "None of them is within noise" in report
+    assert (
+        "| Recall, exact line | 1.000 (1.000–1.000) | 0.907 (0.889–0.944) "
+        "| -0.093 | outside noise |"
+    ) in report
+
+
+def test_single_run_against_multi_run_gets_no_noise_verdict(after):
+    current = _multi(after, [16, 18, 17])
+    report = eval_compare.render(after, current)
+    assert eval_compare.SINGLE_RUN_NOTE in report
+    assert "| 1.000 (18/18) | 0.944 (0.889–1.000) | -0.056 | single run |" in report
+
+
+def test_cassette_miss_in_a_later_run_is_reported(after):
+    current = _multi(after, [18, 18])
+    current["runs"][1]["errors"] = {"missing-await": "CassetteMiss: no cassette"}
+    assert eval_compare.cassette_misses(current) == ["missing-await"]
+    assert "**Prompt changed" in eval_compare.render(after, current)
 
 
 def _replay(cassettes: Path, ids: set[str]) -> dict:
