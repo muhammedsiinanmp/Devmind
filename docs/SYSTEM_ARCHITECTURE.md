@@ -411,10 +411,10 @@ if not hmac.compare_digest(expected, signature_header):
 | Event | Action | Behavior |
 |---|---|---|
 | `pull_request` | `opened`, `synchronize`, `reopened` | Repo must be known, active and `review_enabled`; enqueue `repositories.trigger_review` |
-| `pull_request` | `closed` | Repo must be known and active; enqueue `fetch_comment_reactions_task` (👍/👎 count on DevMind's comments) |
+| `pull_request` | `closed` | Repo must be known and active; enqueue `fetch_comment_reactions_task` (trusted users' 👍/👎 on DevMind's comments; the PR author's never count) |
 | `pull_request` | anything else | Ignored |
-| `pull_request_review_thread` | `resolved`, `unresolved` | Records or removes a `resolved` verdict on the DevMind comment in the thread ([feedback-learning.md](feedback-learning.md)) |
-| `pull_request_review_comment` | `created`, `edited` | A reply to a DevMind comment that starts with a verdict phrase records a `reply` verdict |
+| `pull_request_review_thread` | `resolved`, `unresolved` | Queues `record_feedback_event_task`: records or removes a `resolved` verdict on the DevMind comment in the thread if the sender is trusted (write access, not the PR author; [feedback-learning.md](feedback-learning.md)) |
+| `pull_request_review_comment` | `created`, `edited`, `deleted` | Queues `record_feedback_event_task`: a trusted user's reply that starts with a verdict phrase records a `reply` verdict; deleting or editing that reply removes or re-evaluates it |
 | `ping` | - | Logged |
 | any other event | - | Ignored |
 

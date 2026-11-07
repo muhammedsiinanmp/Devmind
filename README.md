@@ -10,7 +10,7 @@ DevMind is an AI pull-request reviewer for GitHub. When a pull request is opened
 - Receives GitHub `pull_request` webhooks (`opened`, `synchronize`, `reopened`) and checks each one's HMAC-SHA256 signature.
 - Fetches the PR diff, then reviews it for security, code quality and test coverage in parallel LLM calls.
 - Stores the review (risk score 0-100, comments by severity and category, the diff itself) and posts the comments to GitHub as a `COMMENT` review.
-- Records developers' verdicts on its inline comments (👍/👎 when the PR closes, verdict replies such as "false positive", resolved threads) and shows later reviews of the same repository the most similar accepted and rejected comments. See [docs/feedback-learning.md](docs/feedback-learning.md).
+- Records trusted developers' verdicts on its inline comments (👍/👎 when the PR closes, verdict replies such as "false positive", resolved threads; only from users with write access, never from the PR's author) and shows later reviews of the same repository the most similar accepted and rejected comments. See [docs/feedback-learning.md](docs/feedback-learning.md).
 - Lets each user add their own LLM API keys ("bring your own key"). These are tried before the server's own providers.
 - Includes a React dashboard for browsing reviews with a diff viewer, managing connected repositories and configuring LLM providers.
 
@@ -221,9 +221,9 @@ make test
 
 ## Evals
 
-`backend/fastapi/evals/` measures review quality. It runs `run_review_agent` on 30 hand-written synthetic diffs in `evals/cases/` (11 of them clean, with `expected: []`; the results below were recorded on the first 27), skipping the database/RAG step, so no Postgres is needed. The agent's comments then go through the same steps the router applies before posting: comments without a body are dropped, each is validated as a `ReviewComment`, and they're anchored to diff lines with `anchor_comments()` when the code has it. The results record which of these steps ran.
+`backend/fastapi/evals/` measures review quality. It runs `run_review_agent` on 27 hand-written synthetic diffs in `evals/cases/` (9 of them clean, with `expected: []`), skipping the database/RAG step, so no Postgres is needed. The agent's comments then go through the same steps the router applies before posting: comments without a body are dropped, each is validated as a `ReviewComment`, and they're anchored to diff lines with `anchor_comments()` when the code has it. The results record which of these steps ran.
 
-Cases named `feedback-*` also carry accepted/rejected feedback examples, which the harness gives straight to the agent; `--no-feedback` runs them without, under `<case>.no-feedback.json` cassettes, so the effect of feedback can be compared ([docs/feedback-learning.md](docs/feedback-learning.md#evals)).
+Three more cases in `evals/cases/feedback/` (not in the default set) carry rejected feedback examples, which the harness gives straight to the agent; `--no-feedback` runs them without. Recorded twice each way with `groq/openai/gpt-oss-120b` (`evals/results/feedback-runs/`): the control case's real MD5 password bug was found as critical in all 4 runs, so a rejected "MD5 is weak" example didn't hide it. Suppression of false positives was **not** demonstrated: the model didn't make the targeted mistakes without feedback either, so these cases can't measure it. Details in [docs/feedback-learning.md](docs/feedback-learning.md#evals).
 
 Each posted finding is matched to the labeled ones. A label gives a file and line range (or several acceptable locations), a category and a minimum severity. Model category labels such as "SQL Injection" or "test-coverage" are folded into security, quality or tests.
 
