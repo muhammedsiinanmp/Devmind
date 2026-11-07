@@ -243,7 +243,9 @@ make eval-record  # live: calls the providers configured in .env, re-records the
 make eval-record EVAL_ARGS="--provider groq --pause 75"
 ```
 
-`--provider NAME` (live only) limits the server chain to one provider for the run, so a quota running out partway through can't silently switch models. `--pause SECONDS` waits that long between cases. `--only id1,id2` runs a subset, `--results-name` sets the results file name, and `--allow-partial` writes results even when some cases errored. Results record these flags, the recording date, the providers, the commit (and whether there were uncommitted or untracked files), a hash of the harness code and a hash of the case set.
+`--provider NAME` (live only) limits the server chain to one provider for the run, so a quota running out partway through can't silently switch models. `--pause SECONDS` waits that long between cases. `--only id1,id2` runs a subset, `--results-name` sets the results file name, and `--allow-partial` writes results even when some cases errored. `--repeat N` (live only) runs every case N times, one full pass per run, and records `<case>.<i>.json` cassettes; replay finds and replays every numbered run. A multi-run report shows each metric's mean, min–max and per-run values, and per case how many runs agree on its scores and on its posted findings (file, line, category and severity). Results record these flags, the recording date, the providers, the commit (and whether there were uncommitted or untracked files), a hash of the harness code and a hash of the case set.
+
+**Quota.** Each case makes 3 model calls (81 calls for 27 cases in the committed results), so `--repeat 3` over 27 cases is about 243 Groq calls. That can exhaust Groq's free daily quota partway through: the second dev run below lost its last 4 cases to `AllProvidersDownError` when the quota ran out. Use `--pause` to stay under the per-minute limits (the second dev run used `--pause 75`; a pause doesn't raise the daily quota), and if a run can't finish in a day, record the remaining cases on another day with `--only` and `--allow-partial`.
 
 Cassettes store only the SHA-256 of each prompt, the response text, the model name and provider, token counts and the recording time. They don't store prompts, headers or keys, and recording stops if a configured key appears in a response.
 
@@ -253,6 +255,8 @@ Cassettes store only the SHA-256 of each prompt, the response text, the model na
 - **No metric changed.**
 - **Metrics changed**, with a before/after table of the changes. This happens when the change touches scoring, labels or post-processing but not prompts.
 - **Prompt changed: replay can't measure this PR.** Some prompts have no recording, so nothing is scored. Re-record with `make eval-record EVAL_ARGS="--provider groq --pause 75"`, which needs provider keys in `.env`. Commit the new cassettes and the results file. If the new run becomes the reference, point the CI job at its results file.
+
+Both committed runs have one run each, so a "metrics changed" comment adds a note that differences of a few findings may be noise. When both results files hold 2 or more runs, the table shows each metric's mean and min–max, and a changed metric is marked *within noise* if either side's mean falls inside the other side's min–max. That rule is deliberately simple; with 3 runs per side there is too little data for a significance test.
 
 The job needs no secrets and doesn't fail because of eval results. It fails only if the harness or the comparison can't run. On pull requests from forks it writes the report to the job summary and doesn't comment. To compare two results files locally, run `cd backend/fastapi && uv run python -m scripts.eval_compare BASE.json CURRENT.json`.
 
@@ -286,7 +290,31 @@ How to read it:
 - **Tokens.** Model calls: 81 in both runs. Prompt tokens went from 31353 to 56463 and completion tokens from 52786 to 27612.
 - **Small, synthetic set.** 27 hand-written diffs, and each run was recorded once. The numbers show what this agent and model did on these cases. They are not an estimate of performance on real pull requests.
 
-**Current reference run: A7.** The per-review delimiter tag (#99, merged in #107) changed every prompt, so the after run's recordings no longer replay. The committed cassettes and the CI reference are now a live run of the A7 prompts, scored in [`after-a7.md`](backend/fastapi/evals/results/after-a7.md) and `.json`. On the same 27 cases it scored: recall, exact line 0.889 (16/18); recall, location-tolerant 1.000 (18/18); precision, exact location 0.235 (16/68); false-positive rate on clean diffs 1.000 (9/9); 20 findings on clean diffs, 1 of them at critical or error severity. Read these against the run-to-run variance below before calling them a change from the after run.
+**Run-to-run variance.** The model's output isn't deterministic, so two live runs of the same code differ. A second live run of unchanged `dev` (commit `9dd6824`, before #107) is in [`dev-rerun.json`](backend/fastapi/evals/results/dev-rerun.json). Its prompts are the after run's: the after run's cassettes replay on `9dd6824` with no missing recording and no metric change. It used `groq/openai/gpt-oss-120b` with `--provider groq --pause 75` (`run_flags` in the results file) and scored 23 of 27 cases; the last 4 errored with `AllProvidersDownError` when Groq's quota ran out. On the 23 cases both runs scored, `uv run python -m scripts.eval_noise evals/results/after-fixes.json evals/results/dev-rerun.json` prints:
+
+```text
+Cases scored in both runs: 23 of 27.
+
+Cases whose output differs between the runs:
+- per-case scores (findings, matched, near, partial, missed, extra): 11 of 23
+- posted findings by file, line, category and severity: 18 of 23
+- posted findings including the comment text: 22 of 23
+
+| Over the 23 common cases | after-fixes.json | dev-rerun.json |
+|---|---|---|
+| exact matches | 14 | 14 |
+| location-tolerant matches | 14 | 14 |
+| findings posted | 59 | 58 |
+| findings on clean diffs | 16 | 17 |
+| clean diffs with a finding | 9 | 8 |
+| findings on clean diffs at critical or error severity | 0 | 1 |
+
+Cases with different scores: clean-docstring, clean-function-with-tests, clean-rename-variable, clean-test-only, clean-type-hints, go-ignored-error, missing-auth-check, missing-await, missing-test-for-new-branch, off-by-one-range, path-traversal
+```
+
+So on identical code about half the cases (11 of 23) changed their scores and 18 of 23 posted a different set of findings, while the totals moved by at most one: exact matches 14 in both runs, findings posted 59 and 58, findings on clean diffs 16 and 17, and 0 and 1 of them at critical or error severity. The before/after table above compares one run each; its large changes (exact matches 10 to 18, findings posted 152 to 64) are far bigger than the differences between these two runs, but a difference of a few findings between two single runs isn't evidence of a change. To measure one, record several runs per side with `--repeat 3` and compare them with `scripts/eval_compare.py`, which marks changes within noise. A test (`tests/test_eval_noise.py`) checks that the output above still matches the two results files.
+
+**Current reference run: A7.** The per-review delimiter tag (#99, merged in #107) changed every prompt, so the after run's recordings no longer replay. The committed cassettes and the CI reference are now a live run of the A7 prompts, scored in [`after-a7.md`](backend/fastapi/evals/results/after-a7.md) and `.json`. On the same 27 cases it scored: recall, exact line 0.889 (16/18); recall, location-tolerant 1.000 (18/18); precision, exact location 0.235 (16/68); false-positive rate on clean diffs 1.000 (9/9); 20 findings on clean diffs, 1 of them at critical or error severity. Both are single runs, so read differences of a few findings between them against the run-to-run variance above.
 
 A7 reference provenance:
 - **Code:** recorded on commit `4df00bd` and scored by replay on `ce71960` (the `commit` in the results file). `backend/fastapi/` is identical in `ce71960` and in `dev` after #107 (`git diff --stat ce71960 d5f039b -- backend/fastapi` is empty). Replaying the cassettes on `dev` finds a recording for every prompt and reproduces the results file's metrics and per-case findings exactly, so the prompts `dev` sends are the recorded ones.
