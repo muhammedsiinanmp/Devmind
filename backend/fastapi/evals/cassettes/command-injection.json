@@ -2,28 +2,32 @@
   "version": 1,
   "case_id": "command-injection",
   "case_sha256": "f3c58aa1e18335f96ce2526d2a7f5cfb0d15526c079892f8be0d8ce655272da7",
-  "latency_ms": 1825,
+  "latency_ms": 1164,
   "calls": [
     {
-      "prompt_sha256": "d7ed63478c40cb5a43d4b6c6335bc0205702df0125a4e5402368626efb775f8e",
-      "response": "{\"findings\": [{\"file_path\": \"ci/runner.py\", \"line_number\": 23, \"category\": \"security\", \"severity\": \"critical\", \"body\": \"Using shell=True with an f-string inserts the branch name directly into the command line, allowing command injection if the branch value is controlled by an attacker.\", \"suggested_fix\": \"subprocess.run([\\\"git\\\", \\\"checkout\\\", branch], check=True)\"}]}",
+      "prompt_sha256": "c114fb98a7997623bc6511224ad9563fc49858dfc8d0cadbd4c7be6fd3798a8f",
+      "response": "{\"findings\": [{\"file_path\": \"ci/runner.py\", \"line_number\": 23, \"category\": \"security\", \"severity\": \"critical\", \"body\": \"Using shell=True with an f-string that interpolates the branch variable enables command injection if the branch name is controlled by an attacker.\", \"suggested_fix\": \"subprocess.run([\\\"git\\\", \\\"checkout\\\", branch], check=True)\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 674,
-      "completion_tokens": 239
+      "prompt_tokens": 712,
+      "completion_tokens": 216,
+      "provider": "groq"
     },
     {
-      "prompt_sha256": "bc5e1b1bacf1dcf72467f57716c85cfe5002dda9957fceac0b720c78320411e1",
-      "response": "{\"findings\":[{\"file_path\":\"ci/runner.py\",\"line_number\":23,\"category\":\"security\",\"severity\":\"critical\",\"body\":\"Using shell=True with an f-string allows command injection if 'branch' contains malicious characters (e.g., '; rm -rf /').\",\"suggested_fix\":\"subprocess.run([\\\"git\\\", \\\"checkout\\\", branch], check=True)\"},{\"file_path\":\"ci/runner.py\",\"line_number\":22,\"category\":\"test\",\"severity\":\"warning\",\"body\":\"The checkout function has no unit tests, especially for edge cases like non‑existent branches or malicious input.\",\"suggested_fix\":\"Add tests that mock subprocess.run to verify it is called with the correct arguments and that errors are handled appropriately.\"}]}",
+      "prompt_sha256": "67cb4ef2a8e1e3c1f390a25105092807be27a97363f7074c94652377b28164c5",
+      "response": "{\"findings\": [{\"file_path\": \"ci/runner.py\", \"line_number\": 23, \"category\": \"security\", \"severity\": \"critical\", \"body\": \"The checkout function now builds a command string with f\\\"git checkout {branch}\\\" and executes it with shell=True, which enables command injection if an attacker controls the branch name.\", \"suggested_fix\": \"subprocess.run([\\\"git\\\", \\\"checkout\\\", branch], check=True)\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 664,
-      "completion_tokens": 398
+      "prompt_tokens": 702,
+      "completion_tokens": 292,
+      "provider": "groq"
     },
     {
-      "prompt_sha256": "a056aba7996e9c607380a7112d3734ccbcdd5a5c6e2e48432bcfcb4d2bb576f3",
-      "response": "{\"findings\": [{\"file_path\": \"ci/runner.py\", \"line_number\": 23, \"category\": \"security\", \"severity\": \"critical\", \"body\": \"Using shell=True with an f-string inserts the branch name directly into the command line, allowing command injection if the branch value is untrusted. This is a security risk.\", \"suggested_fix\": \"subprocess.run([\\\"git\\\", \\\"checkout\\\", branch], check=True)\"}]}",
+      "prompt_sha256": "377af34d4e4e69baf19597477c6c26287c13e8661343f12f00c13aaa0ad5a1eb",
+      "response": "{\"findings\": [{\"file_path\": \"ci/runner.py\", \"line_number\": 23, \"category\": \"security\", \"severity\": \"critical\", \"body\": \"Using shell=True with an f-string that interpolates the untrusted 'branch' variable allows command injection. The branch name could contain malicious characters that are executed by the shell.\", \"suggested_fix\": \"subprocess.run([\\\"git\\\", \\\"checkout\\\", branch], check=True)\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 668,
-      "completion_tokens": 299
+      "prompt_tokens": 706,
+      "completion_tokens": 292,
+      "provider": "groq"
     }
-  ]
+  ],
+  "recorded_utc": "2026-11-06T18:03:23Z"
 }

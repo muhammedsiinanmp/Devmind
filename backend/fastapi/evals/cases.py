@@ -9,6 +9,10 @@ import yaml
 from evals.matcher import SEVERITY_RANK, Expected
 
 CASES_DIR = Path(__file__).parent / "cases"
+# Cases with feedback examples (issue #74). Not in the default set, so the
+# default run stays comparable with the committed reference results; run
+# them with --cases-dir evals/cases/feedback.
+FEEDBACK_CASES_DIR = CASES_DIR / "feedback"
 CATEGORIES = {"security", "quality", "tests"}
 
 

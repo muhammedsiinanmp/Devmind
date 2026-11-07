@@ -2,28 +2,32 @@
   "version": 1,
   "case_id": "unhandled-none",
   "case_sha256": "b79fe8b54c8b181961b39dbec0f9d3fa24211900a8d0296e82f10c8d1eadfd2d",
-  "latency_ms": 3588,
+  "latency_ms": 1383,
   "calls": [
     {
-      "prompt_sha256": "478af342e822dc9eac597c754bb0add1a91f08e8dc172b0897af62997b741369",
-      "response": "{\"findings\": [{\"file_path\": \"accounts/profile.py\", \"line_number\": 13, \"category\": \"correctness\", \"severity\": \"warning\", \"body\": \"Using users.get(user_id) may return None when the user_id is not present, causing an AttributeError on the next line when accessing user.full_name.\", \"suggested_fix\": \"user = users.get(user_id)\\nif user is None:\\n    return None  # or raise a custom NotFoundError\\nreturn user.full_name.title()\"}]}",
+      "prompt_sha256": "017e559daa767c1521f19959e16c9e93448c9c9fa263ffc160869631f4173acb",
+      "response": "{\"findings\": [{\"file_path\": \"accounts/profile.py\", \"line_number\": 13, \"category\": \"correctness\", \"severity\": \"warning\", \"body\": \"Using users.get(user_id) may return None when the key is missing, causing an AttributeError on the next line when accessing user.full_name.\", \"suggested_fix\": \"user = users.get(user_id)\\nif user is None:\\n    return \\\"\\\"\\nreturn user.full_name.title()\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 680,
-      "completion_tokens": 328
+      "prompt_tokens": 718,
+      "completion_tokens": 310,
+      "provider": "groq"
     },
     {
-      "prompt_sha256": "16914d9e140a36e22ce16777a7b3c5787efac3ec6b95bd0d88dcf4b795f0a3c8",
-      "response": "{\"findings\": [{\"file_path\": \"accounts/profile.py\", \"line_number\": 13, \"category\": \"correctness\", \"severity\": \"error\", \"body\": \"Using users.get(user_id) may return None when the user_id is not present, leading to an AttributeError on the next line when accessing user.full_name.\", \"suggested_fix\": \"user = users.get(user_id)\\nif user is None:\\n    return \\\"\\\"  # or raise KeyError(f\\\"User {user_id} not found\\\")\\n\"} , {\"file_path\": \"accounts/profile.py\", \"line_number\": 14, \"category\": \"quality\", \"severity\": \"info\", \"body\": \"Applying .title() to a full name can produce incorrect capitalization (e.g., \\\"McDonald\\\" becomes \\\"Mcdonald\\\").\", \"suggested_fix\": \"return user.full_name  # preserve original casing or implement proper name formatting\"}]}",
+      "prompt_sha256": "a7715fd1bfab7940f528dda5b25ac021ee1863a887208fe30236e2136bb99b89",
+      "response": "{\"findings\": [{\"file_path\": \"accounts/profile.py\", \"line_number\": 13, \"category\": \"correctness\", \"severity\": \"error\", \"body\": \"Using users.get(user_id) may return None when the user_id is not present, leading to an AttributeError on the next line when accessing user.full_name.title().\", \"suggested_fix\": \"user = users.get(user_id)\\nif not user:\\n    return \\\"\\\"\\nreturn user.full_name.title()\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 674,
-      "completion_tokens": 422
+      "prompt_tokens": 712,
+      "completion_tokens": 276,
+      "provider": "groq"
     },
     {
-      "prompt_sha256": "a836ed40a3010321fec2ce238818a65d631d19d865f8b40f128e4001ba1e6600",
-      "response": "{\"findings\": [{\"file_path\": \"accounts/profile.py\", \"line_number\": 13, \"category\": \"correctness\", \"severity\": \"error\", \"body\": \"Using users.get(user_id) can return None when the key is missing, leading to an AttributeError on the next line when accessing user.full_name.\", \"suggested_fix\": \"user = users.get(user_id)\\nif user is None:\\n    raise KeyError(f\\\"User ID {user_id} not found\\\")\\nreturn user.full_name.title()\"}]}",
+      "prompt_sha256": "902daba369055cc5b39d76716e503fdafd3b09327b34f1d0cf1b42f5be0c19a2",
+      "response": "{\"findings\": [{\"file_path\": \"accounts/profile.py\", \"line_number\": 13, \"category\": \"quality\", \"severity\": \"warning\", \"body\": \"Using users.get(user_id) can return None when the key is missing, leading to an AttributeError on the next line. No test currently covers the missing‑user scenario.\", \"suggested_fix\": \"user = users.get(user_id)\\nif user is None:\\n    return None  # or raise KeyError/ValueError as appropriate\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 670,
-      "completion_tokens": 362
+      "prompt_tokens": 708,
+      "completion_tokens": 293,
+      "provider": "groq"
     }
-  ]
+  ],
+  "recorded_utc": "2026-11-06T19:12:52Z"
 }

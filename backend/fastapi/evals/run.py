@@ -4,6 +4,13 @@ Run the review agent over the labeled eval cases and score it.
     uv run python -m evals.run --replay              # offline, from cassettes
     uv run python -m evals.run --live --record \\
         --results-dir evals/results                  # real providers
+    uv run python -m evals.run --live --record --repeat 3 ...  # 3 runs per case
+
+With ``--repeat N`` (N > 1) each case is run N times, one full pass over the
+cases per run, and recorded to ``<case>.<i>.json`` (i = 1..N). Replay
+replays every recorded run when the cassettes directory holds numbered
+cassettes. A multi-run report shows each metric's mean and min-max across
+runs and, per case, how many runs agree.
 
 Runs ``run_review_agent`` directly, without the router's database/RAG step,
 so no Postgres is needed. ``llm_client.generate`` is swapped out: in
@@ -223,11 +230,37 @@ async def _run_agent(case: Case, generate) -> dict:
         )
 
 
-async def replay_case(case: Case, cassettes_dir: Path) -> CaseOutcome:
+def cassette_file(case_id: str, run_index: int | None = None) -> str:
+    """``<case>.json`` for a single run, ``<case>.<i>.json`` for run i.
+
+    Callers pass ``case.cassette_stem``, so a feedback case run with
+    --no-feedback uses ``<case>.no-feedback.json`` / ``<case>.no-feedback.<i>.json``.
+    """
+    return f"{case_id}.json" if run_index is None else f"{case_id}.{run_index}.json"
+
+
+def recorded_runs(cassettes_dir: Path) -> list[int]:
+    """Run numbers of the numbered cassettes (``<case>.<i>.json``), sorted.
+
+    Empty when the directory holds single-run cassettes (``<case>.json``).
+    """
+    runs = set()
+    for path in cassettes_dir.glob("*.*.json"):
+        suffix = path.name[: -len(".json")].rsplit(".", 1)[1]
+        if suffix.isdigit():
+            runs.add(int(suffix))
+    return sorted(runs)
+
+
+async def replay_case(
+    case: Case, cassettes_dir: Path, run_index: int | None = None
+) -> CaseOutcome:
     outcome = CaseOutcome(case=case)
     try:
         cassette = load_cassette(
-            cassettes_dir / f"{case.cassette_stem}.json", case.id, case.digest
+            cassettes_dir / cassette_file(case.cassette_stem, run_index),
+            case.id,
+            case.digest,
         )
         outcome.latency_ms = cassette["latency_ms"]
         outcome.recorded_utc = cassette.get("recorded_utc")
@@ -244,7 +277,9 @@ def _now_utc() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-async def live_case(case: Case, cassettes_dir: Path | None) -> CaseOutcome:
+async def live_case(
+    case: Case, cassettes_dir: Path | None, run_index: int | None = None
+) -> CaseOutcome:
     from core.config import get_settings
     from services.llm_client import llm_client
 
@@ -268,7 +303,7 @@ async def live_case(case: Case, cassettes_dir: Path | None) -> CaseOutcome:
     # Save before scoring, so a case that fails scoring can still be replayed.
     if cassettes_dir is not None:
         save_cassette(
-            cassettes_dir / f"{case.cassette_stem}.json",
+            cassettes_dir / cassette_file(case.cassette_stem, run_index),
             case.id,
             case.digest,
             recorder.calls,
@@ -414,11 +449,233 @@ def build_report(
     }
 
 
+# Keys of build_report() that describe one run; a multi-run report keeps them
+# for every run under "runs".
+RUN_KEYS = (
+    "case_count",
+    "cases_scored",
+    "scored_case_ids",
+    "errors",
+    "anchoring",
+    "parse_failures",
+    "metrics",
+    "latency_ms",
+    "tokens",
+    "cost_usd",
+    "cases",
+)
+# (label, metrics key) for the variance table, in display order.
+VARIANCE_METRICS = (
+    ("Recall, exact line", "recall"),
+    ("Recall, location-tolerant", "recall_tolerant"),
+    ("Precision, exact location", "precision"),
+    ("Precision, duplicates collapsed", "precision_dedup"),
+    ("Precision, location-tolerant", "precision_tolerant"),
+    ("False-positive rate on clean diffs", "clean_false_positive_rate"),
+    ("Valid-line rate", "valid_line_rate"),
+    ("Exact matches", "matched"),
+    ("Near matches", "near"),
+    ("Findings posted", "findings_total"),
+    ("Findings on clean diffs", "clean_findings_total"),
+    ("Cases scored", "cases_scored"),
+)
+COUNT_METRICS = {
+    "matched",
+    "near",
+    "findings_total",
+    "clean_findings_total",
+    "cases_scored",
+}
+SCORE_KEYS = ("findings", "matched", "near", "partial", "missed", "extra")
+FINDING_KEYS = ("file_path", "line_number", "category", "severity")
+
+
+def spread(values: list[float | None]) -> dict[str, Any]:
+    """Mean and min-max of the known values (None when none is known)."""
+    known = [v for v in values if v is not None]
+    return {
+        "values": values,
+        "mean": statistics.mean(known) if known else None,
+        "min": min(known) if known else None,
+        "max": max(known) if known else None,
+    }
+
+
+def case_scores_key(case: dict) -> tuple | None:
+    """A case's score counts in one run; None if the case errored."""
+    return None if case.get("error") else tuple(case[k] for k in SCORE_KEYS)
+
+
+def case_findings_key(case: dict) -> tuple | None:
+    """A case's posted findings by location, category and severity.
+
+    The comment text is left out: it differs between almost any two runs.
+    None if the case errored.
+    """
+    if case.get("error"):
+        return None
+    return tuple(
+        sorted(
+            json.dumps([f.get(k) for k in FINDING_KEYS])
+            for f in case["posted_findings"]
+        )
+    )
+
+
+def _largest_group(keys: list) -> int:
+    known = [k for k in keys if k is not None]
+    return max((known.count(k) for k in known), default=0)
+
+
+def case_stability(runs: list[dict]) -> list[dict[str, Any]]:
+    """Per case: how many runs agree on its scores and on its findings."""
+    by_id: dict[str, list[dict]] = {}
+    for report in runs:
+        for case in report["cases"]:
+            by_id.setdefault(case["id"], []).append(case)
+    return [
+        {
+            "id": cid,
+            "runs": len(cases),
+            "runs_scored": sum(1 for c in cases if not c.get("error")),
+            "agree_scores": _largest_group([case_scores_key(c) for c in cases]),
+            "agree_findings": _largest_group([case_findings_key(c) for c in cases]),
+            "findings": [None if c.get("error") else c["findings"] for c in cases],
+            "matched": [None if c.get("error") else c["matched"] for c in cases],
+        }
+        for cid, cases in by_id.items()
+    ]
+
+
+def build_repeat_report(reports: list[dict[str, Any]]) -> dict[str, Any]:
+    """Combine the reports of N runs of the same cases.
+
+    One run: that run's report, unchanged. Several: the top-level fields are
+    run 1's (so single-run tools still read the file), plus ``repeat``,
+    ``runs`` (each run's own fields), ``variance`` (mean and min-max per
+    metric) and ``case_stability``.
+    """
+    if len(reports) == 1:
+        return reports[0]
+    combined = dict(reports[0])
+    combined["repeat"] = len(reports)
+    combined["top_level_fields"] = (
+        f"run 1 of {len(reports)}; see runs, variance and case_stability"
+    )
+    combined["runs"] = [{k: r[k] for k in RUN_KEYS} for r in reports]
+    combined["variance"] = {
+        key: spread(
+            [
+                r["cases_scored"] if key == "cases_scored" else r["metrics"].get(key)
+                for r in reports
+            ]
+        )
+        for _, key in VARIANCE_METRICS
+    }
+    combined["case_stability"] = case_stability(reports)
+    combined["models_used"] = sorted({m for r in reports for m in r["models_used"]})
+    combined["providers_used"] = sorted(
+        {p for r in reports for p in r["providers_used"]}
+    )
+    return combined
+
+
+def all_errors(report: dict[str, Any]) -> dict[str, str]:
+    """Errors of every run, keyed ``case`` (one run) or ``run i: case``."""
+    runs = report.get("runs")
+    if not runs:
+        return dict(report.get("errors") or {})
+    return {
+        f"run {i}: {cid}": err
+        for i, r in enumerate(runs, 1)
+        for cid, err in (r.get("errors") or {}).items()
+    }
+
+
 def _fmt(value: float | None) -> str:
     return "n/a" if value is None else f"{value:.3f}"
 
 
+def _fmt_metric(value: float | None, key: str) -> str:
+    if value is None:
+        return "n/a"
+    if key in COUNT_METRICS:
+        return str(value) if isinstance(value, int) else f"{value:.1f}"
+    return f"{value:.3f}"
+
+
+def _fmt_values(values: list) -> str:
+    return ", ".join("err" if v is None else str(v) for v in values)
+
+
+def render_repeat_markdown(report: dict[str, Any]) -> str:
+    """Markdown for a multi-run report: variance and per-case stability."""
+    runs = report["runs"]
+    scored = ", ".join(str(r["cases_scored"]) for r in runs)
+    lines = [
+        f"# Review eval results ({report['mode']}, {report['repeat']} runs)",
+        "",
+        f"**Scored per run: {scored} of {report['case_count']} cases.**"
+        + (
+            ""
+            if all(r["cases_scored"] == r["case_count"] for r in runs)
+            else " Errored cases count as missed (defects) or as false"
+            " positives (clean diffs)."
+        ),
+        "",
+        f"- Commit: `{report['commit']}`"
+        + (
+            " (uncommitted or untracked files present)"
+            if report["dirty_worktree"]
+            else ""
+        ),
+        f"- Date (UTC): {report['date_utc'] or 'n/a'} ({report['date_source']})",
+        f"- Models used: {', '.join(report['models_used']) or 'none'}",
+        f"- Run flags: {json.dumps(report['run_flags'], sort_keys=True)}",
+        f"- Harness sha256: `{report['harness_sha256'][:16]}`, "
+        f"case set sha256: `{report['case_set_sha256'][:16]}`",
+        "",
+        "Each metric across the runs: mean, min–max, and the value in each run.",
+        "",
+        "| Metric | Mean | Min–max | Per run |",
+        "| --- | --- | --- | --- |",
+    ]
+    for label, key in VARIANCE_METRICS:
+        s = report["variance"][key]
+        per_run = ", ".join(_fmt_metric(v, key) for v in s["values"])
+        lines.append(
+            f"| {label} | {_fmt_metric(s['mean'], key)} | "
+            f"{_fmt_metric(s['min'], key)}–{_fmt_metric(s['max'], key)} | "
+            f"{per_run} |"
+        )
+    lines += [
+        "",
+        "Per-case stability: how many of the runs that scored the case agree on "
+        "its scores (findings, matched, near, partial, missed, extra) and on its "
+        "posted findings (file, line, category and severity; the comment text "
+        "is not compared). `err` marks a run where the case errored.",
+        "",
+        "| Case | Runs scored | Same scores | Same findings | Findings per run "
+        "| Matched per run |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
+    for c in report["case_stability"]:
+        lines.append(
+            f"| {c['id']} | {c['runs_scored']}/{c['runs']} | "
+            f"{c['agree_scores']}/{c['runs_scored']} | "
+            f"{c['agree_findings']}/{c['runs_scored']} | "
+            f"{_fmt_values(c['findings'])} | {_fmt_values(c['matched'])} |"
+        )
+    errors = all_errors(report)
+    if errors:
+        lines += ["", "Errors:"]
+        lines += [f"- {k}: {v}" for k, v in errors.items()]
+    return "\n".join(lines) + "\n"
+
+
 def render_markdown(report: dict[str, Any]) -> str:
+    if report.get("runs"):
+        return render_repeat_markdown(report)
     m = report["metrics"]
     lat = report["latency_ms"]
     tok = report["tokens"]
@@ -570,20 +827,53 @@ async def run(
     record: bool = False,
     pause: float = 0.0,
     provider: str | None = None,
+    run_index: int | None = None,
 ) -> list[CaseOutcome]:
-    """Run the cases one at a time, waiting ``pause`` seconds between them."""
+    """Run the cases one at a time, waiting ``pause`` seconds between them.
+
+    ``run_index`` selects the numbered cassettes (``<case>.<i>.json``) to
+    replay or record; None uses ``<case>.json``.
+    """
     outcomes = []
     with restrict_provider(provider):
         for i, case in enumerate(cases):  # sequential: predictable rate limits
             if i and pause > 0:
                 await asyncio.sleep(pause)
             if mode == "replay":
-                outcomes.append(await replay_case(case, cassettes_dir))
+                outcomes.append(await replay_case(case, cassettes_dir, run_index))
             else:
                 outcomes.append(
-                    await live_case(case, cassettes_dir if record else None)
+                    await live_case(case, cassettes_dir if record else None, run_index)
                 )
     return outcomes
+
+
+async def run_repeated(
+    mode: str,
+    cases: list[Case],
+    cassettes_dir: Path,
+    run_indexes: list[int | None],
+    record: bool = False,
+    pause: float = 0.0,
+    provider: str | None = None,
+) -> list[list[CaseOutcome]]:
+    """One full pass over the cases per run index, pausing between passes."""
+    runs = []
+    for n, run_index in enumerate(run_indexes):
+        if n and pause > 0:
+            await asyncio.sleep(pause)
+        runs.append(
+            await run(
+                mode,
+                cases,
+                cassettes_dir,
+                record,
+                pause=pause,
+                provider=provider,
+                run_index=run_index,
+            )
+        )
+    return runs
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -624,6 +914,13 @@ def main(argv: list[str] | None = None) -> int:
         metavar="NAME",
         help="live: use only this server provider, e.g. groq or google",
     )
+    parser.add_argument(
+        "--repeat",
+        type=int,
+        default=1,
+        metavar="N",
+        help="live: run every case N times (records <case>.<i>.json when N > 1)",
+    )
     args = parser.parse_args(argv)
 
     if args.record and not args.live:
@@ -632,6 +929,10 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--provider needs --live")
     if args.pause < 0:
         parser.error("--pause must be >= 0")
+    if args.repeat < 1:
+        parser.error("--repeat must be >= 1")
+    if args.repeat > 1 and not args.live:
+        parser.error("--repeat needs --live (replay replays every recorded run)")
     if args.replay:
         # Never read the developer's .env in replay; no provider is called.
         os.environ["DEVMIND_ENV_FILE"] = ""
@@ -662,13 +963,20 @@ def main(argv: list[str] | None = None) -> int:
         "feedback": not args.no_feedback,
     }
     if args.live:
+        run_indexes = [None] if args.repeat == 1 else list(range(1, args.repeat + 1))
+    else:
+        run_indexes = recorded_runs(args.cassettes_dir) or [None]
+    if len(run_indexes) > 1:
+        flags["repeat"] = len(run_indexes)
+    if args.live:
         flags["temperatures"] = temperature_settings()
     try:
-        outcomes = asyncio.run(
-            run(
+        runs = asyncio.run(
+            run_repeated(
                 mode_name,
                 cases,
                 args.cassettes_dir,
+                run_indexes,
                 args.record,
                 pause=args.pause,
                 provider=args.provider,
@@ -677,16 +985,21 @@ def main(argv: list[str] | None = None) -> int:
     except ValueError as exc:
         print(str(exc), file=sys.stderr)
         return 2
-    report = build_report(outcomes, mode_name, commit, dirty, date, flags)
+    report = build_repeat_report(
+        [build_report(o, mode_name, commit, dirty, date, flags) for o in runs]
+    )
     print(render_markdown(report))
-    if report["errors"]:
+    errors = all_errors(report)
+    if errors and not report.get("runs"):
         print(
             f"Scored {report['cases_scored']} of {report['case_count']} cases; "
-            f"errored: {', '.join(report['errors'])}",
+            f"errored: {', '.join(errors)}",
             file=sys.stderr,
         )
+    elif errors:
+        print(f"Errored (run: case): {', '.join(errors)}", file=sys.stderr)
     if args.results_dir:
-        if report["errors"] and not args.allow_partial:
+        if errors and not args.allow_partial:
             print(
                 "Not writing results: some cases errored. Fix or re-record "
                 "them, or pass --allow-partial to write a partial result.",
@@ -695,7 +1008,7 @@ def main(argv: list[str] | None = None) -> int:
             return 1
         json_path, md_path = write_results(report, args.results_dir, args.results_name)
         print(f"Wrote {json_path} and {md_path}")
-    return 1 if report["errors"] else 0
+    return 1 if errors else 0
 
 
 if __name__ == "__main__":

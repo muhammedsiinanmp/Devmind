@@ -2,28 +2,32 @@
   "version": 1,
   "case_id": "off-by-one-range",
   "case_sha256": "c6e9041880115ce042e043699bc04075ac58a3087fe22aed433144663fd53473",
-  "latency_ms": 1797,
+  "latency_ms": 1915,
   "calls": [
     {
-      "prompt_sha256": "0653d059b6b3a2ed396845e94a688bf413082bed5adf9eb1329afdd4a4b309fe",
-      "response": "{\"findings\": [{\"file_path\": \"stats/window.py\", \"line_number\": 7, \"category\": \"correctness\", \"severity\": \"error\", \"body\": \"The loop range was changed from `len(values) - width + 1` to `len(values) - width + 2`, which can cause the slice `values[i : i + width]` to exceed the list bounds, leading to IndexError and incorrect results.\", \"suggested_fix\": \"Use the original range calculation: `for i in range(len(values) - width + 1):`\"}]}",
+      "prompt_sha256": "02e197c2637e44490d755d1142efd5ef35e0eedd9f2f796ee8b9bacbdd5ef952",
+      "response": "{\"findings\": [{\"file_path\": \"stats/window.py\", \"line_number\": 7, \"category\": \"correctness\", \"severity\": \"error\", \"body\": \"The loop range was changed to `len(values) - width + 2`, which can cause `i + width` to exceed the length of `values`, leading to an IndexError or incorrect sums.\", \"suggested_fix\": \"Replace the line with the original correct range:\\n```python\\nfor i in range(len(values) - width + 1):\\n```\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 699,
-      "completion_tokens": 256
+      "prompt_tokens": 737,
+      "completion_tokens": 265,
+      "provider": "groq"
     },
     {
-      "prompt_sha256": "275fa1acfbb6b1ce0fa8b17358a6fcbd0a85527ccbe7bc2ab02b8ad476b7beac",
-      "response": "{\"findings\": [{\"file_path\": \"stats/window.py\", \"line_number\": 7, \"category\": \"correctness\", \"severity\": \"error\", \"body\": \"The loop range was changed to len(values) - width + 2, which can cause i + width to exceed the list bounds, leading to IndexError and incorrect sums. The original range len(values) - width + 1 correctly iterates over all valid windows.\", \"suggested_fix\": \"for i in range(len(values) - width + 1):\"}]}",
+      "prompt_sha256": "2416fafc6b0a74d13a41b50dea0095119375bb737496cfd4fb2c83c2fa869e4c",
+      "response": "{\"findings\": [{\"file_path\": \"stats/window.py\", \"line_number\": 7, \"category\": \"correctness\", \"severity\": \"error\", \"body\": \"The loop range is off by one. Using len(values) - width + 2 can cause i + width to exceed the list length, leading to IndexError and incorrect totals.\", \"suggested_fix\": \"for i in range(len(values) - width + 1):\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 693,
-      "completion_tokens": 307
+      "prompt_tokens": 731,
+      "completion_tokens": 278,
+      "provider": "groq"
     },
     {
-      "prompt_sha256": "2861a478491d80152912112d8be6d69928ecf433e62aaef101d4ca6f5fc630bc",
-      "response": "{\"findings\": [{\"file_path\": \"stats/window.py\", \"line_number\": 7, \"category\": \"test coverage\", \"severity\": \"warning\", \"body\": \"The change to the loop range alters the function's behavior and may introduce off‑by‑one errors or IndexError for edge cases (e.g., empty list, width equal to or greater than the list length). No tests currently verify these boundary conditions, so regressions could go unnoticed.\", \"suggested_fix\": \"Add unit tests for moving_sum covering:\\n- values = [] with various widths\\n- width = 0\\n- width = len(values)\\n- width > len(values)\\n- typical case where width < len(values)\\n- verify that the function returns the expected list length and contents for each scenario.\"}]}",
+      "prompt_sha256": "0b470e9e51b9469d499f38137bc6b2d58e76e1cbad9d47fb507c73629690e1c6",
+      "response": "{\"findings\": [{\"file_path\": \"stats/window.py\", \"line_number\": 7, \"category\": \"test coverage\", \"severity\": \"warning\", \"body\": \"The change to the loop range likely introduces an off‑by‑one error, but there are no tests covering edge cases such as empty input, width larger than the list, or width equal to zero. Without tests, this regression may go unnoticed.\", \"suggested_fix\": \"Add unit tests for moving_sum covering:\\n- Normal case (e.g., values=[1,2,3,4], width=2)\\n- Empty list\\n- width == 0\\n- width > len(values)\\n- width == len(values)\\n- Verify that the function does not raise IndexError and returns the expected number of totals.\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 689,
-      "completion_tokens": 321
+      "prompt_tokens": 727,
+      "completion_tokens": 351,
+      "provider": "groq"
     }
-  ]
+  ],
+  "recorded_utc": "2026-11-06T19:07:44Z"
 }

@@ -419,7 +419,7 @@ These were measured locally on this branch. Coverage method: `pytest --cov`, the
 - **FastAPI (pytest):** `ruff check`, `black --check`, `pytest`
 - **Frontend (typecheck, build, lint):** pnpm 9 and Node 20; `tsc`, `pnpm build`, `pnpm lint`, `pnpm test`
 - **Compose (profiles):** `docker compose config` with `.env.example`; Flower, Prometheus and Grafana appear only under the `ops` profile
-- **Evals (replay):** pull requests only. The job runs when the PR changes `backend/fastapi/{agents,services,models,routers,core,evals}/**` or `backend/fastapi/scripts/eval_compare.py`; otherwise it finishes after the path check. It runs `make eval` against the committed cassettes in `backend/fastapi/evals/cassettes/` and compares the result with `evals/results/after-fixes.json` (`uv run python -m scripts.eval_compare`). It then posts one PR comment marked `<!-- devmind-eval-report -->` and updates it on later pushes. The job has `pull-requests: write` and uses only `GITHUB_TOKEN`. On fork PRs it writes the report to the job summary and doesn't comment. Eval results never fail it.
+- **Evals (replay):** pull requests only. The job runs when the PR changes `backend/fastapi/{agents,services,models,routers,core,evals}/**` or `backend/fastapi/scripts/eval_compare.py`; otherwise it finishes after the path check. It runs `make eval` against the committed cassettes in `backend/fastapi/evals/cassettes/` and compares the result with the reference run `evals/results/after-a7.json` (`uv run python -m scripts.eval_compare`). It then posts one PR comment marked `<!-- devmind-eval-report -->` and updates it on later pushes. The job has `pull-requests: write` and uses only `GITHUB_TOKEN`. On fork PRs it writes the report to the job summary and doesn't comment. Eval results never fail it.
 
 CI doesn't enforce a coverage threshold.
 
@@ -427,15 +427,17 @@ CI doesn't enforce a coverage threshold.
 
 The eval comment shows one of three results:
 
-- **No metric changed:** the replayed scores equal `after-fixes.json`.
-- **N metric(s) changed:** the change affects scoring, labels or post-processing but not prompts, and the table shows each change.
+- **No metric changed:** the replayed scores equal `after-a7.json`.
+- **N metric(s) changed:** the change affects scoring, labels or post-processing but not prompts, and the table shows each change. With one run on either side the comment notes that differences of a few findings may be noise. When both results files hold 2 or more runs (`--repeat N`), the table shows mean and min–max per metric and marks a change *within noise* when either side's mean falls inside the other side's min–max.
 - **Prompt changed: replay can't measure this PR:** at least one prompt (or case diff) has no recording, so nothing is scored. Re-record on a machine with provider keys in `.env`:
 
 ```bash
 make eval-record EVAL_ARGS="--provider groq --pause 75"   # writes evals/results/<sha>.json/.md
 ```
 
-Commit the re-recorded `evals/cassettes/*.json` and the new results file. If the new run becomes the reference, copy it over `evals/results/after-fixes.json` (and `.md`) and update the README "Review quality" table: `tests/test_eval_compare.py` checks that table against the results files. `make eval` replays the committed cassettes and needs no keys. The harness pins the delimiter nonce (`EVAL_DELIMITER_NONCE`), so a recording replays; the cassettes committed before #99 were recorded with the old fixed `<untrusted_data>` tag and no longer replay.
+To measure run-to-run noise, add `--repeat 3`: it records `<case>.<i>.json` per run, and replay replays every run. 3 runs × 27 cases is about 243 Groq calls, which can exhaust the free daily quota; keep `--pause` and spread the recording over several days with `--only` and `--allow-partial` if needed. `uv run python -m scripts.eval_noise RUN1.json RUN2.json` compares two single runs of the same code on the cases both scored.
+
+Commit the re-recorded `evals/cassettes/*.json` and the new results file. If the new run becomes the reference, point the `Evals (replay)` job in `.github/workflows/ci.yml` at its results file and update the README "Review quality" section. Keep earlier results files as history: `tests/test_eval_compare.py` checks the README table against `baseline-pre-fix.json` and `after-fixes.json`. `make eval` replays the committed cassettes and needs no keys. The harness pins the delimiter nonce (`EVAL_DELIMITER_NONCE`), so a recording replays; the cassettes committed before #99 were recorded with the old fixed `<untrusted_data>` tag and no longer replay.
 
 ---
 

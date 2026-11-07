@@ -2,28 +2,32 @@
   "version": 1,
   "case_id": "clean-log-message",
   "case_sha256": "fef96774476e31eebc1c43d98f71bb26f0379bafc410222404feed8b1998ab1e",
-  "latency_ms": 1643,
+  "latency_ms": 2088,
   "calls": [
     {
-      "prompt_sha256": "5f29e4e8cf0f3aa9b74041b77bd60d03ae711a47dc1b75efa79b4cd9c238d58e",
+      "prompt_sha256": "152c478b6a79ff6f320d2ffc9a68d4d9e1d22569b9fb0409c9bcf6a86eeaa4ee",
       "response": "{\"findings\": []}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 673,
-      "completion_tokens": 97
+      "prompt_tokens": 711,
+      "completion_tokens": 66,
+      "provider": "groq"
     },
     {
-      "prompt_sha256": "479720a46f5a4f09391c517a2e5c331f69cd73ebd114c6035cf533ab236d03d7",
+      "prompt_sha256": "cc0c4323eef8e50a3cb5242ca39fcc9e1ea453d2a69be75011fecc86e365632d",
       "response": "{\"findings\": []}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 667,
-      "completion_tokens": 166
+      "prompt_tokens": 705,
+      "completion_tokens": 191,
+      "provider": "groq"
     },
     {
-      "prompt_sha256": "a67c086c419a9cffe80d2c167c90db6526db664133c54baced517ed79b5165e7",
-      "response": "{\"findings\": [{\"file_path\": \"jobs/cleanup.py\", \"line_number\": 16, \"category\": \"test coverage\", \"severity\": \"warning\", \"body\": \"The new logging call is not covered by existing tests. There is no test that verifies logger.info is invoked with the formatted message and that the removed count is correctly passed, nor that the function returns the expected value when purge_expired is mocked.\", \"suggested_fix\": \"Add a unit test, e.g.:\\n\\n```python\\nfrom unittest import TestCase\\nfrom unittest.mock import patch, MagicMock\\nfrom jobs.cleanup import cleanup\\n\\nclass CleanupTest(TestCase):\\n    @patch('jobs.cleanup.logger')\\n    @patch('jobs.cleanup.purge_expired')\\n    def test_cleanup_logs_removed(self, mock_purge, mock_logger):\\n        mock_purge.return_value = 5\\n        result = cleanup()\\n        self.assertEqual(result, 5)\\n        mock_logger.info.assert_called_once_with(\\n            \\\"cleanup removed=%d expired sessions\\\", 5\\n        )\\n```\"}]}",
+      "prompt_sha256": "df40c2baf9de625545a2bc559995bcb176f23e2780e241a5fb2965ea49a53902",
+      "response": "{\"findings\": [{\"file_path\": \"jobs/cleanup.py\", \"line_number\": 16, \"category\": \"test coverage\", \"severity\": \"warning\", \"body\": \"The logging call signature changed to include a formatted message with the 'removed' count. Existing tests may not verify the new log output, leading to uncovered behavior and potential regression if the format string or argument type changes.\", \"suggested_fix\": \"Add or update a unit test that mocks the logger and asserts that logger.info is called with the format string 'cleanup removed=%d expired sessions' and the correct 'removed' integer value. For example:\\n\\n@patch('jobs.cleanup.logger')\\ndef test_cleanup_logs_removed_count(mock_logger):\\n    mock_sessions = [...]  # set up sessions that will be purged\\n    result = cleanup_function(mock_sessions)\\n    mock_logger.info.assert_called_once_with('cleanup removed=%d expired sessions', result)\\n\"}]}",
       "model_used": "groq/openai/gpt-oss-120b",
-      "prompt_tokens": 663,
-      "completion_tokens": 461
+      "prompt_tokens": 701,
+      "completion_tokens": 411,
+      "provider": "groq"
     }
-  ]
+  ],
+  "recorded_utc": "2026-11-06T17:56:57Z"
 }

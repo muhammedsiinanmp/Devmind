@@ -7,7 +7,7 @@ import re
 
 import pytest
 
-from evals.cases import CASES_DIR, load_case, load_cases
+from evals.cases import CASES_DIR, FEEDBACK_CASES_DIR, load_case, load_cases
 from evals.matcher import new_side_lines
 
 CASES = load_cases(CASES_DIR)
@@ -64,17 +64,30 @@ def test_loader_requires_explicit_expected_list(tmp_path):
         load_case(bad)
 
 
+FEEDBACK_CASES = load_cases(FEEDBACK_CASES_DIR)
+
+
 def test_feedback_cases_include_suppression_and_a_control():
     """Issue #74: rejected examples on clean diffs, and a real bug alongside one."""
-    with_feedback = [c for c in CASES if c.feedback]
-    assert any(not c.expected for c in with_feedback)
-    assert any(c.expected for c in with_feedback)
-    for case in with_feedback:
+    assert FEEDBACK_CASES and all(c.feedback for c in FEEDBACK_CASES)
+    assert any(not c.expected for c in FEEDBACK_CASES)
+    assert any(c.expected for c in FEEDBACK_CASES)
+    for case in FEEDBACK_CASES:
         assert all(item.signal in ("accepted", "rejected") for item in case.feedback)
 
 
-def test_cases_without_feedback_load_with_none():
-    assert all(c.feedback == () for c in CASES if not c.id.startswith("feedback-"))
+@pytest.mark.parametrize("case", FEEDBACK_CASES, ids=[c.id for c in FEEDBACK_CASES])
+def test_feedback_case_diffs_and_labels_are_consistent(case):
+    lines = new_side_lines(case.diff, strict=True)
+    for exp in case.expected:
+        lo, hi = exp.line_range
+        assert set(range(lo, hi + 1)) <= lines[exp.file], exp
+
+
+def test_default_case_set_has_no_feedback_cases():
+    """The default set stays comparable with the committed reference results."""
+    assert all(c.feedback == () for c in CASES)
+    assert not {c.id for c in CASES} & {c.id for c in FEEDBACK_CASES}
 
 
 def test_loader_reads_feedback_items(tmp_path):

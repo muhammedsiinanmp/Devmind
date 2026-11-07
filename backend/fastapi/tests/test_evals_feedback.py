@@ -4,12 +4,15 @@ examples straight to the agent (no database), --no-feedback runs them
 without, under their own cassettes, and the case-set hash covers them.
 """
 
+import asyncio
+import json
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
 from evals import run as eval_run
-from evals.cases import CASES_DIR, load_cases
+from evals.cases import CASES_DIR, FEEDBACK_CASES_DIR, load_cases
 from services.llm_client import LLMProvider, LLMResponse, llm_client
 
 FEEDBACK_IDS = {
@@ -36,7 +39,7 @@ class _Capture:
 
 @pytest.fixture
 def case():
-    [case] = load_cases(CASES_DIR, {"feedback-md5-cache-key"})
+    [case] = load_cases(FEEDBACK_CASES_DIR, {"feedback-md5-cache-key"})
     return case
 
 
@@ -92,6 +95,41 @@ class TestFeedbackInjection:
         assert missing.error is not None
 
 
+class TestRepeatedRuns:
+    """--no-feedback together with --repeat N (E3, #110)."""
+
+    def test_numbered_variant_cassette_names(self, case):
+        stem = case.without_feedback().cassette_stem
+        assert eval_run.cassette_file(stem, 2) == (
+            "feedback-md5-cache-key.no-feedback.2.json"
+        )
+        assert eval_run.cassette_file(case.cassette_stem, 2) == (
+            "feedback-md5-cache-key.2.json"
+        )
+
+    @pytest.mark.asyncio
+    async def test_record_and_replay_numbered_runs_without_feedback(
+        self, case, tmp_path
+    ):
+        stripped = case.without_feedback()
+        for run_index in (1, 2):
+            with patch.object(llm_client, "generate", _Capture()):
+                recorded = await eval_run.live_case(stripped, tmp_path, run_index)
+            assert recorded.error is None
+
+        assert sorted(p.name for p in tmp_path.iterdir()) == [
+            "feedback-md5-cache-key.no-feedback.1.json",
+            "feedback-md5-cache-key.no-feedback.2.json",
+        ]
+        assert eval_run.recorded_runs(tmp_path) == [1, 2]
+        for run_index in (1, 2):
+            replayed = await eval_run.replay_case(stripped, tmp_path, run_index)
+            assert replayed.error is None
+        # The with-feedback variant has no numbered cassettes here.
+        missing = await eval_run.replay_case(case, tmp_path, 1)
+        assert missing.error is not None
+
+
 class TestCaseSetHash:
     def test_hash_covers_feedback(self, case):
         assert eval_run.case_set_sha256([case]) != eval_run.case_set_sha256(
@@ -134,6 +172,8 @@ def test_no_feedback_flag_is_recorded_in_run_flags(tmp_path, monkeypatch, capsys
         [
             "--replay",
             "--no-feedback",
+            "--cases-dir",
+            str(FEEDBACK_CASES_DIR),
             "--cassettes-dir",
             str(tmp_path),
             "--only",
@@ -144,3 +184,29 @@ def test_no_feedback_flag_is_recorded_in_run_flags(tmp_path, monkeypatch, capsys
         f"{case_id}.no-feedback" for case_id in FEEDBACK_IDS
     }
     assert '"feedback": false' in capsys.readouterr().out
+
+
+FEEDBACK_RUNS = (
+    Path(__file__).resolve().parents[1] / "evals" / "results" / "feedback-runs"
+)
+
+
+@pytest.mark.parametrize(
+    "run,no_feedback",
+    [("fb1", False), ("fb2", False), ("nofb1", True), ("nofb2", True)],
+)
+def test_recorded_feedback_runs_replay_to_their_results(run, no_feedback):
+    """The live recordings of the feedback cases still replay on this code."""
+    recorded = json.loads((FEEDBACK_RUNS / f"{run}.json").read_text())
+    cases = load_cases(FEEDBACK_CASES_DIR)
+    if no_feedback:
+        cases = [c.without_feedback() for c in cases]
+
+    outcomes = asyncio.run(eval_run.run("replay", cases, FEEDBACK_RUNS / run))
+    current = eval_run.build_report(outcomes, "replay", "abc", False, None)
+
+    assert current["errors"] == {}
+    assert current["case_set_sha256"] == recorded["case_set_sha256"]
+    assert [c["posted_findings"] for c in current["cases"]] == [
+        c["posted_findings"] for c in recorded["cases"]
+    ]

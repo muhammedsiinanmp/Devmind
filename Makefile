@@ -43,7 +43,7 @@ test-all: test
 # ─── Review-quality evals (run on the host with uv, not in Docker) ──
 # eval: offline replay from the committed recordings in evals/cassettes (no
 # keys needed). CI's "Evals (replay)" job runs it on PRs and compares the
-# scores with evals/results/after-fixes.json.
+# scores with evals/results/after-a7.json (the current reference run).
 # eval-record: calls the real providers configured in .env, re-records the
 # cassettes and writes evals/results/<sha>.json and <sha>.md.
 # On free-tier quotas, pin one provider and wait between cases, e.g.

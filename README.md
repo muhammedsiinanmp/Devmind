@@ -139,7 +139,7 @@ START -> [analyze_security | analyze_quality | analyze_tests] -> synthesize -> E
 | FastAPI (pytest) | ruff, black, pytest (no external services) |
 | Frontend (typecheck, build, lint) | `tsc`, `vite build`, `eslint`, `vitest run` |
 | Compose (profiles) | `docker compose config` with `.env.example`: Flower, Prometheus and Grafana appear only under the `ops` profile |
-| Evals (replay) | Pull requests only, and only when they change FastAPI agent, service, model, router, core or eval code: `make eval` replay compared with the committed after-fixes results, posted as one PR comment (see [Evals](#evals)) |
+| Evals (replay) | Pull requests only, and only when they change FastAPI agent, service, model, router, core or eval code: `make eval` replay compared with the committed reference results (`after-a7.json`), posted as one PR comment (see [Evals](#evals)) |
 
 Measured locally on this branch:
 
@@ -246,16 +246,20 @@ make eval-record  # live: calls the providers configured in .env, re-records the
 make eval-record EVAL_ARGS="--provider groq --pause 75"
 ```
 
-`--provider NAME` (live only) limits the server chain to one provider for the run, so a quota running out partway through can't silently switch models. `--pause SECONDS` waits that long between cases. `--only id1,id2` runs a subset, `--results-name` sets the results file name, and `--allow-partial` writes results even when some cases errored. Results record these flags, the recording date, the providers, the commit (and whether there were uncommitted or untracked files), a hash of the harness code and a hash of the case set.
+`--provider NAME` (live only) limits the server chain to one provider for the run, so a quota running out partway through can't silently switch models. `--pause SECONDS` waits that long between cases. `--only id1,id2` runs a subset, `--results-name` sets the results file name, and `--allow-partial` writes results even when some cases errored. `--repeat N` (live only) runs every case N times, one full pass per run, and records `<case>.<i>.json` cassettes; replay finds and replays every numbered run. A multi-run report shows each metric's mean, min–max and per-run values, and per case how many runs agree on its scores and on its posted findings (file, line, category and severity). Results record these flags, the recording date, the providers, the commit (and whether there were uncommitted or untracked files), a hash of the harness code and a hash of the case set.
+
+**Quota.** Each case makes 3 model calls (81 calls for 27 cases in the committed results), so `--repeat 3` over 27 cases is about 243 Groq calls. That can exhaust Groq's free daily quota partway through: the second dev run below lost its last 4 cases to `AllProvidersDownError` when the quota ran out. Use `--pause` to stay under the per-minute limits (the second dev run used `--pause 75`; a pause doesn't raise the daily quota), and if a run can't finish in a day, record the remaining cases on another day with `--only` and `--allow-partial`.
 
 Cassettes store only the SHA-256 of each prompt, the response text, the model name and provider, token counts and the recording time. They don't store prompts, headers or keys, and recording stops if a configured key appears in a response.
 
-**Replay can't measure a prompt change.** Cassettes are keyed by prompt hash, so replay only re-scores responses that were already recorded. After the agent's prompts or a case's diff change, replay reports those cases as stale. Measuring the effect of a prompt or model change needs a live run (`make eval-record`). Replay is for re-scoring a recorded run, for example after a change to the scorer or the labels. `evals/cassettes/` holds the recordings of the "after" run below, so `make eval` replays them by default. Those recordings predate the per-review delimiter tag (#99) and no longer match the current prompts: replay reports every case as without a recording until they are re-recorded. The eval harness uses a fixed delimiter nonce (`EVAL_DELIMITER_NONCE` in `evals/run.py`), so cassettes recorded from now on replay. Live results also record the temperature settings in `run_flags.temperatures`, since cassettes don't store them.
+**Replay can't measure a prompt change.** Cassettes are keyed by prompt hash, so replay only re-scores responses that were already recorded. After the agent's prompts or a case's diff change, replay reports those cases as stale. Measuring the effect of a prompt or model change needs a live run (`make eval-record`). Replay is for re-scoring a recorded run, for example after a change to the scorer or the labels. `evals/cassettes/` holds the recordings of the current reference run (A7, see [Review quality](#review-quality)), so `make eval` replays them by default. The recordings of the "after" run below predate the per-review delimiter tag (#99), no longer match the prompts and were replaced; they remain in commit `01095e3`. The eval harness uses a fixed delimiter nonce (`EVAL_DELIMITER_NONCE` in `evals/run.py`), so cassettes recorded from now on replay. Live results also record the temperature settings in `run_flags.temperatures`, since cassettes don't store them.
 
-**CI.** On a pull request that changes `backend/fastapi/{agents,services,models,routers,core,evals}/**` (or `scripts/eval_compare.py`), the `Evals (replay)` job runs `make eval` against the committed cassettes and compares the result with `evals/results/after-fixes.json` using `scripts/eval_compare.py`. It posts one PR comment with the marker `<!-- devmind-eval-report -->` and updates that comment on later pushes. The comment says one of three things:
+**CI.** On a pull request that changes `backend/fastapi/{agents,services,models,routers,core,evals}/**` (or `scripts/eval_compare.py`), the `Evals (replay)` job runs `make eval` against the committed cassettes and compares the result with the reference run `evals/results/after-a7.json` using `scripts/eval_compare.py`. It posts one PR comment with the marker `<!-- devmind-eval-report -->` and updates that comment on later pushes. The comment says one of three things:
 - **No metric changed.**
 - **Metrics changed**, with a before/after table of the changes. This happens when the change touches scoring, labels or post-processing but not prompts.
-- **Prompt changed: replay can't measure this PR.** Some prompts have no recording, so nothing is scored. Re-record with `make eval-record EVAL_ARGS="--provider groq --pause 75"`, which needs provider keys in `.env`. Commit the new cassettes and the results file, and copy the results file over `after-fixes.json` if it becomes the new reference.
+- **Prompt changed: replay can't measure this PR.** Some prompts have no recording, so nothing is scored. Re-record with `make eval-record EVAL_ARGS="--provider groq --pause 75"`, which needs provider keys in `.env`. Commit the new cassettes and the results file. If the new run becomes the reference, point the CI job at its results file.
+
+Both committed runs have one run each, so a "metrics changed" comment adds a note that differences of a few findings may be noise. When both results files hold 2 or more runs, the table shows each metric's mean and min–max, and a changed metric is marked *within noise* if either side's mean falls inside the other side's min–max. That rule is deliberately simple; with 3 runs per side there is too little data for a significance test.
 
 The job needs no secrets and doesn't fail because of eval results. It fails only if the harness or the comparison can't run. On pull requests from forks it writes the report to the job summary and doesn't comment. To compare two results files locally, run `cd backend/fastapi && uv run python -m scripts.eval_compare BASE.json CURRENT.json`.
 
@@ -288,6 +292,38 @@ How to read it:
 - **Latency: not compared.** Both results record per-case latency (before: mean 3545 ms, after: mean 2307 ms), but they aren't comparable. The before run went through the server chain with Google first and Google's daily quota exhausted, so its times may include failed Google calls before the failover to Groq. The cassettes don't record this. The after run used only Groq.
 - **Tokens.** Model calls: 81 in both runs. Prompt tokens went from 31353 to 56463 and completion tokens from 52786 to 27612.
 - **Small, synthetic set.** 27 hand-written diffs, and each run was recorded once. The numbers show what this agent and model did on these cases. They are not an estimate of performance on real pull requests.
+
+**Run-to-run variance.** The model's output isn't deterministic, so two live runs of the same code differ. A second live run of unchanged `dev` (commit `9dd6824`, before #107) is in [`dev-rerun.json`](backend/fastapi/evals/results/dev-rerun.json). Its prompts are the after run's: the after run's cassettes replay on `9dd6824` with no missing recording and no metric change. It used `groq/openai/gpt-oss-120b` with `--provider groq --pause 75` (`run_flags` in the results file) and scored 23 of 27 cases; the last 4 errored with `AllProvidersDownError` when Groq's quota ran out. On the 23 cases both runs scored, `uv run python -m scripts.eval_noise evals/results/after-fixes.json evals/results/dev-rerun.json` prints:
+
+```text
+Cases scored in both runs: 23 of 27.
+
+Cases whose output differs between the runs:
+- per-case scores (findings, matched, near, partial, missed, extra): 11 of 23
+- posted findings by file, line, category and severity: 18 of 23
+- posted findings including the comment text: 22 of 23
+
+| Over the 23 common cases | after-fixes.json | dev-rerun.json |
+|---|---|---|
+| exact matches | 14 | 14 |
+| location-tolerant matches | 14 | 14 |
+| findings posted | 59 | 58 |
+| findings on clean diffs | 16 | 17 |
+| clean diffs with a finding | 9 | 8 |
+| findings on clean diffs at critical or error severity | 0 | 1 |
+
+Cases with different scores: clean-docstring, clean-function-with-tests, clean-rename-variable, clean-test-only, clean-type-hints, go-ignored-error, missing-auth-check, missing-await, missing-test-for-new-branch, off-by-one-range, path-traversal
+```
+
+So on identical code about half the cases (11 of 23) changed their scores and 18 of 23 posted a different set of findings, while the totals moved by at most one: exact matches 14 in both runs, findings posted 59 and 58, findings on clean diffs 16 and 17, and 0 and 1 of them at critical or error severity. The before/after table above compares one run each; its large changes (exact matches 10 to 18, findings posted 152 to 64) are far bigger than the differences between these two runs, but a difference of a few findings between two single runs isn't evidence of a change. To measure one, record several runs per side with `--repeat 3` and compare them with `scripts/eval_compare.py`, which marks changes within noise. A test (`tests/test_eval_noise.py`) checks that the output above still matches the two results files.
+
+**Current reference run: A7.** The per-review delimiter tag (#99, merged in #107) changed every prompt, so the after run's recordings no longer replay. The committed cassettes and the CI reference are now a live run of the A7 prompts, scored in [`after-a7.md`](backend/fastapi/evals/results/after-a7.md) and `.json`. On the same 27 cases it scored: recall, exact line 0.889 (16/18); recall, location-tolerant 1.000 (18/18); precision, exact location 0.235 (16/68); false-positive rate on clean diffs 1.000 (9/9); 20 findings on clean diffs, 1 of them at critical or error severity. Both are single runs, so read differences of a few findings between them against the run-to-run variance above.
+
+A7 reference provenance:
+- **Code:** recorded on commit `4df00bd` and scored by replay on `ce71960` (the `commit` in the results file). `backend/fastapi/` is identical in `ce71960` and in `dev` after #107 (`git diff --stat ce71960 d5f039b -- backend/fastapi` is empty). Replaying the cassettes on `dev` finds a recording for every prompt and reproduces the results file's metrics and per-case findings exactly, so the prompts `dev` sends are the recorded ones.
+- **Model:** `groq/openai/gpt-oss-120b` for all 81 calls (`models_used`).
+- **Recording:** the cassettes' `recorded_utc` times show two passes on 2026-11-06: 13 cases from 17:50 to 18:05 UTC and the other 14 from 18:58 to 19:15 UTC, about 77 s apart within each pass. The recording session reports the gap as a network (DNS) outage; no committed artifact records the cause. No case was dropped: all 27 are scored.
+- **Scoring:** `harness_sha256` `2e4482ab…` (the harness after #99, which pins the delimiter nonce) and `case_set_sha256` `00dad82d…`, the same case set as the baseline and the after run.
 
 After-run provenance:
 - **Code:** recorded with the E1 harness at commit `40b8853` (an ancestor of `dev`). Its `agents/`, `services/`, `models/`, `core/` and `routers/` code is identical to `dev` at `bccc370`: `git diff --stat 40b8853 bccc370` on those directories is empty.
