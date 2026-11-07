@@ -206,6 +206,14 @@ class CommentFeedback(models.Model):
     )
     signal = models.CharField(max_length=10, choices=SIGNAL_CHOICES)
     source = models.CharField(max_length=10, choices=SOURCE_CHOICES)
+    source_github_id = models.BigIntegerField(
+        null=True,
+        blank=True,
+        help_text=(
+            "For reply verdicts, the GitHub id of the reply that gave it, so "
+            "deleting or editing that reply can remove it."
+        ),
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

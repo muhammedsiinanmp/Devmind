@@ -88,20 +88,35 @@ def rate_limit_countdown(reset_at: int, now: float) -> int:
 
 
 @shared_task(bind=True, max_retries=5, default_retry_delay=60, acks_late=True)
-def fetch_comment_reactions_task(self, repo_id: int, pr_number: int):
+def fetch_comment_reactions_task(
+    self, repo_id: int, pr_number: int, pr_author: str = ""
+):
     """
-    Record 👍/👎 feedback on DevMind's comments when a PR closes.
+    Record trusted 👍/👎 feedback on DevMind's comments when a PR closes.
 
     On a GitHub rate limit the task waits for the quota reset (up to an
     hour) and runs again; recording is idempotent, so a rerun is safe.
+    Errors a retry can't fix (401, a non-rate-limit 403, 404) end the task.
     """
     import time
 
-    from apps.repositories.exceptions import GitHubRateLimitError, GitHubServiceError
+    from apps.repositories.exceptions import (
+        PERMANENT_GITHUB_ERRORS,
+        GitHubRateLimitError,
+        GitHubServiceError,
+    )
     from apps.reviews.services.feedback import fetch_reaction_feedback
 
     try:
-        checked = fetch_reaction_feedback(repo_id, pr_number)
+        checked = fetch_reaction_feedback(repo_id, pr_number, pr_author)
+    except PERMANENT_GITHUB_ERRORS as exc:
+        logger.warning(
+            "feedback.reactions.not_retried repo_id=%d pr=%d error=%s",
+            repo_id,
+            pr_number,
+            type(exc).__name__,
+        )
+        return 0
     except GitHubRateLimitError as exc:
         countdown = rate_limit_countdown(exc.reset_at, time.time())
         logger.warning(
@@ -127,6 +142,35 @@ def fetch_comment_reactions_task(self, repo_id: int, pr_number: int):
         checked,
     )
     return checked
+
+
+@shared_task(bind=True, max_retries=5, default_retry_delay=60)
+def record_feedback_event_task(self, event: dict):
+    """
+    Record a reply or resolved-thread event on a DevMind comment
+    (services.feedback.apply_feedback_event). A task because checking the
+    actor's repository permission calls GitHub.
+    """
+    import time
+
+    from apps.repositories.exceptions import (
+        PERMANENT_GITHUB_ERRORS,
+        GitHubRateLimitError,
+        GitHubServiceError,
+    )
+    from apps.reviews.services.feedback import apply_feedback_event
+
+    try:
+        return apply_feedback_event(event)
+    except PERMANENT_GITHUB_ERRORS as exc:
+        logger.warning("feedback.event.not_retried error=%s", type(exc).__name__)
+        return False
+    except GitHubRateLimitError as exc:
+        raise self.retry(
+            exc=exc, countdown=rate_limit_countdown(exc.reset_at, time.time())
+        )
+    except GitHubServiceError as exc:
+        raise self.retry(exc=exc)
 
 
 @shared_task(bind=True, max_retries=5, default_retry_delay=60)

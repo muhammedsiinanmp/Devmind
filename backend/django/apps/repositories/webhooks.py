@@ -25,10 +25,10 @@ from apps.repositories.models import Repository
 from apps.repositories.tasks import trigger_review_task
 from apps.repositories.types import GitHubPayload
 from apps.reviews.services.feedback import (
-    handle_review_comment_event,
-    handle_review_thread_event,
+    parse_review_comment_event,
+    parse_review_thread_event,
 )
-from apps.reviews.tasks import fetch_comment_reactions_task
+from apps.reviews.tasks import fetch_comment_reactions_task, record_feedback_event_task
 
 if TYPE_CHECKING:
     pass
@@ -106,30 +106,35 @@ class WebhookDispatcher:
         if event_type == "pull_request":
             self._handle_pull_request(payload)
         elif event_type == "pull_request_review_thread":
-            self._handle_feedback(handle_review_thread_event, payload, event_type)
+            self._handle_feedback(parse_review_thread_event, payload, event_type)
         elif event_type == "pull_request_review_comment":
-            self._handle_feedback(handle_review_comment_event, payload, event_type)
+            self._handle_feedback(parse_review_comment_event, payload, event_type)
         elif event_type == "ping":
             log.info("webhook.ping.received")
         else:
             log.debug("webhook.event.ignored", event_type=event_type)
 
     def _handle_feedback(
-        self, handler: Callable[[GitHubPayload], bool], payload: Any, event_type: str
+        self,
+        parse: Callable[[Any], dict[str, Any] | None],
+        payload: Any,
+        event_type: str,
     ) -> None:
         """
-        Records a resolved thread or a reply on a DevMind comment as feedback.
-        Events about other comments are ignored. This is one small DB write,
-        so it runs here rather than in a task.
+        Queues a resolved thread or a reply as possible feedback. The task
+        checks that it is about a DevMind comment and that the actor is
+        trusted, which can need a GitHub call, so it isn't done here.
         """
         if not isinstance(payload, dict):
             return
-        recorded = handler(payload)
+        event = parse(payload)
+        if event is not None:
+            record_feedback_event_task.delay(event)
         log.info(
             "webhook.feedback.handled",
             event_type=event_type,
             action=str(payload.get("action", "")),
-            recorded=recorded,
+            queued=event is not None,
         )
 
     def _handle_pull_request_closed(self, payload: GitHubPayload) -> None:
@@ -146,7 +151,11 @@ class WebhookDispatcher:
         repo = Repository.objects.active().filter(github_id=github_id).first()
         if repo is None or not pr_number:
             return
-        fetch_comment_reactions_task.delay(repo_id=repo.pk, pr_number=pr_number)
+        pr_user = pr_data.get("user")
+        pr_author = str(pr_user.get("login") or "") if isinstance(pr_user, dict) else ""
+        fetch_comment_reactions_task.delay(
+            repo_id=repo.pk, pr_number=pr_number, pr_author=pr_author
+        )
         log.info(
             "webhook.pr.closed.feedback_queued",
             repo=repo.full_name,
