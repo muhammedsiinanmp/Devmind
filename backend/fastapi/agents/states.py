@@ -57,6 +57,9 @@ class ReviewState(TypedDict):
     user_id: int
     diff_chunks: list
     similar_patterns: list
+    # Formatted feedback examples (services/feedback_store.py, issue #74).
+    accepted_findings: list
+    rejected_findings: list
     prebuilt_prompt: str
     # Delimiter tag of this review's untrusted-data blocks
     # (prompt_builder.new_delimiter_tag); prebuilt_prompt uses it too.

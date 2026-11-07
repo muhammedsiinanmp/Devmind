@@ -5,6 +5,8 @@ import ReviewStatus from "../components/review/ReviewStatus";
 import { createTerminalStatusHandler } from "../lib/reviewStatusPolling";
 import { createReviewLoader, initialReviewLoadState, type ReviewLoadState } from "../lib/reviewLoader";
 import DiffViewer, { type DiffFile } from "../components/review/DiffViewer";
+import FeedbackBadge from "../components/review/FeedbackBadge";
+import type { CommentFeedback } from "../lib/commentFeedback";
 import {
   Loader2, CheckCircle, AlertTriangle, Info, ArrowLeft, ExternalLink,
   ChevronRight, GitPullRequest, RefreshCw
@@ -18,6 +20,7 @@ interface ReviewComment {
   severity: "info" | "warning" | "error" | "critical";
   body: string;
   suggested_fix: string | null;
+  feedback?: CommentFeedback | null;
 }
 
 interface ReviewDetail {
@@ -432,6 +435,7 @@ export default function ReviewDetail() {
                       <span className="text-[10px] font-bold uppercase px-2 py-0.5" style={{ backgroundColor: "var(--bg-tertiary)", color: "var(--text-muted)" }}>
                         {comment.category}
                       </span>
+                      <FeedbackBadge feedback={comment.feedback} />
                     </div>
                     <span className="text-xs font-mono" style={{ color: "var(--text-muted)" }}>
                       {comment.file_path.split('/').pop()}:{comment.line_number}

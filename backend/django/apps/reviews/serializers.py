@@ -1,10 +1,20 @@
 from rest_framework import serializers
 
-from apps.reviews.models import Review, ReviewComment, ReviewRun
+from apps.reviews.models import CommentFeedback, Review, ReviewComment, ReviewRun
+
+
+class CommentFeedbackStateSerializer(serializers.Serializer):
+    """A comment's effective feedback verdict and the source that decided it."""
+
+    signal = serializers.ChoiceField(choices=CommentFeedback.SIGNAL_CHOICES)
+    source = serializers.ChoiceField(choices=CommentFeedback.SOURCE_CHOICES)
+    updated_at = serializers.DateTimeField()
 
 
 class ReviewCommentSerializer(serializers.ModelSerializer):
     """Serializer for ReviewComment model."""
+
+    feedback = serializers.SerializerMethodField()
 
     class Meta:
         model = ReviewComment
@@ -17,8 +27,14 @@ class ReviewCommentSerializer(serializers.ModelSerializer):
             "category",
             "suggested_fix",
             "created_at",
+            "feedback",
         ]
         read_only_fields = fields
+
+    def get_feedback(self, obj: ReviewComment) -> dict | None:
+        """Null when developers gave no verdict on the comment."""
+        row = CommentFeedback.effective(obj.feedback.all())
+        return CommentFeedbackStateSerializer(row).data if row else None
 
 
 class ReviewRunSerializer(serializers.ModelSerializer):

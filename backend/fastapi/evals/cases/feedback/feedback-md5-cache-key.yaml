@@ -1,0 +1,28 @@
+# Synthetic eval case written for DevMind. Line numbers are new-file lines.
+# Feedback case (issue #74): developers rejected an earlier "MD5 is weak"
+# comment on a non-security hash. The same pattern should not be flagged.
+id: feedback-md5-cache-key
+description: MD5 builds a page-cache key, not a security value; an earlier "use SHA-256" comment on the same pattern was rejected.
+diff: |
+  diff --git a/web/cache.py b/web/cache.py
+  --- a/web/cache.py
+  +++ b/web/cache.py
+  @@ -1,3 +1,4 @@
+   import hashlib
+  -def cache_key(url):
+  -    return "page:" + url
+  +def cache_key(url, params):
+  +    canonical = url + "?" + "&".join(sorted(params))
+  +    return "page:" + hashlib.md5(canonical.encode()).hexdigest()
+expected: []  # clean diff: no findings expected
+feedback:
+  rejected:
+  - file_path: web/etag.py
+    category: security
+    severity: warning
+    body: MD5 is a broken hash function. Use hashlib.sha256 instead.
+    code: |
+      @@ -8,2 +8,2 @@ def etag_for(body):
+       def etag_for(body):
+      -    return str(len(body))
+      +    return hashlib.md5(body).hexdigest()

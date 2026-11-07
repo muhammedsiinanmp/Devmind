@@ -1,0 +1,269 @@
+{
+  "mode": "live",
+  "commit": "3d590c699527d5ad10145e0468750677a0784720",
+  "dirty_worktree": false,
+  "date_utc": "2026-11-07T09:17:44Z",
+  "date_source": "run",
+  "run_flags": {
+    "pause": 60.0,
+    "provider": "groq",
+    "only": [
+      "feedback-control-md5-password",
+      "feedback-md5-cache-key",
+      "feedback-random-jitter"
+    ],
+    "record": true,
+    "allow_partial": true,
+    "feedback": false,
+    "temperatures": {
+      "review": 0.1,
+      "google": "omit",
+      "groq": null
+    }
+  },
+  "harness_sha256": "8d1f184b568fce2decc12a20bee0647bca457e64f4b64504fa7a6c85e770f09d",
+  "case_set_sha256": "4697f58e92e5ab91c2e3fd0847089a765e8a286ffaac6062868e3a90c4e77c97",
+  "models_used": [
+    "groq/openai/gpt-oss-120b"
+  ],
+  "providers_used": [
+    "groq"
+  ],
+  "case_count": 3,
+  "cases_scored": 3,
+  "scored_case_ids": [
+    "feedback-control-md5-password",
+    "feedback-md5-cache-key",
+    "feedback-random-jitter"
+  ],
+  "errors": {},
+  "post_processing": [
+    "anchor_comments",
+    "drop_empty_body",
+    "review_comment_validation"
+  ],
+  "anchoring": {
+    "anchored": 8,
+    "snapped": 0,
+    "unanchored": 0
+  },
+  "parse_failures": {
+    "analyzer_runs_failed": 0,
+    "cases_unknown": 0,
+    "note": null
+  },
+  "metrics": {
+    "cases": 3,
+    "cases_scored": 3,
+    "cases_errored": 0,
+    "clean_cases": 2,
+    "clean_cases_with_findings": 2,
+    "clean_cases_errored": 0,
+    "clean_findings_total": 7,
+    "expected_total": 1,
+    "findings_total": 8,
+    "unique_findings_total": 7,
+    "matched": 1,
+    "matched_dedup": 1,
+    "near": 0,
+    "partial": 0,
+    "missed": 0,
+    "extra": 7,
+    "raw_findings_total": 8,
+    "valid_line_findings": 8,
+    "precision": 0.125,
+    "precision_dedup": 0.14285714285714285,
+    "precision_tolerant": 0.125,
+    "recall": 1.0,
+    "recall_tolerant": 1.0,
+    "clean_false_positive_rate": 1.0,
+    "valid_line_rate": 1.0
+  },
+  "latency_ms": {
+    "source": "measured",
+    "mean": 2294,
+    "p50": 2033,
+    "max": 3000,
+    "note": "Latency depends on the provider chain, quotas and network; compare it only between runs that used the same providers."
+  },
+  "tokens": {
+    "model_calls": 9,
+    "prompt": 6474,
+    "completion": 3548
+  },
+  "cost_usd": null,
+  "cases": [
+    {
+      "id": "feedback-control-md5-password",
+      "clean": false,
+      "error": null,
+      "expected": 1,
+      "findings": 1,
+      "matched": 1,
+      "near": 0,
+      "partial": 0,
+      "missed": 0,
+      "extra": 0,
+      "valid_lines": 1,
+      "parse_failures": 0,
+      "latency_ms": 2033,
+      "model_calls": 3,
+      "raw_findings": [
+        {
+          "file_path": "accounts/passwords.py",
+          "line_number": 3,
+          "category": "security",
+          "severity": "critical",
+          "body": "Replacing Django's make_password with a raw MD5 hash stores passwords insecurely. MD5 is fast, unsalted, and vulnerable to brute‑force and rainbow‑table attacks, violating password storage best practices."
+        }
+      ],
+      "posted_findings": [
+        {
+          "file_path": "accounts/passwords.py",
+          "line_number": 3,
+          "category": "security",
+          "severity": "critical",
+          "body": "Replacing Django's make_password with a raw MD5 hash stores passwords insecurely. MD5 is fast, unsalted, and vulnerable to brute‑force and rainbow‑table attacks, violating password storage best practices."
+        }
+      ]
+    },
+    {
+      "id": "feedback-md5-cache-key",
+      "clean": true,
+      "error": null,
+      "expected": 0,
+      "findings": 6,
+      "matched": 0,
+      "near": 0,
+      "partial": 0,
+      "missed": 0,
+      "extra": 6,
+      "valid_lines": 6,
+      "parse_failures": 0,
+      "latency_ms": 3000,
+      "model_calls": 3,
+      "raw_findings": [
+        {
+          "file_path": "web/cache.py",
+          "line_number": 2,
+          "category": "compatibility",
+          "severity": "error",
+          "body": "The function signature changed from cache_key(url) to cache_key(url, params) without providing a default value, breaking existing callers that only pass a URL."
+        },
+        {
+          "file_path": "web/cache.py",
+          "line_number": 3,
+          "category": "correctness",
+          "severity": "warning",
+          "body": "The code assumes 'params' is an iterable of strings and joins them directly, which will drop parameter values and may produce incorrect cache keys."
+        },
+        {
+          "file_path": "web/cache.py",
+          "line_number": 3,
+          "category": "quality",
+          "severity": "warning",
+          "body": "Manual concatenation of URL and query string does not handle proper URL encoding, leading to malformed cache keys for special characters."
+        },
+        {
+          "file_path": "web/cache.py",
+          "line_number": 2,
+          "category": "test",
+          "severity": "warning",
+          "body": "No test covers calling cache_key with an empty params collection, which may produce a trailing '?' in the canonical string or an unexpected hash."
+        },
+        {
+          "file_path": "web/cache.py",
+          "line_number": 3,
+          "category": "test",
+          "severity": "warning",
+          "body": "Missing test to verify that different ordering of the same parameters yields identical cache keys, ensuring order‑independence of the sorted(params) logic."
+        },
+        {
+          "file_path": "web/cache.py",
+          "line_number": 4,
+          "category": "security",
+          "severity": "info",
+          "body": "MD5 is used for hashing the cache key; while acceptable for non-cryptographic purposes, a stronger hash like SHA-256 is preferred to avoid potential collision concerns."
+        }
+      ],
+      "posted_findings": [
+        {
+          "file_path": "web/cache.py",
+          "line_number": 2,
+          "category": "compatibility",
+          "severity": "error",
+          "body": "The function signature changed from cache_key(url) to cache_key(url, params) without providing a default value, breaking existing callers that only pass a URL."
+        },
+        {
+          "file_path": "web/cache.py",
+          "line_number": 3,
+          "category": "correctness",
+          "severity": "warning",
+          "body": "The code assumes 'params' is an iterable of strings and joins them directly, which will drop parameter values and may produce incorrect cache keys."
+        },
+        {
+          "file_path": "web/cache.py",
+          "line_number": 3,
+          "category": "quality",
+          "severity": "warning",
+          "body": "Manual concatenation of URL and query string does not handle proper URL encoding, leading to malformed cache keys for special characters."
+        },
+        {
+          "file_path": "web/cache.py",
+          "line_number": 2,
+          "category": "test",
+          "severity": "warning",
+          "body": "No test covers calling cache_key with an empty params collection, which may produce a trailing '?' in the canonical string or an unexpected hash."
+        },
+        {
+          "file_path": "web/cache.py",
+          "line_number": 3,
+          "category": "test",
+          "severity": "warning",
+          "body": "Missing test to verify that different ordering of the same parameters yields identical cache keys, ensuring order‑independence of the sorted(params) logic."
+        },
+        {
+          "file_path": "web/cache.py",
+          "line_number": 4,
+          "category": "security",
+          "severity": "info",
+          "body": "MD5 is used for hashing the cache key; while acceptable for non-cryptographic purposes, a stronger hash like SHA-256 is preferred to avoid potential collision concerns."
+        }
+      ]
+    },
+    {
+      "id": "feedback-random-jitter",
+      "clean": true,
+      "error": null,
+      "expected": 0,
+      "findings": 1,
+      "matched": 0,
+      "near": 0,
+      "partial": 0,
+      "missed": 0,
+      "extra": 1,
+      "valid_lines": 1,
+      "parse_failures": 0,
+      "latency_ms": 1850,
+      "model_calls": 3,
+      "raw_findings": [
+        {
+          "file_path": "clients/retry.py",
+          "line_number": 3,
+          "category": "test",
+          "severity": "warning",
+          "body": "The added use of random.uniform makes backoff_delay nondeterministic, which can cause flaky tests. Existing tests (if any) likely only verify the deterministic part. Add tests that mock or control random.uniform, or refactor the function to accept an optional random generator for deterministic testing."
+        }
+      ],
+      "posted_findings": [
+        {
+          "file_path": "clients/retry.py",
+          "line_number": 3,
+          "category": "test",
+          "severity": "warning",
+          "body": "The added use of random.uniform makes backoff_delay nondeterministic, which can cause flaky tests. Existing tests (if any) likely only verify the deterministic part. Add tests that mock or control random.uniform, or refactor the function to accept an optional random generator for deterministic testing."
+        }
+      ]
+    }
+  ]
+}

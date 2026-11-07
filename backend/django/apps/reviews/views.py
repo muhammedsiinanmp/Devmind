@@ -57,7 +57,7 @@ class ReviewDetailView(RetrieveAPIView):
     permission_classes = [IsAuthenticated]
     serializer_class = ReviewSerializer
     queryset = Review.objects.select_related("repository").prefetch_related(
-        "comments", "run"
+        "comments__feedback", "run"
     )
 
     def get_object(self):

@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "case_id": "feedback-random-jitter",
+  "case_sha256": "0142c26e93141498e526e516c947221b7ea8138e9ec48d2f000679be3b45875f",
+  "latency_ms": 2292,
+  "calls": [
+    {
+      "prompt_sha256": "85907615d5c0a5e798737ab33f4657af020b680fb7d5a66cf2ee316a2ccc7358",
+      "response": "{\"findings\": []}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 866,
+      "completion_tokens": 255,
+      "provider": "groq"
+    },
+    {
+      "prompt_sha256": "7065b026fc719b975bb6ffcf67fb3729fd053b9519c154b7ea12ddc6ea6d3e0d",
+      "response": "{\"findings\":[{\"file_path\":\"clients/retry.py\",\"line_number\":3,\"category\":\"test\",\"severity\":\"info\",\"body\":\"The added random jitter makes the function nondeterministic, which can cause flaky tests if not covered. Add unit tests that assert the returned delay is within the expected range and consider allowing injection of a random generator for deterministic testing.\",\"suggested_fix\":\"def backoff_delay(attempt, base=0.5, rng=None):\\\\n    jitter = rng.uniform(0, base) if rng else random.uniform(0, base)\\\\n    return base * 2 ** attempt + jitter\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 856,
+      "completion_tokens": 614,
+      "provider": "groq"
+    },
+    {
+      "prompt_sha256": "c6c7dc5ce738b8300c7baac4a74011d4ed9106bb2892685bf513b94d330ed3d9",
+      "response": "{\"findings\": [{\"file_path\": \"clients/retry.py\", \"line_number\": 3, \"category\": \"quality\", \"severity\": \"warning\", \"body\": \"The function backoff_delay does not validate its inputs or provide type hints/documentation. Passing a negative or non‑integer 'attempt' will produce unexpected fractional delays, and the lack of a docstring makes the jitter behavior unclear.\", \"suggested_fix\": \"def backoff_delay(attempt: int, base: float = 0.5) -> float:\\n    \\\"\\\"\\\"Calculate exponential backoff with jitter.\\n\\n    Args:\\n        attempt: Non‑negative retry attempt count.\\n        base: Base delay in seconds.\\n    Returns:\\n        Delay in seconds.\\n    \\\"\\\"\\\"\\n    if not isinstance(attempt, int) or attempt < 0:\\n        raise ValueError(\\\"'attempt' must be a non‑negative integer\\\")\\n    return base * 2 ** attempt + random.uniform(0, base)\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 860,
+      "completion_tokens": 585,
+      "provider": "groq"
+    }
+  ],
+  "recorded_utc": "2026-11-07T09:16:41Z"
+}

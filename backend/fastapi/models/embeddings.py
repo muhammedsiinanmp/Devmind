@@ -71,6 +71,47 @@ class CodeEmbedding(Base):
     )
 
 
+class FeedbackEmbedding(Base):
+    """
+    A DevMind comment developers accepted or rejected, embedded with its code
+    hunk. Created by migrations/sql/0004_feedback_embeddings.sql.
+    """
+
+    __tablename__ = "feedback_embeddings"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    repo_full_name: Mapped[str] = mapped_column(String(200), nullable=False)
+    # Django's ReviewComment id.
+    comment_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    signal: Mapped[str] = mapped_column(String(10), nullable=False)
+    file_path: Mapped[str] = mapped_column(String(500), nullable=False)
+    category: Mapped[str] = mapped_column(String(20), nullable=False)
+    severity: Mapped[str] = mapped_column(String(20), nullable=False)
+    body: Mapped[str] = mapped_column(Text, nullable=False)
+    code_hunk: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    embedding: Mapped[list[float]] = mapped_column(Vector(768), nullable=False)
+    embedding_model: Mapped[str] = mapped_column(String(100), nullable=False)
+    # PR the comment was on ("PR#12"); that PR's reviews leave the row out.
+    source_ref: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=datetime.utcnow
+    )
+
+    __table_args__ = (
+        Index(
+            "ux_feedback_embeddings_comment_model",
+            "comment_id",
+            "embedding_model",
+            unique=True,
+        ),
+        Index(
+            "ix_feedback_embeddings_repo_model",
+            "repo_full_name",
+            "embedding_model",
+        ),
+    )
+
+
 class ReviewEmbedding(Base):
     """Review/feedback embedding stored in pgvector."""
 

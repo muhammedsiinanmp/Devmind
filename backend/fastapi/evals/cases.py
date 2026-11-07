@@ -1,7 +1,7 @@
 """Load and validate eval cases from evals/cases/*.yaml."""
 
 import hashlib
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import yaml
@@ -9,7 +9,30 @@ import yaml
 from evals.matcher import SEVERITY_RANK, Expected
 
 CASES_DIR = Path(__file__).parent / "cases"
+# Cases with feedback examples (issue #74). Not in the default set, so the
+# default run stays comparable with the committed reference results; run
+# them with --cases-dir evals/cases/feedback.
+FEEDBACK_CASES_DIR = CASES_DIR / "feedback"
 CATEGORIES = {"security", "quality", "tests"}
+
+
+SIGNALS = ("accepted", "rejected")
+
+
+@dataclass(frozen=True)
+class FeedbackItem:
+    """
+    A feedback example given to the case's review, as if retrieved from the
+    repository's earlier reviews (issue #74). Cases supply them directly, so
+    the harness needs no database or embedding API.
+    """
+
+    signal: str
+    file_path: str
+    category: str
+    severity: str
+    body: str
+    code: str = ""
 
 
 @dataclass(frozen=True)
@@ -18,11 +41,51 @@ class Case:
     description: str
     diff: str
     expected: list[Expected]
+    feedback: tuple[FeedbackItem, ...] = ()
+    # Set by without_feedback() on a case that had feedback.
+    feedback_removed: bool = False
 
     @property
     def digest(self) -> str:
         """Hash of the diff; cassettes recorded for an older diff are stale."""
         return hashlib.sha256(self.diff.encode()).hexdigest()
+
+    @property
+    def cassette_stem(self) -> str:
+        """
+        Cassette file name without ".json". A feedback case run without its
+        examples (--no-feedback) sends other prompts, so it has its own
+        cassette, ``<id>.no-feedback.json``.
+        """
+        return f"{self.id}.no-feedback" if self.feedback_removed else self.id
+
+    def without_feedback(self) -> "Case":
+        """This case with no feedback examples (unchanged if it had none)."""
+        if not self.feedback:
+            return self
+        return replace(self, feedback=(), feedback_removed=True)
+
+    def feedback_context(self):
+        """The examples as the review agent's ``feedback`` argument, formatted
+        by the same code production uses; None without examples."""
+        if not self.feedback:
+            return None
+        from services.feedback_store import FeedbackExample, feedback_context
+
+        def examples(signal: str) -> list:
+            return [
+                FeedbackExample(
+                    file_path=f.file_path,
+                    category=f.category,
+                    severity=f.severity,
+                    body=f.body,
+                    code=f.code,
+                )
+                for f in self.feedback
+                if f.signal == signal
+            ]
+
+        return feedback_context(examples("accepted"), examples("rejected"))
 
 
 def _parse_range(case_id: str, raw: object) -> tuple[int, int]:
@@ -64,6 +127,39 @@ def _parse_expected(case_id: str, item: dict) -> Expected:
     )
 
 
+def _parse_feedback(case_id: str, raw: object) -> tuple[FeedbackItem, ...]:
+    """``feedback: {accepted: [...], rejected: [...]}``; both lists optional."""
+    if raw is None:
+        return ()
+    if not isinstance(raw, dict) or not set(raw) <= set(SIGNALS):
+        raise ValueError(f"{case_id}: feedback must map accepted/rejected to lists")
+    items = []
+    for signal in SIGNALS:
+        entries = raw.get(signal) or []
+        if not isinstance(entries, list):
+            raise ValueError(f"{case_id}: feedback.{signal} must be a list")
+        for entry in entries:
+            fields = ("file_path", "category", "severity", "body")
+            if not isinstance(entry, dict) or not all(
+                isinstance(entry.get(name), str) for name in fields
+            ):
+                # Strings only: YAML reads an unquoted "no" or "1" as another type.
+                raise ValueError(f"{case_id}: malformed feedback item {entry!r}")
+            if not entry["body"].strip():
+                raise ValueError(f"{case_id}: feedback item without a body")
+            items.append(
+                FeedbackItem(
+                    signal=signal,
+                    file_path=entry["file_path"],
+                    category=entry["category"],
+                    severity=entry["severity"],
+                    body=entry["body"],
+                    code=str(entry.get("code") or ""),
+                )
+            )
+    return tuple(items)
+
+
 def load_case(path: Path) -> Case:
     data = yaml.safe_load(path.read_text())
     if not isinstance(data, dict):
@@ -80,6 +176,7 @@ def load_case(path: Path) -> Case:
         description=str(data.get("description", "")),
         diff=diff,
         expected=[_parse_expected(case_id, item) for item in expected_raw],
+        feedback=_parse_feedback(case_id, data.get("feedback")),
     )
 
 

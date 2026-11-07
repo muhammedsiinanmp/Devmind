@@ -274,4 +274,7 @@ CELERY_TASK_ROUTES = {
     "apps.reviews.tasks.trigger_review_task": {"queue": "default"},
     "apps.reviews.tasks.post_github_comments_task": {"queue": "default"},
     "apps.reviews.tasks.cleanup_old_reviews": {"queue": "default"},
+    "apps.reviews.tasks.fetch_comment_reactions_task": {"queue": "default"},
+    "apps.reviews.tasks.sync_comment_feedback_task": {"queue": "default"},
+    "apps.reviews.tasks.record_feedback_event_task": {"queue": "default"},
 }

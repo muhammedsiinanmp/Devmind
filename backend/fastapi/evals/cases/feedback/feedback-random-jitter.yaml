@@ -1,0 +1,26 @@
+# Synthetic eval case written for DevMind. Line numbers are new-file lines.
+# Feedback case (issue #74): developers rejected an earlier "use secrets"
+# comment on retry jitter. The same pattern should not be flagged.
+id: feedback-random-jitter
+description: random.uniform adds jitter to a retry delay, which needs no cryptographic randomness; an earlier "use secrets" comment on the same pattern was rejected.
+diff: |
+  diff --git a/clients/retry.py b/clients/retry.py
+  --- a/clients/retry.py
+  +++ b/clients/retry.py
+  @@ -1,3 +1,3 @@
+   import random
+   def backoff_delay(attempt, base=0.5):
+  -    return base * 2 ** attempt
+  +    return base * 2 ** attempt + random.uniform(0, base)
+expected: []  # clean diff: no findings expected
+feedback:
+  rejected:
+  - file_path: clients/poll.py
+    category: security
+    severity: warning
+    body: The random module is not cryptographically secure. Use the secrets module for random values.
+    code: |
+      @@ -12,2 +12,2 @@ def wait(interval):
+       def wait(interval):
+      -    time.sleep(interval)
+      +    time.sleep(interval + random.random())

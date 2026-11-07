@@ -145,6 +145,14 @@ async def _run_analyzer(
     return comments or [], run
 
 
+def _feedback_fields(state: ReviewState) -> dict[str, list]:
+    """The review's feedback examples for a PromptContext (issue #74)."""
+    return {
+        "accepted_findings": state.get("accepted_findings") or [],
+        "rejected_findings": state.get("rejected_findings") or [],
+    }
+
+
 async def analyze_security(state: ReviewState) -> dict[str, Any]:
     """Analyze the diff for security vulnerabilities (one LLM call)."""
     logger.info("analyze_security repo=%s", state["repo_full_name"])
@@ -152,6 +160,7 @@ async def analyze_security(state: ReviewState) -> dict[str, Any]:
     context = PromptContext(
         diff_chunks=state.get("diff_chunks") or parse_diff(state["diff_text"]),
         similar_patterns=state.get("similar_patterns", []),
+        **_feedback_fields(state),
     )
     comments, run = await _run_analyzer(
         state, "security", context, "Analyze for security vulnerabilities."
@@ -165,6 +174,7 @@ async def analyze_quality(state: ReviewState) -> dict[str, Any]:
 
     context = PromptContext(
         diff_chunks=state.get("diff_chunks") or parse_diff(state["diff_text"]),
+        **_feedback_fields(state),
     )
     comments, run = await _run_analyzer(
         state, "quality", context, "Analyze for quality issues."
@@ -178,6 +188,7 @@ async def analyze_tests(state: ReviewState) -> dict[str, Any]:
 
     context = PromptContext(
         diff_chunks=state.get("diff_chunks") or parse_diff(state["diff_text"]),
+        **_feedback_fields(state),
     )
     comments, run = await _run_analyzer(
         state, "tests", context, "Analyze test coverage."
@@ -443,6 +454,7 @@ async def run_review_agent(
     similar_patterns: list[str] | None = None,
     share_prompt: bool = False,
     deadline_seconds: float | None = None,
+    feedback: Any = None,
 ) -> dict[str, Any]:
     """
     Run the full review agent.
@@ -471,6 +483,10 @@ async def run_review_agent(
             batch's diff plus similar_patterns), as the router does
         deadline_seconds: Time the batches may take (default:
             review_deadline_seconds)
+        feedback: The repository's accepted and rejected feedback examples
+            (services.feedback_store.FeedbackContext), given to every
+            analyzer after all other context. They don't count in the
+            diff's budget, so batching is the same with or without them.
 
     Returns:
         Final state, including synthesized_comments, analyzer_runs,
@@ -480,6 +496,8 @@ async def run_review_agent(
     settings = get_settings()
     chunks = diff_chunks or parse_diff(diff_text)
     patterns = similar_patterns or []
+    accepted = list(getattr(feedback, "accepted", None) or [])
+    rejected = list(getattr(feedback, "rejected", None) or [])
     # One delimiter tag per review, shared by every batch and analyzer.
     tag = new_delimiter_tag()
     plan = plan_batches(
@@ -512,7 +530,13 @@ async def run_review_agent(
         prompt = ""
         if share_prompt:
             prompt = build_review_prompt(
-                PromptContext(diff_chunks=batch, similar_patterns=patterns), tag=tag
+                PromptContext(
+                    diff_chunks=batch,
+                    similar_patterns=patterns,
+                    accepted_findings=accepted,
+                    rejected_findings=rejected,
+                ),
+                tag=tag,
             )
         initial_state: ReviewState = {
             "diff_text": diff_text,
@@ -521,6 +545,8 @@ async def run_review_agent(
             "user_id": user_id,
             "diff_chunks": batch,
             "similar_patterns": patterns,
+            "accepted_findings": accepted,
+            "rejected_findings": rejected,
             "prebuilt_prompt": prompt,
             "delimiter_tag": tag,
             "security_comments": [],

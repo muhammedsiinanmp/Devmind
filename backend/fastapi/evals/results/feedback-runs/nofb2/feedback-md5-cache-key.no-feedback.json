@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "case_id": "feedback-md5-cache-key",
+  "case_sha256": "bc4bc1e5c60a05d8712efea9e7a9d2ae1f1b64141f5dd04e17f2ccc889e0851d",
+  "latency_ms": 3000,
+  "calls": [
+    {
+      "prompt_sha256": "02e79116f1549912fe0dd346d67e5c20e60b8a40c130057a6226bda87a4d1193",
+      "response": "{\"findings\": []}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 738,
+      "completion_tokens": 262,
+      "provider": "groq"
+    },
+    {
+      "prompt_sha256": "be93ef251d4b2bd658d38962d2f90a46a00011e17ec30ad7e0e759de9746e841",
+      "response": "{\"findings\": [{\"file_path\": \"web/cache.py\", \"line_number\": 2, \"category\": \"test\", \"severity\": \"warning\", \"body\": \"No test covers calling cache_key with an empty params collection, which may produce a trailing '?' in the canonical string or an unexpected hash.\", \"suggested_fix\": \"Add a unit test that calls cache_key(url, {}) and asserts the returned hash matches the expected value for the URL without query parameters.\"}, {\"file_path\": \"web/cache.py\", \"line_number\": 3, \"category\": \"test\", \"severity\": \"warning\", \"body\": \"Missing test to verify that different ordering of the same parameters yields identical cache keys, ensuring order‑independence of the sorted(params) logic.\", \"suggested_fix\": \"Add a test that calls cache_key(url, {'a': '1', 'b': '2'}) and cache_key(url, {'b': '2', 'a': '1'}) and asserts the two hashes are equal.\"}, {\"file_path\": \"web/cache.py\", \"line_number\": 3, \"category\": \"test\", \"severity\": \"warning\", \"body\": \"No test checks handling of non‑string parameter values; joining non‑string types will raise a TypeError.\", \"suggested_fix\": \"Add a test that passes params with integer or None values (e.g., {'page': 1, 'lang': None}) and either expects a TypeError or updates the implementation to convert values to strings before joining.\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 728,
+      "completion_tokens": 794,
+      "provider": "groq"
+    },
+    {
+      "prompt_sha256": "c2d94583eb38747633e1e9962b68f16969c76b7b3f0b6680b39626363cda77cf",
+      "response": "{\"findings\": [{\"file_path\": \"web/cache.py\", \"line_number\": 2, \"category\": \"compatibility\", \"severity\": \"error\", \"body\": \"The function signature changed from cache_key(url) to cache_key(url, params) without providing a default value, breaking existing callers that only pass a URL.\", \"suggested_fix\": \"def cache_key(url, params=None):\\n    if params is None:\\n        params = {}\"}, {\"file_path\": \"web/cache.py\", \"line_number\": 3, \"category\": \"correctness\", \"severity\": \"warning\", \"body\": \"The code assumes 'params' is an iterable of strings and joins them directly, which will drop parameter values and may produce incorrect cache keys.\", \"suggested_fix\": \"import urllib.parse\\n    query = urllib.parse.urlencode(sorted(params.items())) if isinstance(params, dict) else urllib.parse.urlencode(sorted(params))\\n    canonical = f\\\"{url}?{query}\\\" if query else url\"}, {\"file_path\": \"web/cache.py\", \"line_number\": 3, \"category\": \"quality\", \"severity\": \"warning\", \"body\": \"Manual concatenation of URL and query string does not handle proper URL encoding, leading to malformed cache keys for special characters.\", \"suggested_fix\": \"Use urllib.parse.urlencode as shown in the previous fix to ensure proper encoding.\"}, {\"file_path\": \"web/cache.py\", \"line_number\": 4, \"category\": \"security\", \"severity\": \"info\", \"body\": \"MD5 is used for hashing the cache key; while acceptable for non-cryptographic purposes, a stronger hash like SHA-256 is preferred to avoid potential collision concerns.\", \"suggested_fix\": \"return \\\"page:\\\" + hashlib.sha256(canonical.encode()).hexdigest()\"}]}",
+      "model_used": "groq/openai/gpt-oss-120b",
+      "prompt_tokens": 732,
+      "completion_tokens": 878,
+      "provider": "groq"
+    }
+  ],
+  "recorded_utc": "2026-11-07T09:18:46Z"
+}
