@@ -2,7 +2,7 @@
 
 ## Setup
 
-Follow [Quick start](README.md#quick-start-local-development) in the README to run the stack, and [docs/ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md) for every environment variable and workflow. Never commit `.env` or real credentials.
+Follow [Quick start](README.md#quick-start) in the README to run the stack, and [docs/ENGINEERING_GUIDE.md](docs/ENGINEERING_GUIDE.md) for every environment variable and workflow. Never commit `.env` or real credentials.
 
 ## Branches and pull requests
 
