@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 import time
 from typing import TYPE_CHECKING, Any
+from urllib.parse import quote, urlparse
 
 import requests
 import structlog
@@ -25,6 +26,8 @@ from tenacity import (
 
 from apps.repositories.exceptions import (
     GitHubAuthError,
+    GitHubNotFoundError,
+    GitHubPermissionError,
     GitHubRateLimitError,
     GitHubServiceError,
     WebhookInstallError,
@@ -99,8 +102,17 @@ class GitHubService:
             retry_after = response.headers.get("Retry-After", "")
             if retry_after.isdigit():
                 raise GitHubRateLimitError(reset_at=int(time.time()) + int(retry_after))
-            reset_at_raw = response.headers.get("X-RateLimit-Reset", "0")
-            raise GitHubRateLimitError(reset_at=int(reset_at_raw))
+            # A 403 is a rate limit only when the quota is used up; otherwise
+            # the token lacks access, and waiting won't help.
+            remaining = response.headers.get("X-RateLimit-Remaining")
+            if response.status_code == 429 or remaining == "0":
+                reset_at_raw = response.headers.get("X-RateLimit-Reset", "0")
+                raise GitHubRateLimitError(
+                    reset_at=int(reset_at_raw) if reset_at_raw.isdigit() else 0
+                )
+            raise GitHubPermissionError("GitHub denied access (403).")
+        if response.status_code == 404:
+            raise GitHubNotFoundError("GitHub resource not found (404).")
         if response.status_code in _RETRYABLE_STATUS:
             raise GitHubServiceError(
                 f"GitHub API transient error: {response.status_code}"
@@ -270,34 +282,86 @@ class GitHubService:
         self._handle_response_errors(response)
         return response.text
 
+    def _budgeted_get(
+        self, url: str, params: dict[str, Any] | None = None
+    ) -> requests.Response:
+        """
+        GET that stops before the request when an earlier response of this
+        service showed fewer than RATE_LIMIT_FLOOR requests left in the
+        token's hourly quota (raises GitHubRateLimitError with the reset).
+        Used by the feedback reads, so they never use up the quota that
+        posting reviews needs.
+        """
+        remaining = getattr(self, "_quota_remaining", None)
+        if remaining is not None and remaining < RATE_LIMIT_FLOOR:
+            raise GitHubRateLimitError(reset_at=getattr(self, "_quota_reset", 0))
+        response = self._session.get(url, params=params or {}, timeout=30.0)
+        remaining_raw = response.headers.get("X-RateLimit-Remaining", "")
+        if remaining_raw.isdigit():
+            self._quota_remaining = int(remaining_raw)
+            reset_raw = response.headers.get("X-RateLimit-Reset", "")
+            self._quota_reset = int(reset_raw) if reset_raw.isdigit() else 0
+        self._handle_response_errors(response)
+        return response
+
     def _get_all_pages(self, url: str) -> list[dict[str, Any]]:
         """
-        GETs every page of a GitHub list endpoint, 100 items per page.
-
-        Raises GitHubRateLimitError instead of fetching another page when the
-        quota left is under RATE_LIMIT_FLOOR.
+        GETs every page of a GitHub list endpoint, 100 items per page, within
+        the quota floor (_budgeted_get). Next-page links are only followed to
+        https://api.github.com, so the token is never sent anywhere else.
         """
         items: list[dict[str, Any]] = []
         next_url: str | None = url
         params: dict[str, int] = {"per_page": 100}
         while next_url is not None:
-            response = self._session.get(next_url, params=params, timeout=30.0)
-            self._handle_response_errors(response)
+            response = self._budgeted_get(next_url, params)
             items.extend(response.json())
 
             link_header = response.headers.get("Link", "")
             next_match = re.search(r'<([^>]+)>;\s*rel="next"', link_header)
             if not next_match:
                 break
-            remaining = response.headers.get("X-RateLimit-Remaining", "")
-            if remaining.isdigit() and int(remaining) < RATE_LIMIT_FLOOR:
-                reset_at = response.headers.get("X-RateLimit-Reset", "")
-                raise GitHubRateLimitError(
-                    reset_at=int(reset_at) if reset_at.isdigit() else 0
-                )
             next_url = next_match.group(1)
+            parsed = urlparse(next_url)
+            if parsed.scheme != "https" or parsed.netloc != "api.github.com":
+                log.warning("github.pagination.foreign_link", host=parsed.netloc)
+                break
             params = {}  # The next URL already carries the query string.
         return items
+
+    def get_collaborator_permission(self, repo_full_name: str, login: str) -> str:
+        """
+        The user's permission on the repository as GitHub's ``permission``
+        field gives it: "admin", "write", "read" or "none". GitHub maps
+        maintain to write, triage to read, and a custom role to its base
+        role there (``role_name`` can be a custom name, so it isn't used).
+        A user GitHub doesn't know (404) is "none".
+        """
+        try:
+            response = self._budgeted_get(
+                f"{GITHUB_API_BASE}/repos/{repo_full_name}/collaborators/"
+                f"{quote(login, safe='')}/permission"
+            )
+        except GitHubNotFoundError:
+            return "none"
+        return str(response.json().get("permission") or "none")
+
+    def list_review_comment_reactions(
+        self, repo_full_name: str, comment_id: int
+    ) -> list[dict[str, Any]]:
+        """Every reaction on one pull request review comment, with its user."""
+        return self._get_all_pages(
+            f"{GITHUB_API_BASE}/repos/{repo_full_name}/pulls/comments/"
+            f"{comment_id}/reactions"
+        )
+
+    def get_pull_request_author(self, repo_full_name: str, pr_number: int) -> str:
+        """Login of the user who opened the pull request."""
+        response = self._budgeted_get(
+            f"{GITHUB_API_BASE}/repos/{repo_full_name}/pulls/{pr_number}"
+        )
+        user = response.json().get("user") or {}
+        return str(user.get("login") or "")
 
     def list_pull_request_review_comments(
         self, repo_full_name: str, pr_number: int

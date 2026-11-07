@@ -78,7 +78,8 @@ class TestGitHubServiceFetchRepositories:
             re.compile(r"https://api.github.com/user/repos"),
             json={"message": "rate limit exceeded"},
             status=403,
-            headers={"X-RateLimit-Reset": "9999999999"},
+            # GitHub sends Remaining 0 with a primary rate limit's 403.
+            headers={"X-RateLimit-Remaining": "0", "X-RateLimit-Reset": "9999999999"},
         )
         with pytest.raises(GitHubRateLimitError) as exc_info:
             github_service.fetch_user_repositories()
