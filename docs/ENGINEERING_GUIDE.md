@@ -24,7 +24,19 @@
 | Python + `uv` | Python 3.12 (`.python-version`: 3.12.4) | Running backend tests outside Docker |
 | GitHub OAuth App | - | Client ID + secret for login |
 
-The backend containers install their own Python and `uv`. You need local Python and `uv` only to run tests outside Docker.
+The backend containers install their own Python and `uv`. You need local Python and `uv` only to run tests, `make providers-check` and the evals outside Docker.
+
+### Tech stack
+
+| Layer | Technology |
+|---|---|
+| API, auth, orchestration | Django 5, Django REST Framework, SimpleJWT (rotating refresh tokens with blacklist), drf-spectacular |
+| Background work | Celery 5 with Redis broker and result backend |
+| AI service | FastAPI 0.111, LangGraph, SQLAlchemy (async) + asyncpg, tiktoken |
+| Retrieval | PostgreSQL 16 + pgvector (`Vector(768)`, HNSW cosine index), Google `gemini-embedding-001` embeddings at 768 dimensions |
+| Frontend | React 19, TypeScript 6, Vite 8, Tailwind CSS 4, Zustand, React Router 7, axios |
+| Observability | django-prometheus and prometheus-fastapi-instrumentator (HTTP request metrics) plus three FastAPI review metrics, Prometheus, a provisioned Grafana dashboard, Flower, optional Sentry |
+| Tooling | Python 3.12, uv, pnpm, Docker Compose, GitHub Actions |
 
 ---
 
@@ -51,12 +63,12 @@ There's no `FERNET_KEY` variable. The encryption key comes from `DJANGO_SECRET_K
 |---|---|
 | `GOOGLE_AI_API_KEY` | Google AI Studio key. Used for `GOOGLE_MODEL` (first server provider) and for `gemini-embedding-001` embeddings (`EMBEDDING_MODEL`). |
 | `GROQ_API_KEY` | Groq key for `GROQ_MODEL` (second) |
-| `GOOGLE_MODEL` | Default `gemini-3.6-flash`. `gemini-3.5-flash`, the earlier default, is deprecated: Google routes requests for it to `gemini-3.6-flash`. In a live check on 2026-11-06, `gemini-3.6-flash` answered a JSON-mode request with no temperature (200 in 2.3 s), and `gemini-3.8-flash` returned 503 ("currently experiencing high demand"). Sources: [What's new in Gemini 3.5 Flash](https://aistudio.google.com/docs/whats-new-gemini-3.5), [Prompt engineering](https://aistudio.google.com/docs/prompting-strategies) and the [Gemini 3.5 Flash model page](https://aistudio.google.com/docs/models/gemini-3.5-flash). |
+| `GOOGLE_MODEL` | Default `gemini-3.6-flash`. Model notes and live-check results: [SYSTEM_ARCHITECTURE.md, LLM provider failover](SYSTEM_ARCHITECTURE.md#llm-provider-failover). |
 | `GROQ_MODEL` | Default `openai/gpt-oss-120b` |
 | `LLM_HEALTH_CACHE_SECONDS` | Default `300`. How long FastAPI `/health` caches each provider's model listing. |
 | `LLM_FAILOVER_ENABLED` | Default `True`. When `False`, only the first provider in the chain is tried. |
 | `REVIEW_TEMPERATURE` | Default `0.1`. Sampling temperature for the review analyzers' LLM calls (0.0 to 2.0). |
-| `GOOGLE_TEMPERATURE` | Default `omit`. Temperature for requests to the built-in Google provider: a number (0.0 to 2.0) replaces `REVIEW_TEMPERATURE`, `omit` (any case, surrounding spaces ignored) sends no temperature so the model's default applies, and unset or empty uses `REVIEW_TEMPERATURE`. The default follows Google's guidance for Gemini 3.x models not to change the sampling defaults ([What's new in Gemini 3.5 Flash](https://aistudio.google.com/docs/whats-new-gemini-3.5), [Prompt engineering](https://aistudio.google.com/docs/prompting-strategies) and the [Gemini 3.5 Flash model page](https://aistudio.google.com/docs/models/gemini-3.5-flash)); it isn't a DevMind measurement, since the evals run on Groq for comparability. |
+| `GOOGLE_TEMPERATURE` | Default `omit`. Temperature for requests to the built-in Google provider: a number (0.0 to 2.0) replaces `REVIEW_TEMPERATURE`, `omit` (any case, surrounding spaces ignored) sends no temperature so the model's default applies, and unset or empty uses `REVIEW_TEMPERATURE`. The default follows Google's guidance for Gemini 3.x models, not a DevMind measurement ([sources](SYSTEM_ARCHITECTURE.md#langgraph-agent-4-node-stategraph)). |
 | `GROQ_TEMPERATURE` | Default unset (uses `REVIEW_TEMPERATURE`). Same values as `GOOGLE_TEMPERATURE`, for the built-in Groq provider. BYOK keys aren't affected by either setting: BYOK Gemini (`google_vertex`) keys always send no temperature, and other BYOK keys use `REVIEW_TEMPERATURE`. |
 | `REVIEW_DEADLINE_SECONDS` | Default `100`. Seconds a review may take from the start of `POST /review/analyze`. Batches still running then are cancelled; finished batches' findings are returned and the rest of the files are reported as skipped (`deadline`). If no batch finished, `/review/analyze` returns 504 `review_deadline` and the review fails (Celery retries it) rather than looking clean. Django reads it from the same `.env` to check `FASTAPI_TIMEOUT_SECONDS`, so set it where both services see it. The default is reasoned from the providers' rate limits, not measured. |
 | `REVIEW_MAX_BATCHES` | Default `6`. Most file batches one review runs; files in later batches are reported as skipped (`batch_limit`). |
@@ -216,6 +228,26 @@ Each host port can be changed with an environment variable read by compose inter
 | `grafana-open` / `prometheus-open` / `prometheus-targets` | Observability helpers |
 | `ngrok` | `ngrok http 8000` |
 
+### Repository layout
+
+```
+backend/
+  django/            Django project (devmind/ settings, urls, celery)
+    apps/accounts/   GitHub OAuth, users, encrypted tokens, BYOK LLM configs
+    apps/repositories/  repo sync, webhook install + receiver
+    apps/reviews/    Review models, orchestrator, GitHub comment poster
+    apps/core/       structlog configuration, database-level migrations (pgvector)
+    tests/           end-to-end pipeline test
+  fastapi/           AI service
+    agents/          LangGraph review agent and state
+    evals/           review-quality eval cases, harness, cassettes, results
+    routers/         /review, /embeddings, /health
+    services/        LLM client, rate limiter, vector store, diff parser, prompt builder
+frontend/            React + Vite app
+nginx/  prometheus/  grafana/   local infrastructure config
+.github/workflows/ci.yml
+```
+
 ### Django management commands
 
 ```bash
@@ -339,7 +371,7 @@ All Django routes need `Authorization: Bearer <access_jwt>` unless marked otherw
 
 ### Review status (polling, no WebSocket)
 
-There are no WebSocket routes. While a review is `pending` or `processing`, the frontend's `ReviewStatus` component polls `GET /api/v1/reviews/<id>/` every 3 seconds and stops on `completed`, `failed` or unmount. A 403 or 404 stops polling at once. A 5xx or network failure backs off: the next request waits 3, 6, 12, 24, 48 and then 60 seconds, and polling gives up after 10 consecutive failures. A successful request resets the backoff. When polling stops on an error, the badge keeps the last known status and shows "Status updates stopped". A 401 is handled by the API client's token-refresh interceptor. The review page refetches the review when the status becomes terminal; if that refetch fails, the review stays on screen with an inline notice. See [SYSTEM_ARCHITECTURE.md, Review status updates](SYSTEM_ARCHITECTURE.md#review-status-updates).
+There are no WebSocket routes. The frontend polls `GET /api/v1/reviews/<id>/` while a review is `pending` or `processing`; intervals, backoff and error handling are in [SYSTEM_ARCHITECTURE.md, Review status updates](SYSTEM_ARCHITECTURE.md#review-status-updates) and the reasons in [ADR 0003](adr/0003-polling-instead-of-websockets.md).
 
 ---
 
@@ -403,13 +435,12 @@ pnpm test
 
 ### Measured results
 
-These were measured locally on this branch. Coverage method: `pytest --cov`, then `coverage report --omit='*/tests/*,*/migrations/*,*conftest.py'`, so test files, migrations and conftest are excluded. Including the test files would give a higher figure.
+Coverage method: `pytest --cov`, then `coverage report --omit='*/tests/*,*/migrations/*,*conftest.py'`, so test files, migrations and conftest are excluded. Including the test files gives a higher figure.
 
-| Suite | Result | Line coverage |
-|---|---|---|
-| Django | 225 passed | 86% |
-| FastAPI | 226 passed | 91% |
-| Frontend | `tsc`, `build` pass; `lint` 0 errors, 3 warnings | n/a |
+| Suite | Result | Line coverage | Measured |
+|---|---|---|---|
+| FastAPI | 657 passed, 12 skipped | 95% | locally on `dev` at `edca1ab` (2026-11-07) |
+| Django | 225 passed | 86% | in an earlier PR; not re-measured since (needs Postgres and Redis). CI runs the suite on every PR. |
 
 ### CI
 
@@ -425,19 +456,7 @@ CI doesn't enforce a coverage threshold.
 
 ### Eval report on a PR
 
-The eval comment shows one of three results:
-
-- **No metric changed:** the replayed scores equal `after-a7.json`.
-- **N metric(s) changed:** the change affects scoring, labels or post-processing but not prompts, and the table shows each change. With one run on either side the comment notes that differences of a few findings may be noise. When both results files hold 2 or more runs (`--repeat N`), the table shows mean and min–max per metric and marks a change *within noise* when either side's mean falls inside the other side's min–max.
-- **Prompt changed: replay can't measure this PR:** at least one prompt (or case diff) has no recording, so nothing is scored. Re-record on a machine with provider keys in `.env`:
-
-```bash
-make eval-record EVAL_ARGS="--provider groq --pause 75"   # writes evals/results/<sha>.json/.md
-```
-
-To measure run-to-run noise, add `--repeat 3`: it records `<case>.<i>.json` per run, and replay replays every run. 3 runs × 27 cases is about 243 Groq calls, which can exhaust the free daily quota; keep `--pause` and spread the recording over several days with `--only` and `--allow-partial` if needed. `uv run python -m scripts.eval_noise RUN1.json RUN2.json` compares two single runs of the same code on the cases both scored.
-
-Commit the re-recorded `evals/cassettes/*.json` and the new results file. If the new run becomes the reference, point the `Evals (replay)` job in `.github/workflows/ci.yml` at its results file and update the README "Review quality" section. Keep earlier results files as history: `tests/test_eval_compare.py` checks the README table against `baseline-pre-fix.json` and `after-fixes.json`. `make eval` replays the committed cassettes and needs no keys. The harness pins the delimiter nonce (`EVAL_DELIMITER_NONCE`), so a recording replays; the cassettes committed before #99 were recorded with the old fixed `<untrusted_data>` tag and no longer replay.
+What the `Evals (replay)` comment means, how to re-record cassettes after a prompt change, `--repeat` and the noise check, and the provenance of every committed run: [evals.md](evals.md).
 
 ---
 
@@ -578,6 +597,11 @@ These gaps are confirmed in the current code.
 
 The `vector` extension is enabled by a Django migration, but nothing creates `code_embeddings` / `review_embeddings` (FastAPI never calls `create_all`, and no Django migration covers them). Until they exist, the retrieval steps log errors and reviews run without similar-code context. For a table created by hand, apply `backend/fastapi/migrations/sql/0001_code_embeddings_source_ref.sql`, `0002_code_embeddings_hnsw_index.sql` and `0003_code_embeddings_model_tag.sql` in order; the second adds the HNSW cosine index, and the third adds `embedding_model` and the unique `(repo_full_name, sha256, embedding_model)` index (`models/embeddings.py` declares the same indexes). `0004_feedback_embeddings.sql` creates the `feedback_embeddings` table used for feedback examples ([feedback-learning.md](feedback-learning.md)); until it is applied, storing feedback fails and reviews run without examples. `tests/test_vector_store_pgvector.py` applies them to a scratch schema and runs the vector store queries against it when `PGVECTOR_TEST_URL` is set; CI doesn't set it.
 
+### Embeddings written before the retrieval and model changes
+
+- **Untagged chunks can match their own PR.** Rows stored before `source_ref` existed carry no tag and use real file paths, so a PR reviewed before that change can still retrieve its own old hunks after a new push, unless their text exactly matches a hunk in the new diff. Don't delete by `source_ref IS NULL`: `/embeddings/store` and reviews with `pr_number` 0 still write untagged rows.
+- **Rows from before `0003` aren't searched.** `0003_code_embeddings_model_tag.sql` tags every existing row `text-embedding-004`, because the writing model wasn't recorded, and search reads only rows of the configured `EMBEDDING_MODEL`. Nothing re-embeds them. Delete them after migrating (`DELETE FROM code_embeddings WHERE embedding_model = 'text-embedding-004';`), which also removes the untagged chunks above. Details: [SYSTEM_ARCHITECTURE.md, Diff rendering and comment anchoring](SYSTEM_ARCHITECTURE.md#diff-rendering-and-comment-anchoring).
+
 ### `review_embeddings` is never written
 
 `VectorStore.store_review_embedding` is only called from tests, and `POST /review/analyze` receives no review ID. The table stays empty, and the "past reviews" part of the prompt is never filled.
@@ -609,6 +633,10 @@ When a provider's per-minute window is full, `wait_for_token` sleeps until the n
 ### `cleanup_old_reviews` is never scheduled
 
 The task exists in `apps/reviews/tasks.py`, but there is no Celery beat service, so it runs only if someone calls it.
+
+### Reviews with no findings post nothing
+
+A review with no findings posts nothing to GitHub, so its "Reviewed X of Y files" line is only in the stored summary.
 
 ### `diff_text` is unbounded
 

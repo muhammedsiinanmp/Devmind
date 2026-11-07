@@ -329,7 +329,7 @@ flowchart LR
 ```
 
 - A server provider is included only if its key (`GOOGLE_AI_API_KEY`, `GROQ_API_KEY`) is set. GitHub Models was retired on 2026-07-30 and was removed.
-- Model IDs come from settings (`core/config.py`). A 404 is logged as `llm.model_not_found` and fails over like any other error. The cause is a retired or misspelled model, or one closed to new keys. `make providers-check` sends a real chat request to each configured model (`max_tokens` 256), which makes it the authoritative check. It reports a 200 with an empty reply or one cut at `max_tokens` as a warning, not as working. `gemini-3.5-flash`, the earlier default, is deprecated: Google routes requests for it to `gemini-3.6-flash`. In a live check on 2026-11-06, `gemini-3.6-flash` answered a JSON-mode request with no temperature (200 in 2.3 s), and `gemini-3.8-flash` returned 503 ("currently experiencing high demand"). A model that appears in a provider's `/models` listing (as `/health` reports) may still be unusable. There is no server-side OpenAI provider; OpenAI is available only as a user BYOK provider.
+- Model IDs come from settings (`core/config.py`). A 404 is logged as `llm.model_not_found` and fails over like any other error. The cause is a retired or misspelled model, or one closed to new keys. `make providers-check` sends a real chat request to each configured model, which makes it the authoritative check ([ENGINEERING_GUIDE.md](ENGINEERING_GUIDE.md#llm-providers-fastapi-set-at-least-one-or-configure-byok-keys)). `gemini-3.5-flash`, the earlier default, is deprecated: Google routes requests for it to `gemini-3.6-flash`. In a live check on 2026-11-06, `gemini-3.6-flash` answered a JSON-mode request with no temperature (200 in 2.3 s), and `gemini-3.8-flash` returned 503 ("currently experiencing high demand"). A model that appears in a provider's `/models` listing (as `/health` reports) may still be unusable. There is no server-side OpenAI provider; OpenAI is available only as a user BYOK provider.
 - BYOK providers are mapped to an OpenAI-compatible base URL: `openai`, `groq`, `mistral`, `google_vertex`, or `custom` with an explicit URL. `anthropic` isn't mapped, so Anthropic configs are skipped with an `llm.byok_unsupported_provider` warning (Django's BYOK choices have no GitHub Models option).
 - `LLM_FAILOVER_ENABLED=False` uses only the first provider in the chain.
 
@@ -747,6 +747,17 @@ When a user creates a config, `_validate_provider_key` sends `GET <base>/models`
 
 Each decision lists what the code does, why, and the trade-offs. Some also note what would change at larger scale; those notes are considerations, not plans or measured limits.
 
+Decisions made while fixing and measuring the review pipeline have their own records in [adr/](adr/):
+
+- [0001: Remove the findings-count retry](adr/0001-remove-findings-count-retry.md)
+- [0002: Retrieval excludes the pull request's own chunks](adr/0002-retrieval-excludes-own-pr.md)
+- [0003: Polling instead of WebSockets for review status](adr/0003-polling-instead-of-websockets.md)
+- [0004: Review deadline with partial results](adr/0004-review-deadline-partial-results.md)
+- [0005: Feedback trust model](adr/0005-feedback-trust-model.md)
+- [0006: Eval methodology](adr/0006-eval-methodology.md)
+
+The decisions below predate the ADRs:
+
 - [Two backends (Django + FastAPI)](#two-backends-django--fastapi)
 - [Celery for review jobs](#celery-for-review-jobs)
 - [LangGraph for the review agent](#langgraph-for-the-review-agent)
@@ -883,13 +894,7 @@ Each decision lists what the code does, why, and the trade-offs. Some also note 
 
 ### Polling instead of WebSockets for review status
 
-**What:** The dashboard and review pages fetch `GET /reviews/` or `GET /reviews/<id>/` when they load. For each review shown as `pending` or `processing`, `ReviewStatus.tsx` then polls `GET /reviews/<id>/` every 3 seconds until the status is `completed` or `failed` or the component unmounts.
-
-**Why:** Django Channels consumers and an optional Supabase status push used to exist but were never served: there was no ASGI server, the production image runs gunicorn on WSGI and Nginx had no upgrade block. They were removed rather than finished. Polling reuses the existing authenticated REST endpoint and its ownership checks, so there's no second auth path (such as a JWT in a WebSocket query string) to secure.
-
-**Tradeoffs:** Status shows up to 3 seconds late, and every open page with an unfinished review sends a request every 3 seconds. In exchange, the server only handles short HTTP requests under WSGI, with no long-lived connections and no channel layer.
-
-**What would change at larger scale:** Many open dashboards would make polling the main read load. At that point, server-sent events or WebSockets behind an ASGI server, with a per-review ownership check, would push changes instead.
+Recorded in [ADR 0003](adr/0003-polling-instead-of-websockets.md). In short: the unserved Channels and Supabase code was removed, and `ReviewStatus.tsx` polls the authenticated `GET /reviews/<id>/` endpoint every 3 seconds, with backoff on errors (see [Review status updates](#review-status-updates)). Status shows up to 3 seconds late, in exchange for no long-lived connections and no second auth path.
 
 ### One Redis instance in several roles
 
